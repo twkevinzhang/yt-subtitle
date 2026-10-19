@@ -52,6 +52,27 @@ export function Panel({
     originalHash = useRef("");
   const userProvided = useRef(true);
   useEffect(() => {
+    const refresh = () => {
+      void request<PublicSettings>({ type: "settings-public" })
+        .then((s) => {
+          if (live.current) {
+            setSettings(s);
+            setConfirm(null);
+          }
+        })
+        .catch(() => {});
+    };
+    const visible = () => {
+      if (document.visibilityState === "visible") refresh();
+    };
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", visible);
+    return () => {
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", visible);
+    };
+  }, []);
+  useEffect(() => {
     live.current = true;
     void (async () => {
       try {

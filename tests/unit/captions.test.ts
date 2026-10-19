@@ -18,3 +18,5 @@ it("preserves repeated text at different times", () =>
   ).toHaveLength(2));
 it("does not accept a discovered track with no cues", () =>
   expect(() => parseYouTubeCaptions("{}", "json3")).toThrow());
+it("explains empty server replies without exposing JSON parser internals", () =>
+  expect(() => parseYouTubeCaptions("", "json3")).toThrow("字幕"));

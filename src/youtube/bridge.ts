@@ -51,10 +51,10 @@ export function inspectPage() {
           t.languageCode,
         isAuto: t.kind === "asr" || String(t.vssId || "").startsWith("a."),
         isTranslated: new URL(
-          t.baseUrl || t.url,
+          t.url || t.baseUrl,
           location.href,
         ).searchParams.has("tlang"),
-        url: t.baseUrl || t.url,
+        url: t.url || t.baseUrl,
       }))
       .slice(0, 100),
   };
@@ -75,7 +75,7 @@ export async function readCaptionPage(trackId: string, expectedId: string) {
   const track = tracks[Number(trackId)];
   if (!track || String(Number(trackId)) !== trackId)
     throw new Error("字幕軌不存在");
-  const url = new URL(track.baseUrl || track.url, location.href);
+  const url = new URL(track.url || track.baseUrl, location.href);
   if (
     url.protocol !== "https:" ||
     !["www.youtube.com", "www.youtube-nocookie.com"].includes(url.hostname) ||

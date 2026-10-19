@@ -7,29 +7,25 @@ const p = {
   model: "m",
 };
 it("rejects login HTML without exposing response secrets", async () => {
-  const fetcher = vi
-    .fn()
-    .mockResolvedValue(
-      new Response("<html>private-token</html>", {
-        headers: { "Content-Type": "text/html" },
-      }),
-    );
+  const fetcher = vi.fn().mockResolvedValue(
+    new Response("<html>private-token</html>", {
+      headers: { "Content-Type": "text/html" },
+    }),
+  );
   await expect(
     createAiClient(p, fetcher).listModels(new AbortController().signal),
   ).rejects.toThrow("JSON");
   expect(fetcher.mock.calls[0][1].redirect).toBe("error");
 });
 it("does not trust model claims of search verification", async () => {
-  const fetcher = vi
-    .fn()
-    .mockResolvedValue(
-      new Response(
-        JSON.stringify({
-          choices: [{ message: { content: '{"verified":true}' } }],
-        }),
-        { headers: { "Content-Type": "application/json" } },
-      ),
-    );
+  const fetcher = vi.fn().mockResolvedValue(
+    new Response(
+      JSON.stringify({
+        choices: [{ message: { content: '{"verified":true}' } }],
+      }),
+      { headers: { "Content-Type": "application/json" } },
+    ),
+  );
   expect(
     (
       await createAiClient(p, fetcher).completeJson(
@@ -40,14 +36,12 @@ it("does not trust model claims of search verification", async () => {
   ).toBe("unverified");
 });
 it("aborts and rejects HTTP errors", async () => {
-  const fetcher = vi
-    .fn()
-    .mockResolvedValue(
-      new Response("{}", {
-        status: 401,
-        headers: { "Content-Type": "application/json" },
-      }),
-    );
+  const fetcher = vi.fn().mockResolvedValue(
+    new Response("{}", {
+      status: 401,
+      headers: { "Content-Type": "application/json" },
+    }),
+  );
   await expect(
     createAiClient(p, fetcher).listModels(new AbortController().signal),
   ).rejects.toThrow("401");

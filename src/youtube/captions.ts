@@ -6,7 +6,14 @@ export function parseYouTubeCaptions(
   if (raw.length > 4 * 1024 * 1024) throw new Error("字幕資料過大");
   let cues: Cue[] = [];
   if (format === "json3") {
-    const data = JSON.parse(raw);
+    let data: any;
+    try {
+      data = JSON.parse(raw);
+    } catch {
+      throw new Error(
+        "YouTube 未回傳有效字幕內容，請啟用原生字幕後重試，或匯入 LRC／SRT",
+      );
+    }
     cues = (data.events || [])
       .filter((e: any) => e.segs && e.dDurationMs > 0)
       .map((e: any, i: number) => ({

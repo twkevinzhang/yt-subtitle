@@ -28,3 +28,21 @@ it("waits for player controls before attaching", () => {
   document.body.innerHTML = "";
   history.replaceState({}, "", "/");
 });
+it("uses initialized caption URL instead of static baseUrl", async () => {
+  const { inspectPage } = await import("../../src/youtube/bridge");
+  history.replaceState({}, "", "/watch?v=12345678901");
+  document.body.innerHTML = '<div id="movie_player"><video></video></div>';
+  const player = document.querySelector("#movie_player") as any;
+  player.getAudioTrack = () => ({
+    captionTracks: [
+      {
+        languageCode: "ja",
+        baseUrl: "https://www.youtube.com/api/timedtext?static=1",
+        url: "https://www.youtube.com/api/timedtext?runtime=1",
+      },
+    ],
+  });
+  expect(inspectPage().tracks[0].url).toContain("runtime=1");
+  document.body.innerHTML = "";
+  history.replaceState({}, "", "/");
+});
