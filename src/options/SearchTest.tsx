@@ -153,13 +153,26 @@ export function SearchTest({
         送往已儲存服務的 /responses；此操作會使用模型額度。憑證由背景程式加入
         headers。
       </p>
-      <button
-        className="primary"
-        disabled={busy || !ready}
-        onClick={() => void search()}
-      >
-        {busy ? "搜尋中…" : sent ? "再次搜尋" : "搜尋"}
-      </button>
+      <div className="search-test-actions">
+        <button
+          className="primary"
+          disabled={busy || !ready}
+          onClick={() => void search()}
+        >
+          {busy ? "搜尋中…" : sent ? "再次搜尋" : "搜尋"}
+        </button>
+        {response && (
+          <span
+            role="status"
+            className={`http-status http-status-${response.status === null ? "none" : Math.floor(response.status / 100) + "xx"}`}
+          >
+            Response ·{" "}
+            {response.status === null
+              ? "未收到 HTTP 回應"
+              : `HTTP ${response.status}`}
+          </span>
+        )}
+      </div>
       {busy && <p role="status">正在等待 AI 服務回應…</p>}
       {error && (
         <p className="notice error" role="alert">
@@ -172,12 +185,6 @@ export function SearchTest({
           aria-label="完整 API 回應"
           className="search-response"
         >
-          <p>
-            Response ·{" "}
-            {response.status === null
-              ? "未收到 HTTP 回應"
-              : `HTTP ${response.status}`}
-          </p>
           <pre tabIndex={0}>
             {typeof response.body === "string"
               ? response.body

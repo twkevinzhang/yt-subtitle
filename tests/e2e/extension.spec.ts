@@ -705,6 +705,18 @@ test("Brave: settings, mock search, alignment, manual import, overlay and SRT", 
       options.getByText("Response · HTTP 200", { exact: true }),
     ).toBeVisible();
     const replyText = replyRegion.locator("pre");
+    const statusBadge = options.locator(".http-status-2xx");
+    await expect(statusBadge).toHaveText("Response · HTTP 200");
+    const buttonBox = (await options
+      .getByRole("button", { name: "再次搜尋", exact: true })
+      .boundingBox())!;
+    const badgeBox = (await statusBadge.boundingBox())!;
+    expect(badgeBox.x).toBeGreaterThan(buttonBox.x + buttonBox.width);
+    expect(
+      Math.abs(
+        badgeBox.y + badgeBox.height / 2 - buttonBox.y - buttonBox.height / 2,
+      ),
+    ).toBeLessThanOrEqual(1);
     const fullReply = JSON.parse((await replyText.textContent())!);
     expect(fullReply.output[1].content[0].text).toBe(mockTestReply);
     expect(await replyText.textContent()).toBe(
@@ -750,6 +762,9 @@ test("Brave: settings, mock search, alignment, manual import, overlay and SRT", 
       options.getByText("Response · HTTP 403", { exact: true }),
     ).toBeVisible();
     await expect(replyText).toHaveText(mockNonJson);
+    await expect(options.locator(".http-status-4xx")).toHaveText(
+      "Response · HTTP 403",
+    );
     await expect(replyRegion.locator("html")).toHaveCount(0);
     mockStatus = 200;
     mockNonJson = null;
