@@ -20,6 +20,16 @@ it("shares initialization and reuses a session across jobs", async () => {
   expect(backend.initialize).toHaveBeenCalledTimes(1);
   await session.dispose();
 });
+it("reuses the same session for missing-region recognition and forced alignment", async () => {
+  const { backend, session } = fixture();
+  backend.transcribe = vi.fn(async () => "spoken words");
+  expect(
+    await session.transcribe({ pcm: new Float32Array(16000), language: "en" }),
+  ).toBe("spoken words");
+  await session.align({} as any);
+  expect(backend.initialize).toHaveBeenCalledTimes(1);
+  await session.dispose();
+});
 it("does not dispose while a job owns it, releases after five minutes", async () => {
   vi.useFakeTimers();
   const { backend, session } = fixture();

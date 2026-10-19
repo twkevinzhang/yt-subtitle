@@ -19,6 +19,13 @@ globalThis.onmessage = async ({ data }) => {
       });
       postMessage({ id: data.id, lines });
       return;
+    } else if (data.type === "transcribe") {
+      const text = await adapter.transcribe({
+        ...data.input,
+        pcm: new Float32Array(data.input.pcm),
+      });
+      postMessage({ id: data.id, lines: text });
+      return;
     } else if (data.type === "dispose") await adapter.dispose();
     else throw new Error("未知模型操作");
     postMessage({ id: data.id });

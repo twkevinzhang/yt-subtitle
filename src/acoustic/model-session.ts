@@ -7,6 +7,7 @@ import {
   type Segment,
 } from "./contracts";
 export interface AcousticInput {
+  leadingText?: string;
   segment: Segment;
   lines: AlignedLine[];
   pcm: Float32Array;
@@ -14,8 +15,13 @@ export interface AcousticInput {
 export interface AcousticBackend {
   initialize(): Promise<void>;
   align(input: AcousticInput): Promise<AlignedLine[]>;
+  transcribe?(input: RecognitionInput): Promise<string>;
   dispose(): Promise<void>;
   terminate(): void;
+}
+export interface RecognitionInput {
+  pcm: Float32Array;
+  language: "en" | "ja" | "zh";
 }
 export class ModelSession {
   state: ModelState = "unloaded";
@@ -85,7 +91,18 @@ export class ModelSession {
       });
     return this.loading;
   }
-  async align(input: AcousticInput): Promise<AlignedLine[]> {
+  align(input: AcousticInput): Promise<AlignedLine[]> {
+    return this.perform((backend) => backend.align(input));
+  }
+  transcribe(input: RecognitionInput): Promise<string> {
+    return this.perform((backend) => {
+      if (!backend.transcribe) throw new Error("模型不支援缺漏段落辨識");
+      return backend.transcribe(input);
+    });
+  }
+  private async perform<T>(
+    operation: (backend: AcousticBackend) => Promise<T>,
+  ): Promise<T> {
     if (this.active) throw new Error("已有片段正在校時");
     this.active = true;
     this.retain();
@@ -96,7 +113,7 @@ export class ModelSession {
       let timeout: ReturnType<typeof setTimeout>;
       try {
         return await Promise.race([
-          backend.align(input),
+          operation(backend),
           new Promise<never>((_, reject) => {
             this.pendingReject = reject;
             timeout = setTimeout(

@@ -1,6 +1,8 @@
-import type { AlignedLine } from "../shared/types";
+import type { AlignedLine, Cue } from "../shared/types";
 import type { AudioSource } from "./audio-source";
-import type { AcousticInput } from "./model-session";
+import type { AcousticInput, RecognitionInput } from "./model-session";
+import { prepareAcousticContext } from "./audio-context";
+import { AcousticBoundaryError } from "./validate-segment";
 import {
   assertSegmentLines,
   type Segment,
@@ -11,15 +13,33 @@ interface Session {
   release(): void;
   cancel(): void;
   align(input: AcousticInput): Promise<AlignedLine[]>;
+  transcribe?(input: RecognitionInput): Promise<string>;
 }
 export function createScheduler(
   segments: Segment[],
   lines: AlignedLine[],
   audio: AudioSource,
   session: Session,
-  onVerified: (segment: Segment, lines: AlignedLine[]) => Promise<void>,
+  publish: (
+    segment: Segment,
+    lines: AlignedLine[],
+    repairedContext?: AlignedLine[],
+  ) => Promise<void>,
   onFailure: (segment: Segment, error: unknown) => void = () => {},
+  cues: Cue[] = [],
 ) {
+  lines = structuredClone(lines);
+  const onVerified = async (
+    segment: Segment,
+    result: AlignedLine[],
+    repairedContext: AlignedLine[] = [],
+  ) => {
+    await publish(segment, result, repairedContext);
+    const verified = new Map(
+      [...repairedContext, ...result].map((line) => [line.id, line]),
+    );
+    lines = lines.map((line) => verified.get(line.id) ?? line);
+  };
   const owners = new Set<string>(),
     ids = new Set<string>();
   for (const segment of segments) {
@@ -63,7 +83,28 @@ export function createScheduler(
           pending.sort(
             (a, b) => priority(a) - priority(b) || a.startMs - b.startMs,
           );
-          const segment = pending[0];
+          const ownerSegment = pending[0];
+          const available = audio
+            .availableRanges()
+            .find(
+              (r) =>
+                r.startMs <= ownerSegment.startMs &&
+                r.endMs >= ownerSegment.endMs,
+            );
+          const padding = Math.min(
+            2000,
+            (30000 - (ownerSegment.endMs - ownerSegment.startMs)) / 2,
+          );
+          let segment = available
+            ? {
+                ...ownerSegment,
+                startMs: Math.max(
+                  available.startMs,
+                  ownerSegment.startMs - padding,
+                ),
+                endMs: Math.min(available.endMs, ownerSegment.endMs + padding),
+              }
+            : ownerSegment;
           if (
             !audio
               .availableRanges()
@@ -76,10 +117,101 @@ export function createScheduler(
           }
           states[segment.id] = "running";
           try {
+            const prepared = await prepareAcousticContext(
+              ownerSegment,
+              lines,
+              segments,
+              cues,
+              audio,
+              session,
+              signal,
+            );
+            segment = prepared.segment;
             const { pcm } = await audio.read(segment.startMs, segment.endMs);
-            const result = await session.align({ segment, lines, pcm });
             if (signal.aborted) break;
-            await onVerified(segment, result);
+            const result = await session.align({ ...prepared, pcm });
+            if (signal.aborted) break;
+            try {
+              await onVerified(segment, result);
+            } catch (error) {
+              const margin = Math.min(
+                4000,
+                (30000 - (segment.endMs - segment.startMs)) / 2,
+              );
+              const range = audio
+                .availableRanges()
+                .find(
+                  (r) =>
+                    r.startMs <= segment.startMs && r.endMs >= segment.endMs,
+                );
+              if (!(error instanceof AcousticBoundaryError) || !range)
+                throw error;
+              const first = lines.findIndex((l) => l.id === segment.lineIds[0]),
+                last = lines.findIndex((l) => l.id === segment.lineIds.at(-1));
+              const neighbors = [lines[first - 1], lines[last + 1]]
+                .filter((l) => l && !l.excluded)
+                .map((l) => l.id);
+              const expanded = {
+                ...segment,
+                contextLineIds: [
+                  ...new Set([...segment.contextLineIds, ...neighbors]),
+                ].filter((id) => !segment.lineIds.includes(id)),
+                startMs: Math.max(range.startMs, segment.startMs - margin),
+                endMs: Math.min(range.endMs, segment.endMs + margin),
+              };
+              const previous = lines[first - 1];
+              const repairPrevious =
+                previous &&
+                previous.status !== "manual" &&
+                previous.startMs !== undefined &&
+                previous.endMs !== undefined &&
+                previous.startMs >= expanded.startMs;
+              const joint = repairPrevious
+                ? {
+                    ...expanded,
+                    startMs: Math.max(range.startMs, previous.startMs! - 200),
+                    lineIds: [previous.id, ...expanded.lineIds],
+                    contextLineIds: expanded.contextLineIds.filter(
+                      (id) => id !== previous.id,
+                    ),
+                  }
+                : expanded;
+              const retryContext = repairPrevious
+                ? await prepareAcousticContext(
+                    joint,
+                    lines,
+                    segments,
+                    cues,
+                    audio,
+                    session,
+                    signal,
+                  )
+                : { segment: joint, lines, leadingText: prepared.leadingText };
+              const retry = await audio.read(
+                retryContext.segment.startMs,
+                retryContext.segment.endMs,
+              );
+              if (signal.aborted) break;
+              const repaired = await session.align({
+                ...retryContext,
+                pcm: retry.pcm,
+              });
+              if (signal.aborted) break;
+              await onVerified(
+                {
+                  ...retryContext.segment,
+                  lineIds: expanded.lineIds,
+                  contextLineIds: [
+                    ...new Set([
+                      ...retryContext.segment.contextLineIds,
+                      ...(repairPrevious ? [previous.id] : []),
+                    ]),
+                  ],
+                },
+                repaired.filter((l) => expanded.lineIds.includes(l.id)),
+                repaired.filter((l) => !expanded.lineIds.includes(l.id)),
+              );
+            }
             states[segment.id] = "verified";
           } catch (error) {
             if (signal.aborted) break;

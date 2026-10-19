@@ -25,7 +25,8 @@ export class RunJournal {
     const snapshot = structuredClone(record);
     if (snapshot.state.errorCode)
       snapshot.state.errorCode = snapshot.state.errorCode.slice(0, 600);
-    if (snapshot.output !== undefined) delete snapshot.partial;
+    if (snapshot.output !== undefined || snapshot.acoustic)
+      delete snapshot.partial;
     // Under Chrome 102–111's 1 MiB session quota; full output remains in RunManager memory.
     if (
       new TextEncoder().encode(JSON.stringify(snapshot)).byteLength > 262144
@@ -33,7 +34,9 @@ export class RunJournal {
       delete snapshot.responseText;
       delete snapshot.output;
       delete snapshot.partial;
-      if (snapshot.state.phase === "complete") {
+      delete snapshot.acoustic;
+      delete snapshot.alignmentReport;
+      if (["complete", "aligning"].includes(snapshot.state.phase)) {
         snapshot.state.phase = "interrupted";
         snapshot.state.errorCode = "結果超過背景暫存上限，請重新處理並及時保存";
       }

@@ -6,15 +6,35 @@ export function Editor({
   currentMs,
   seek,
   lineOffset = 0,
+  disabled = false,
 }: {
   lineOffset?: number;
+  disabled?: boolean;
   lines: AlignedLine[];
   onChange: (value: AlignedLine[]) => void;
   currentMs: () => number;
   seek: (ms: number) => void;
 }) {
-  const edit = (id: string, patch: Partial<AlignedLine>) =>
-    onChange(lines.map((l) => (l.id === id ? { ...l, ...patch } : l)));
+  const edit = (id: string, patch: Partial<AlignedLine>) => {
+    if (disabled) return;
+    onChange(
+      lines.map((l) => {
+        if (l.id !== id) return l;
+        if (patch.original !== undefined && l.alignmentText !== undefined) {
+          const rows = patch.original.split(/\r?\n/);
+          patch = {
+            ...patch,
+            alignmentText:
+              rows.length > 1 &&
+              rows.slice(1).every((row) => /^[（(].*[)）]$/u.test(row.trim()))
+                ? rows[0]
+                : undefined,
+          };
+        }
+        return { ...l, ...patch };
+      }),
+    );
+  };
   return (
     <section>
       <h3>逐句預覽與校時</h3>
@@ -38,6 +58,7 @@ export function Editor({
             <label>
               <input
                 type="checkbox"
+                disabled={disabled}
                 checked={l.excluded}
                 onChange={(e) => edit(l.id, { excluded: e.target.checked })}
               />
@@ -47,6 +68,7 @@ export function Editor({
           <label>
             <span>原文</span>
             <textarea
+              disabled={disabled}
               value={l.original}
               onChange={(e) => edit(l.id, { original: e.target.value })}
             />
@@ -55,6 +77,7 @@ export function Editor({
             <label>
               <span>譯文</span>
               <textarea
+                disabled={disabled}
                 value={l.translation}
                 onChange={(e) => edit(l.id, { translation: e.target.value })}
               />
@@ -66,6 +89,7 @@ export function Editor({
               <input
                 aria-label={`第 ${i + 1 + lineOffset} 句開始秒數`}
                 type="number"
+                disabled={disabled}
                 min="0"
                 step="0.001"
                 value={l.startMs === undefined ? "" : l.startMs / 1000}
@@ -85,6 +109,7 @@ export function Editor({
               <input
                 aria-label={`第 ${i + 1 + lineOffset} 句結束秒數`}
                 type="number"
+                disabled={disabled}
                 min="0"
                 step="0.001"
                 value={l.endMs === undefined ? "" : l.endMs / 1000}
@@ -108,6 +133,7 @@ export function Editor({
           </div>
           <div className="row time-controls">
             <button
+              disabled={disabled}
               onClick={() =>
                 edit(l.id, { startMs: currentMs(), status: "manual" })
               }
@@ -115,6 +141,7 @@ export function Editor({
               以目前位置設開始
             </button>
             <button
+              disabled={disabled}
               onClick={() =>
                 edit(l.id, { endMs: currentMs(), status: "manual" })
               }

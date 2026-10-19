@@ -31,6 +31,11 @@ export async function callAcousticHost(
   if (!response?.ok) throw new Error(response?.error || "聲學宿主未回應");
   return response.data;
 }
+export async function prepareAcousticAudio() {
+  // createDocument's load is not acknowledgement that async orphan cleanup
+  // finished. The query handler explicitly awaits that cleanup.
+  await callAcousticHost("query");
+}
 export function authorizeAcousticHost(sender: chrome.runtime.MessageSender) {
   if (
     sender.id !== chrome.runtime.id ||

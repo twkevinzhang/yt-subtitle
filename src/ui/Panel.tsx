@@ -31,8 +31,17 @@ import {
 } from "../lyrics/draft";
 import { isUserAction } from "./user-action";
 import { startOwnedRun } from "./owned-run";
+import { acousticEnabled, type JobKey } from "../acoustic/contracts";
+import { acquireYouTubeAudio } from "../acoustic/youtube-audio-source";
+import { regionRequest } from "../lyrics/region-request";
+// YouTube may canonicalize the URL after initial loading.
+const localAcoustic = acousticEnabled(location.href);
 class WorkCancelled extends Error {}
-type PendingWork = { cancelled: boolean; cancellation?: Promise<void> };
+type PendingWork = {
+  cancelled: boolean;
+  cancellation?: Promise<void>;
+  controller?: AbortController;
+};
 type LeaveAction = "return" | "stop" | "close";
 export function Panel({
   binding,
@@ -61,6 +70,7 @@ export function Panel({
   const [stopping, setStopping] = useState(false);
   const [stopError, setStopError] = useState("");
   const workRef = useRef<PendingWork | undefined>(undefined);
+  const previewKey = useRef<JobKey | undefined>(undefined);
   const leaveTrigger = useRef<HTMLElement | null>(null);
   const editPage = useRef<HTMLElement>(null);
   const lyricsPage = useRef<HTMLElement>(null);
@@ -215,6 +225,8 @@ export function Panel({
     })();
     return () => {
       live.current = false;
+      workRef.current?.controller?.abort();
+      void request({ type: "audio-clear" }).catch(() => {});
       if (activeRun.current)
         void request({ type: "cancel", runId: activeRun.current }).catch(
           () => {},
@@ -271,6 +283,7 @@ export function Panel({
         const runId = activeRun.current;
         work.cancellation = (async () => {
           if (runId) await request({ type: "cancel", runId });
+          work.controller?.abort();
           work.cancelled = true;
         })();
         await work.cancellation;
@@ -315,8 +328,30 @@ export function Panel({
         if (record.responseText !== undefined)
           setResponseText(record.responseText);
         if (record.alignmentReport) setAlignmentReport(record.alignmentReport);
+        if (localAcoustic)
+          void request({
+            type: "acoustic-position",
+            runId: state.runId,
+            timeMs: Math.max(0, binding.video.currentTime * 1000),
+          }).catch(() => {});
+        if (record.acoustic && settings) {
+          if (previewKey.current?.runId !== record.acoustic.key.runId) {
+            overlay.beginDraft(record.acoustic.key);
+            previewKey.current = record.acoustic.key;
+          }
+          setLines(record.acoustic.lines);
+          setAppliedLines(record.acoustic.lines);
+          setAppliedOffset(0);
+          overlay.setDraftPreview(
+            record.acoustic,
+            "original",
+            settings.preferences,
+          );
+        }
         setProgress(
-          `已處理 ${record.state.completedLineIds.length} 句（不代表全部對齊）；已送出 ${record.state.requestCount} 次請求（整首一次）`,
+          record.acoustic
+            ? `本機聲學校時：已完成 ${record.state.completedLineIds.length} 句；模型 ${record.acoustic.modelState}。已完成片段可播放。`
+            : `AI 區間定位中；已送出 ${record.state.requestCount} 次請求`,
         );
         if (record.state.phase === "complete") return record.output;
         if (
@@ -342,7 +377,7 @@ export function Panel({
           }
           throw new Error(record.state.errorCode || "工作已取消");
         }
-        await new Promise((r) => setTimeout(r, 1000));
+        await new Promise((r) => setTimeout(r, 500));
       }
       throw new Error("已離開影片");
     } finally {
@@ -421,7 +456,10 @@ export function Panel({
           );
         }
       }
-      const work: PendingWork = { cancelled: false };
+      const work: PendingWork = {
+        cancelled: false,
+        controller: new AbortController(),
+      };
       workRef.current = work;
       setBusy(true);
       setMessage("正在對齊歌詞…");
@@ -436,13 +474,27 @@ export function Panel({
         }
         if (!timing.length && inputLines.some((l) => l.startMs === undefined))
           throw new Error("未取得可用轉錄稿，歌詞已保留，請稍後重新請求。");
+        const acoustic = localAcoustic;
         body ??= alignmentBodySchema.parse(
-          alignmentRequest(settings.model, inputLines, timing),
+          acoustic
+            ? regionRequest(settings.model, inputLines, timing)
+            : alignmentRequest(settings.model, inputLines, timing),
         );
         if (editedBody === undefined)
           setRequestBody(JSON.stringify(body, null, 2));
         alignmentInput.current = inputLines;
         setAlignmentReport("");
+        const audioAssetId = acoustic
+          ? await acquireYouTubeAudio(
+              binding.videoId,
+              video.durationMs,
+              work.controller!.signal,
+              (text) => {
+                if (live.current) setProgress(text);
+              },
+            )
+          : undefined;
+        await checkWork(work);
         const payload = {
           video,
           lines: inputLines,
@@ -450,6 +502,10 @@ export function Panel({
           targetLanguage: settings.preferences.targetLanguage,
           translate: false,
           body,
+          ...(audioAssetId ? { audioAssetId } : {}),
+          ...(audioAssetId
+            ? { positionMs: Math.max(0, binding.video.currentTime * 1000) }
+            : {}),
         };
         const receipt = {
           purpose: "generate" as const,
@@ -481,11 +537,20 @@ export function Panel({
           targetLanguage: settings.preferences.targetLanguage,
           model: String(body.model),
         };
-        setMessage("AI 對齊完成，請檢查後套用並保存。");
+        const remaining = output.lines.filter(
+          (l) =>
+            !l.excluded && (l.startMs === undefined || l.endMs === undefined),
+        ).length;
+        setMessage(
+          acoustic && remaining
+            ? `已校時 ${output.lines.filter((l) => !l.excluded).length - remaining} 句，另有 ${remaining} 句待處理；已完成片段可播放，完整保存仍需處理待校時句。`
+            : "AI 對齊完成，請檢查後套用並保存。",
+        );
       } catch (error) {
         if (work.cancelled) throw new WorkCancelled();
         throw error;
       } finally {
+        void request({ type: "audio-clear" }).catch(() => {});
         if (live.current && workRef.current === work) setBusy(false);
       }
     });
@@ -509,6 +574,16 @@ export function Panel({
       targetLanguage: settings?.preferences.targetLanguage || "ja",
       model: "",
     };
+    if (
+      video &&
+      !validateTiming(clean, video.durationMs, 0).some(
+        (issue) => issue.severity === "error",
+      )
+    ) {
+      setView("edit");
+      setMessage("已讀取時間戳，可直接套用並保存。");
+      return;
+    }
     await startGenerate(clean);
   };
   const useCandidate = (c: LyricCandidate) => {
@@ -915,15 +990,20 @@ export function Panel({
                             </button>
                           )}
                           <Editor
+                            disabled={busy}
                             lines={[l]}
                             lineOffset={lines.indexOf(l)}
-                            onChange={(edited) =>
-                              setLines((previous) =>
-                                previous.map((item) =>
-                                  item.id === l.id ? edited[0] : item,
-                                ),
-                              )
-                            }
+                            onChange={(edited) => {
+                              const updated = lines.map((item) =>
+                                item.id === l.id ? edited[0] : item,
+                              );
+                              setLines(updated);
+                              alignmentInput.current = updated;
+                              setRequestBody("");
+                              previewKey.current = undefined;
+                              overlay.stop();
+                              setAppliedLines([]);
+                            }}
                             currentMs={() =>
                               Math.round(binding.video.currentTime * 1000)
                             }

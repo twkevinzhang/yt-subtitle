@@ -6,6 +6,7 @@ import {
   mkdir,
   writeFile,
   access,
+  rm,
 } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
@@ -177,5 +178,17 @@ test("Brave MV3: real WASM worker inference and warm session reuse (local acoust
       "artifacts/progressive-alignment/mv3-runtime.json",
       JSON.stringify(report, null, 2),
     );
+    const cleanupTarget = path.resolve(folder);
+    if (
+      path.dirname(cleanupTarget) !== path.resolve(os.tmpdir()) ||
+      !path.basename(cleanupTarget).startsWith("ai-lyrics-wasm-")
+    )
+      throw new Error("Unsafe test cleanup target");
+    await rm(cleanupTarget, {
+      recursive: true,
+      force: true,
+      maxRetries: 3,
+      retryDelay: 100,
+    });
   }
 });

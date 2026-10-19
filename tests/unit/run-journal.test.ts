@@ -59,3 +59,15 @@ it("restores only the latest run and marks unfinished work interrupted", async (
   expect(Object.keys(storage.entries)).toEqual(["run:new"]);
   expect(storage.entries["run:new"].state.phase).toBe("interrupted");
 });
+it("does not retain an oversized acoustic snapshot after dropping other fields", async () => {
+  const storage = store(),
+    journal = new RunJournal(storage);
+  await journal.persist({
+    ...record("big"),
+    acoustic: { lines: "x".repeat(300000) } as any,
+  });
+  expect(JSON.stringify(storage.entries["run:big"]).length).toBeLessThan(
+    262144,
+  );
+  expect(storage.entries["run:big"].state.phase).toBe("interrupted");
+});

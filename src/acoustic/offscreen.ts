@@ -6,13 +6,18 @@ import {
   type AlignmentSnapshot,
   type JobKey,
 } from "./contracts";
-import { lineSchema } from "../shared/schemas";
+import { lineSchema, cueSchema } from "../shared/schemas";
+import { locateMissing } from "./missing-location";
+import type { AlignedLine } from "../shared/types";
+import type { Segment } from "./contracts";
 import { ModelSession } from "./model-session";
 import { WorkerClient } from "./worker-client";
 import { PcmAudioSource } from "./audio-source";
+import { assertAudioSize } from "./audio-source";
 import { takeJobAudio, clearJobAudio } from "./audio-store";
 import { createScheduler } from "./scheduler";
 import { createSnapshot, mergeSegment } from "./snapshot";
+import { AcousticBoundaryError, validateSegment } from "./validate-segment";
 
 const startSchema = z
   .object({
@@ -21,16 +26,26 @@ const startSchema = z
     lines: z.array(lineSchema).max(10000),
     segments: z.array(segmentSchema).max(1000),
     positionMs: z.number().finite().nonnegative(),
+    encoding: z.enum(["pcm", "compressed"]).default("pcm"),
+    durationMs: z.number().finite().positive().optional(),
+    cues: z.array(cueSchema).max(20000).default([]),
   })
   .strict();
 let snapshot: AlignmentSnapshot | undefined,
   controller: AbortController | undefined;
 let scheduler: ReturnType<typeof createScheduler> | undefined;
 let phase:
-  "idle" | "preparing" | "running" | "complete" | "cancelled" | "failed" =
-  "idle";
+  | "idle"
+  | "preparing"
+  | "running"
+  | "complete"
+  | "partial"
+  | "cancelled"
+  | "failed" = "idle";
 let owner: symbol | undefined, preparingKey: JobKey | undefined;
 let error: string | undefined;
+let locationDiagnostics: string[] = [];
+let positionMs = 0;
 const session = new ModelSession(
   () => new WorkerClient(),
   () => {
@@ -62,53 +77,193 @@ async function start(raw: unknown) {
     previousPhase = phase;
   owner = token;
   preparingKey = input.key;
+  positionMs = input.positionMs;
   controller = abort;
   phase = "preparing";
   error = undefined;
+  locationDiagnostics = [];
   session.retain();
   let audio: PcmAudioSource | undefined;
   try {
     // Host must be prepared before staging PCM. Binary never crosses runtime JSON.
-    audio = new PcmAudioSource(
-      new Float32Array(await takeJobAudio(input.assetId)),
-    );
+    const data = await takeJobAudio(input.assetId);
+    let pcm: Float32Array;
+    if (input.encoding === "compressed") {
+      if (!input.durationMs || input.durationMs * 64 > 64 * 1024 * 1024)
+        throw new Error("音訊解碼長度超過上限");
+      const context = new AudioContext({ sampleRate: 16000 });
+      try {
+        const decoded = await context.decodeAudioData(data);
+        if (
+          decoded.sampleRate !== 16000 ||
+          Math.abs(decoded.duration * 1000 - input.durationMs) > 1000
+        )
+          throw new Error("解碼音訊與影片長度不符");
+        assertAudioSize(decoded.length * 4);
+        // Codec padding can end a few milliseconds before the video timeline.
+        pcm = new Float32Array(Math.ceil(input.durationMs * 16));
+        for (let channel = 0; channel < decoded.numberOfChannels; channel++) {
+          const source = decoded.getChannelData(channel);
+          for (let i = 0; i < Math.min(source.length, pcm.length); i++)
+            pcm[i] += source[i] / decoded.numberOfChannels;
+        }
+      } finally {
+        await context.close();
+      }
+    } else pcm = new Float32Array(data);
+    audio = new PcmAudioSource(pcm);
     if (abort.signal.aborted) throw new Error("校時已取消");
     const prepared = createSnapshot(input.key, input.lines, input.segments);
-    const work = createScheduler(
+    const publish = async (
+      segment: Segment,
+      lines: AlignedLine[],
+      repairedContext: AlignedLine[] = [],
+    ) => {
+      if (abort.signal.aborted || owner !== token) return;
+      const first = snapshot!.lines.findIndex(
+        (l) => l.id === segment.lineIds[0],
+      );
+      if (
+        repairedContext.length &&
+        (repairedContext.length !== 1 ||
+          repairedContext[0].id !== snapshot!.lines[first - 1]?.id ||
+          !segment.contextLineIds.includes(repairedContext[0].id) ||
+          snapshot!.lines[first - 1].startMs === undefined)
+      )
+        throw new AcousticBoundaryError("不合法的交界重算範圍");
+      const combined = {
+        ...segment,
+        lineIds: [...repairedContext.map((l) => l.id), ...segment.lineIds],
+      };
+      const validation = validateSegment(
+        [...repairedContext, ...lines],
+        combined,
+        snapshot!.lines,
+      );
+      if (!validation.ok) throw new AcousticBoundaryError(validation.reason);
+      const before = repairedContext.length
+        ? {
+            ...snapshot!,
+            lines: snapshot!.lines.map(
+              (l) => repairedContext.find((r) => r.id === l.id) ?? l,
+            ),
+          }
+        : snapshot!;
+      const next = mergeSegment(
+        before,
+        {
+          key: input.key,
+          segmentId: segment.id,
+          sequence: snapshot!.sequence + 1,
+          lines,
+        },
+        input.segments.map((s) => (s.id === segment.id ? segment : s)),
+      );
+      if (next === before)
+        throw new AcousticBoundaryError("片段未通過邊界校驗");
+      snapshot = next;
+      snapshot.modelState = session.state;
+      await notify();
+    };
+    const failed = (_segment: Segment, cause: unknown) => {
+      if (owner === token)
+        error = cause instanceof Error ? cause.message : String(cause);
+    };
+    // Validate ownership synchronously before acknowledging start.
+    let work = createScheduler(
       input.segments,
       input.lines,
       audio,
       session,
-      async (segment, lines) => {
-        if (abort.signal.aborted || owner !== token) return;
-        const next = mergeSegment(
-          snapshot!,
-          {
-            key: input.key,
-            segmentId: segment.id,
-            sequence: snapshot!.sequence + 1,
-            lines,
-          },
-          input.segments,
-        );
-        if (next === snapshot) throw new Error("片段未通過邊界校驗");
-        snapshot = next;
-        snapshot.modelState = session.state;
-        await notify();
-      },
-      (_segment, cause) => {
-        if (owner === token)
-          error = cause instanceof Error ? cause.message : String(cause);
-      },
+      publish,
+      failed,
+      input.cues,
     );
     snapshot = prepared;
-    scheduler = work;
     preparingKey = undefined;
     phase = "running";
-    work.updatePosition(input.positionMs);
     const source = audio;
-    void work
-      .run(abort.signal)
+    void (async () => {
+      // An omitted short intro is needed as acoustic context for the first
+      // known verse. Locate it before publishing that verse with no context.
+      const firstOwner = Math.min(
+        ...input.segments.map((s) =>
+          input.lines.findIndex((l) => l.id === s.lineIds[0]),
+        ),
+      );
+      const introEnd = input.segments.find((s) =>
+        s.lineIds.includes(input.lines[firstOwner]?.id),
+      )?.startMs;
+      if (
+        firstOwner > 0 &&
+        input.cues.length &&
+        introEnd !== undefined &&
+        introEnd <= 30000 &&
+        positionMs < introEnd
+      ) {
+        const intro = await locateMissing(
+          input.lines.slice(0, firstOwner + 1),
+          input.segments,
+          input.cues,
+          source,
+          session,
+          abort.signal,
+          (message) => {
+            if (owner === token && locationDiagnostics.length < 8)
+              locationDiagnostics.push(message);
+          },
+        );
+        if (abort.signal.aborted || owner !== token) return {};
+        input.segments.push(...intro);
+        for (const segment of intro) snapshot!.segments[segment.id] = "pending";
+      }
+      work = createScheduler(
+        input.segments,
+        input.lines,
+        source,
+        session,
+        publish,
+        failed,
+        input.cues,
+      );
+      scheduler = work;
+      work.updatePosition(positionMs);
+      return work.run(abort.signal);
+    })()
+      .then(async (states) => {
+        if (abort.signal.aborted || owner !== token || !input.cues.length)
+          return states;
+        const located = await locateMissing(
+          input.lines,
+          input.segments,
+          input.cues,
+          source,
+          session,
+          abort.signal,
+          (message) => {
+            if (owner === token && locationDiagnostics.length < 8)
+              locationDiagnostics.push(message);
+          },
+        );
+        if (!located.length || abort.signal.aborted || owner !== token)
+          return states;
+        input.segments.push(...located);
+        for (const segment of located)
+          snapshot!.segments[segment.id] = "pending";
+        const extra = createScheduler(
+          located,
+          snapshot!.lines,
+          source,
+          session,
+          publish,
+          failed,
+          input.cues,
+        );
+        scheduler = extra;
+        extra.updatePosition(positionMs);
+        await notify();
+        return { ...states, ...(await extra.run(abort.signal)) };
+      })
       .then((states) => {
         if (owner !== token) return;
         if (snapshot) {
@@ -125,8 +280,16 @@ async function start(raw: unknown) {
         phase = abort.signal.aborted
           ? "cancelled"
           : Object.values(states).every((s) => s === "verified")
-            ? "complete"
+            ? snapshot!.lines.every(
+                (l) =>
+                  l.excluded ||
+                  (l.startMs !== undefined && l.endMs !== undefined),
+              )
+              ? "complete"
+              : "partial"
             : "failed";
+        if (phase === "partial")
+          error = "部分歌詞未取得可靠定位，已完成片段保留，尚不能完整保存";
         if (phase === "failed") error ??= "部分片段尚未完成校時";
       })
       .catch((e) => {
@@ -177,12 +340,15 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
     if (message.command === "start") return start(message.input);
     if (message.command === "query") {
       await cleaned;
+      if (snapshot) snapshot.modelState = session.state;
       return {
         snapshot,
+        key: preparingKey ?? snapshot?.key,
         phase,
         error,
         modelState: session.state,
         initializationCount: session.initializationCount,
+        locationDiagnostics,
       };
     }
     if (message.command === "cancel") {
@@ -193,6 +359,9 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
     }
     if (message.command === "position") {
       check(message.key);
+      if (!Number.isFinite(message.timeMs) || message.timeMs < 0)
+        throw new Error("播放位置不合法");
+      positionMs = message.timeMs;
       scheduler?.updatePosition(message.timeMs);
       return null;
     }

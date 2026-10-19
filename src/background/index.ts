@@ -30,18 +30,83 @@ import { prepareAlignmentRetry } from "../lyrics/batches";
 import { alignmentRequest } from "../lyrics/alignment-request";
 import { authorizeAcousticHost, callAcousticHost } from "./acoustic-host";
 import type { ConsentReceipt, AlignedLine } from "../shared/types";
+import { AudioUploads, AudioStaging } from "./audio-uploads";
+import {
+  stageJobAudio,
+  clearJobAudio,
+  deleteJobAudio,
+} from "../acoustic/audio-store";
+import { prepareAcousticAudio } from "./acoustic-host";
+import {
+  runAcousticAlignment,
+  followAcousticJob,
+  recoveryOwner,
+} from "./acoustic-jobs";
+const uploads = new AudioUploads();
+const staged = new AudioStaging(deleteJobAudio);
+async function dropTabAudio(tabId: number) {
+  uploads.clearTab(tabId);
+  await staged.clearTab(tabId);
+}
 const journal = new RunJournal({
   get: () => chrome.storage.session.get(null),
   set: (v) => chrome.storage.session.set(v),
   remove: (k) => chrome.storage.session.remove(k),
 });
 const persist = (r: RunRecord) => journal.persist(r);
-const runs = new RunManager(persist);
+const runs = new RunManager(persist, () => uploads.isBusy || staged.isBusy);
 let initialized: Promise<void> | undefined;
 async function init() {
   return (initialized ??= (async () => {
     await protectStorage();
+    const previous = await chrome.storage.session.get(null);
     await journal.restore();
+    // Reconcile only an already existing host. Never restart an AI request.
+    const contexts = chrome.runtime.getContexts
+      ? await chrome.runtime.getContexts({
+          contextTypes: [chrome.runtime.ContextType.OFFSCREEN_DOCUMENT],
+          documentUrls: [chrome.runtime.getURL("offscreen.html")],
+        })
+      : [];
+    if (contexts.length) {
+      const status = await callAcousticHost("query");
+      const key = status.key ?? status.snapshot?.key;
+      const candidate =
+        key && (previous["run:" + key.runId] as RunRecord | undefined);
+      const record = await recoveryOwner(
+        status,
+        candidate,
+        async (owner) => {
+          try {
+            const tab = await chrome.tabs.get(owner.tabId);
+            return new URL(tab.url!).searchParams.get("v") === owner.videoId;
+          } catch {
+            return false;
+          }
+        },
+        async (owner) => {
+          await callAcousticHost("cancel", { key: owner });
+          const deadline = Date.now() + 6500;
+          while (
+            ["running", "preparing"].includes(
+              (await callAcousticHost("query")).phase,
+            )
+          ) {
+            if (Date.now() >= deadline)
+              throw new Error("舊聲學工作尚未停止，請稍後重試");
+            await new Promise((resolve) => setTimeout(resolve, 250));
+          }
+        },
+      );
+      if (record) {
+        record.acoustic =
+          status.phase === "preparing" ? undefined : status.snapshot;
+        runs.adopt(record, async (tools) => ({
+          lines: await followAcousticJob(key, tools, callAcousticHost),
+          response: record.responseText ?? "",
+        }));
+      }
+    }
   })());
 }
 async function consent(
@@ -68,6 +133,47 @@ export async function handleMessage(
   await init();
   const tabId = sender.tab?.id ?? -1;
   switch (m.type) {
+    case "audio-begin":
+      await staged.expire();
+      if (runs.isBusy || staged.isBusy)
+        throw new Error("已有工作正在處理，請先取消或等待完成");
+      return uploads.begin(tabId, new URL(sender.url!).searchParams.get("v")!);
+    case "audio-chunk":
+      uploads.append(
+        m.assetId,
+        tabId,
+        new URL(sender.url!).searchParams.get("v")!,
+        m.sequence,
+        m.base64,
+      );
+      return null;
+    case "audio-finish": {
+      const videoId = new URL(sender.url!).searchParams.get("v")!;
+      const data = uploads.finish(m.assetId, tabId, videoId);
+      // A cold host clears orphan assets, so prepare it before writing.
+      await staged.put(m.assetId, tabId, videoId, () =>
+        stageJobAudio(m.assetId, data, prepareAcousticAudio),
+      );
+      return null;
+    }
+    case "audio-clear":
+      await dropTabAudio(tabId);
+      return null;
+    case "acoustic-position": {
+      const record = runs.get(m.runId);
+      if (
+        record?.state.tabId !== tabId ||
+        record.state.videoId !== new URL(sender.url!).searchParams.get("v") ||
+        record.state.phase !== "aligning"
+      )
+        return null;
+      record.positionMs = m.timeMs;
+      if (!record.acoustic) return null;
+      return callAcousticHost("position", {
+        key: record.acoustic.key,
+        timeMs: m.timeMs,
+      });
+    }
     case "settings-public":
       return getPublicSettings();
     case "settings-edit":
@@ -208,6 +314,10 @@ export async function handleMessage(
           targetLanguage: input.targetLanguage,
           translate: input.translate,
           ...(input.body ? { body: input.body } : {}),
+          ...(input.audioAssetId ? { audioAssetId: input.audioAssetId } : {}),
+          ...(input.positionMs !== undefined
+            ? { positionMs: input.positionMs }
+            : {}),
         },
         s.revision,
       );
@@ -218,6 +328,54 @@ export async function handleMessage(
       if (JSON.stringify(body).length > 120000)
         throw new Error("內容超過單次請求 120000 字元上限，請縮短內容");
       const client = createAiClient(s.provider);
+      if (input.audioAssetId) {
+        if (runs.isBusy)
+          throw new Error("已有工作正在處理，請先取消或等待完成");
+        if (!input.body) throw new Error("缺少 AI 區間定位請求");
+        if (
+          new TextEncoder().encode(JSON.stringify(input.lines)).length > 60000
+        )
+          throw new Error("歌詞過長，超過分段工作暫存上限");
+        staged.claim(input.audioAssetId, tabId, input.video.videoId);
+        return runs.start(
+          tabId,
+          input.video.videoId,
+          s.revision,
+          async (tools) => {
+            const record = runs.get(tools.runId)!;
+            record.positionMs = Math.min(
+              input.video.durationMs,
+              input.positionMs ?? 0,
+            );
+            try {
+              return await runAcousticAlignment(
+                {
+                  key: {
+                    runId: tools.runId,
+                    tabId,
+                    videoId: input.video.videoId,
+                    draftRevision: s.revision,
+                  },
+                  assetId: input.audioAssetId!,
+                  lines: retryLines,
+                  cues: input.cues,
+                  durationMs: input.video.durationMs,
+                  body,
+                  positionMs: record.positionMs,
+                },
+                tools,
+                {
+                  complete: (frozen, signal) =>
+                    client.completeText([], signal, frozen),
+                  host: callAcousticHost,
+                },
+              );
+            } finally {
+              await clearJobAudio();
+            }
+          },
+        );
+      }
       return runs.start(
         tabId,
         input.video.videoId,
@@ -284,11 +442,13 @@ if (typeof chrome !== "undefined" && chrome.runtime?.id) {
           const status = await callAcousticHost("query");
           if (
             !["running", "preparing"].includes(status.phase) &&
-            status.modelState === "unloaded"
+            status.modelState === "unloaded" &&
+            !staged.isBusy &&
+            !uploads.isBusy &&
+            !runs.isBusy
           )
             await chrome.offscreen.closeDocument();
         }
-        // No YouTube default-mode route until acquisition/location gates pass.
         return null;
       })().then(
         (data) => sendResponse({ ok: true, data }),
@@ -312,9 +472,15 @@ if (typeof chrome !== "undefined" && chrome.runtime?.id) {
   chrome.action.onClicked.addListener(() => {
     void chrome.runtime.openOptionsPage();
   });
-  chrome.tabs.onRemoved.addListener((id) => runs.cancelTab(id));
+  chrome.tabs.onRemoved.addListener((id) => {
+    runs.cancelTab(id);
+    void dropTabAudio(id);
+  });
   chrome.tabs.onUpdated.addListener((id, change) => {
-    if (change.url) runs.cancelTab(id);
+    if (change.url) {
+      runs.cancelTab(id);
+      void dropTabAudio(id);
+    }
   });
   void init();
 }

@@ -1,4 +1,8 @@
-import type { AcousticBackend, AcousticInput } from "./model-session";
+import type {
+  AcousticBackend,
+  AcousticInput,
+  RecognitionInput,
+} from "./model-session";
 import type { AlignedLine } from "../shared/types";
 export class WorkerClient implements AcousticBackend {
   private worker: Worker;
@@ -30,7 +34,10 @@ export class WorkerClient implements AcousticBackend {
     };
     this.worker.onerror = () => this.terminate();
   }
-  private request(type: string, input?: AcousticInput): Promise<any> {
+  private request(
+    type: string,
+    input?: AcousticInput | RecognitionInput,
+  ): Promise<any> {
     const id = ++this.sequence;
     return new Promise((resolve, reject) => {
       const timer = setTimeout(
@@ -61,6 +68,9 @@ export class WorkerClient implements AcousticBackend {
   }
   align(input: AcousticInput): Promise<AlignedLine[]> {
     return this.request("align", input);
+  }
+  transcribe(input: RecognitionInput): Promise<string> {
+    return this.request("transcribe", input);
   }
   async dispose() {
     await this.request("dispose");

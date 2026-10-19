@@ -24,6 +24,22 @@ export function parseYouTubeCaptions(
           .map((s: any) => s.utf8 || "")
           .join("")
           .trim(),
+        ...(e.segs.some((s: any) => s.tOffsetMs !== undefined)
+          ? {
+              tokens: e.segs
+                .filter(
+                  (s: any) =>
+                    typeof s.utf8 === "string" &&
+                    s.utf8.trim() &&
+                    Number.isFinite(s.tOffsetMs ?? 0) &&
+                    (s.tOffsetMs ?? 0) >= 0,
+                )
+                .map((s: any) => ({
+                  text: s.utf8,
+                  startMs: Number(e.tStartMs) + (s.tOffsetMs ?? 0),
+                })),
+            }
+          : {}),
       }));
   } else {
     const doc = new DOMParser().parseFromString(raw, "text/xml");

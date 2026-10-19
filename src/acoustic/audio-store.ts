@@ -57,3 +57,6 @@ export async function takeJobAudio(assetId: string): Promise<ArrayBuffer> {
 export async function clearJobAudio() {
   await transact("readwrite", (s) => s.clear());
 }
+export async function deleteJobAudio(assetId: string) {
+  await transact("readwrite", (s) => s.delete(assetId));
+}

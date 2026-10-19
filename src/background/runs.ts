@@ -1,25 +1,37 @@
 import type { RunState } from "../shared/types";
+import type { AlignmentSnapshot } from "../acoustic/contracts";
 export interface RunRecord {
   state: RunState;
   output?: unknown;
   partial?: unknown;
   alignmentReport?: string;
   responseText?: string;
+  acoustic?: AlignmentSnapshot;
+  positionMs?: number;
 }
 export interface RunTools {
+  runId: string;
   signal: AbortSignal;
   request<T>(fn: () => Promise<T>): Promise<T>;
   progress(ids: string[], partial?: unknown): Promise<void>;
   response(text: string): Promise<void>;
   trace(text: string, verdict?: boolean): Promise<void>;
+  acoustic(snapshot: AlignmentSnapshot): Promise<void>;
+  positionMs?(): number;
 }
 export class RunManager {
   private records = new Map<string, RunRecord>();
   private controllers = new Map<string, AbortController>();
   private busy = false;
-  constructor(private persist: (record: RunRecord) => Promise<void>) {}
+  constructor(
+    private persist: (record: RunRecord) => Promise<void>,
+    private externalBusy: () => boolean = () => false,
+  ) {}
   get(id: string) {
     return this.records.get(id);
+  }
+  get isBusy() {
+    return this.busy;
   }
   start(
     tabId: number,
@@ -27,12 +39,14 @@ export class RunManager {
     revision: number,
     job: (tools: RunTools) => Promise<unknown>,
     phase: "searching" | "aligning" = "aligning",
+    restored?: RunRecord,
   ): RunState {
-    if (this.busy) throw new Error("已有工作正在處理，請先取消或等待完成");
+    if (this.busy || this.externalBusy())
+      throw new Error("已有工作正在處理，請先取消或等待完成");
     this.busy = true;
-    const runId = crypto.randomUUID(),
+    const runId = restored?.state.runId ?? crypto.randomUUID(),
       controller = new AbortController();
-    const state: RunState = {
+    const state: RunState = restored?.state ?? {
       schemaVersion: 1,
       runId,
       tabId,
@@ -44,7 +58,8 @@ export class RunManager {
       requestCount: 0,
       completedLineIds: [],
     };
-    const record: RunRecord = { state };
+    const record: RunRecord = restored ?? { state };
+    state.phase = phase;
     let rawTrace = "",
       finalTrace = "",
       rawTruncated = false;
@@ -53,7 +68,10 @@ export class RunManager {
     for (const [id, r] of this.records)
       if (this.records.size > 2 && !this.controllers.has(id))
         this.records.delete(id);
-    const timer = setTimeout(() => controller.abort(), 600000);
+    const timer = setTimeout(
+      () => controller.abort(),
+      Math.max(0, state.deadlineAt - Date.now()),
+    );
     const check = () => {
       if (controller.signal.aborted || Date.now() >= state.deadlineAt)
         throw new Error("工作已取消或達時間上限");
@@ -62,7 +80,23 @@ export class RunManager {
       try {
         await this.persist(record);
         const output = await job({
+          runId,
+          positionMs: () => record.positionMs ?? 0,
           signal: controller.signal,
+          acoustic: async (snapshot) => {
+            check();
+            record.acoustic = snapshot;
+            record.partial = snapshot.lines;
+            state.completedLineIds = snapshot.lines
+              .filter(
+                (l) =>
+                  !l.excluded &&
+                  l.startMs !== undefined &&
+                  l.endMs !== undefined,
+              )
+              .map((l) => l.id);
+            await this.persist(record);
+          },
           response: async (text) => {
             check();
             record.responseText = text;
@@ -123,6 +157,16 @@ export class RunManager {
       }
     })();
     return { ...state };
+  }
+  adopt(record: RunRecord, job: (tools: RunTools) => Promise<unknown>) {
+    return this.start(
+      record.state.tabId,
+      record.state.videoId,
+      record.state.settingsRevision,
+      job,
+      "aligning",
+      record,
+    );
   }
   cancel(id: string) {
     const r = this.records.get(id);

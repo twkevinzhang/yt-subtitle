@@ -89,3 +89,9 @@ export function assertSegmentLines(segment: Segment, lineIds: string[]) {
 
 // Release gate: fixture inference does not establish YouTube audio acquisition.
 export const YOUTUBE_ACOUSTIC_ENABLED = false;
+export function acousticEnabled(url: string) {
+  return (
+    YOUTUBE_ACOUSTIC_ENABLED ||
+    new URL(url).searchParams.get("ai-lyrics-validate") === "1"
+  );
+}

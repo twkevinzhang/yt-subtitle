@@ -1,5 +1,6 @@
 import type { AlignedLine } from "../shared/types";
 import type { Segment } from "./contracts";
+export class AcousticBoundaryError extends Error {}
 export function validateSegment(
   result: AlignedLine[],
   segment: Segment,
@@ -41,7 +42,10 @@ export function validateSegment(
     }
     if (row.excluded) continue;
     if (row.startMs === undefined || row.endMs === undefined) continue;
-    if (row.startMs < previousEnd) return fail("句子與相鄰段落時間交錯");
+    if (row.startMs < previousEnd)
+      return fail(
+        `句子與相鄰段落時間交錯（${row.id}: ${row.startMs} < ${previousEnd} ms）`,
+      );
     previousEnd = row.endMs;
   }
   return { ok: true };

@@ -14,6 +14,7 @@ for (const [name, entry] of Object.entries({
   background: "src/background/index.ts",
   content: "src/content/index.ts",
   bridge: "src/youtube/bridge.ts",
+  "audio-helper": "src/youtube/audio-helper.ts",
 })) {
   await build({
     configFile: false,
@@ -26,7 +27,7 @@ for (const [name, entry] of Object.entries({
       lib: {
         entry,
         formats: ["iife"],
-        name: `AILyrics_${name}`,
+        name: `AILyrics_${name.replaceAll("-", "_")}`,
         fileName: () => `${name}.js`,
       },
       rollupOptions: { output: { inlineDynamicImports: true } },

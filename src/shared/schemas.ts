@@ -7,11 +7,16 @@ export const cueSchema = z
     endMs: time,
     text: z.string(),
     endEstimated: z.boolean().optional(),
+    tokens: z
+      .array(z.object({ text: z.string(), startMs: time }))
+      .max(10000)
+      .optional(),
   })
   .refine((c) => c.endMs > c.startMs, "結束必須晚於開始");
 export const lineSchema = z.object({
   id: z.string(),
   original: z.string(),
+  alignmentText: z.string().optional(),
   translation: z.string().optional(),
   startMs: time.optional(),
   endMs: time.optional(),
@@ -90,6 +95,20 @@ export const alignmentBodySchema = z
     "Request body 超過 120000 字元",
   );
 const msg = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("audio-begin") }),
+  z.object({
+    type: z.literal("audio-chunk"),
+    assetId: z.string(),
+    sequence: z.number().int().nonnegative(),
+    base64: z.string().max(350000),
+  }),
+  z.object({ type: z.literal("audio-finish"), assetId: z.string() }),
+  z.object({ type: z.literal("audio-clear") }),
+  z.object({
+    type: z.literal("acoustic-position"),
+    runId: z.string(),
+    timeMs: time,
+  }),
   z.object({ type: z.literal("settings-public") }),
   z.object({ type: z.literal("settings-edit") }),
   z.object({
@@ -124,6 +143,8 @@ const msg = z.discriminatedUnion("type", [
       targetLanguage: z.enum(["ja", "zh-Hant", "en"]),
       translate: z.boolean(),
       body: alignmentBodySchema.optional(),
+      audioAssetId: z.string().optional(),
+      positionMs: time.optional(),
       consent: consentSchema,
     }),
   }),

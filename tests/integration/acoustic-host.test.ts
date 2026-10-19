@@ -2,6 +2,7 @@ import { afterEach, expect, it, vi } from "vitest";
 const mock = vi.hoisted(() => ({
   take: vi.fn(),
   clear: vi.fn(async () => {}),
+  align: vi.fn(),
 }));
 vi.mock("../../src/acoustic/audio-store", () => ({
   takeJobAudio: mock.take,
@@ -16,6 +17,8 @@ vi.mock("../../src/acoustic/model-session", () => ({
     cancel() {}
     async dispose() {}
     async align({ segment, lines }: any) {
+      if (mock.align.getMockImplementation())
+        return mock.align({ segment, lines });
       return lines
         .filter((l: any) => segment.lineIds.includes(l.id))
         .map((l: any) => ({
@@ -29,6 +32,7 @@ vi.mock("../../src/acoustic/model-session", () => ({
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.clearAllMocks();
+  mock.align.mockReset();
 });
 async function setup() {
   vi.resetModules();
@@ -132,3 +136,54 @@ it("rejects extension page and outside senders as acoustic controllers", async (
     ).ok,
   ).toBe(false);
 });
+it.each(["valid", "changed text", "manual anchor", "unrelated ID"])(
+  "atomically validates joint boundary repair: %s",
+  async (kind) => {
+    const { send, input } = await setup();
+    const previous = {
+      ...input.lines[0],
+      id: "previous",
+      original: "previous lyric",
+      status: kind === "manual anchor" ? "manual" : "estimated",
+      startMs: 100,
+      endMs: 300,
+    };
+    const job = {
+      ...input,
+      lines: [previous, input.lines[0]],
+      segments: [{ ...input.segments[0], startMs: 300, endMs: 900 }],
+    };
+    let calls = 0;
+    mock.align.mockImplementation(({ lines }: any) => {
+      const current = lines.find((l: any) => l.id === "l1");
+      if (++calls === 1)
+        return [{ ...current, status: "estimated", startMs: 200, endMs: 850 }];
+      return [
+        {
+          ...previous,
+          id: kind === "unrelated ID" ? "other" : previous.id,
+          original: kind === "changed text" ? "changed" : previous.original,
+          endMs: 280,
+        },
+        { ...current, status: "estimated", startMs: 280, endMs: 850 },
+      ];
+    });
+    expect((await send("start", { input: job })).ok).toBe(true);
+    let status: any;
+    await vi.waitFor(async () => {
+      status = (await send("query")).data;
+      expect(["complete", "failed"]).toContain(status.phase);
+    });
+    const before = status.snapshot.lines.find((l: any) => l.id === "previous"),
+      current = status.snapshot.lines.find((l: any) => l.id === "l1");
+    if (kind === "valid") {
+      expect(status.phase).toBe("complete");
+      expect(before.endMs).toBe(280);
+      expect(current.startMs).toBe(280);
+    } else {
+      expect(status.phase).toBe("failed");
+      expect(before).toEqual(previous);
+      expect(current.startMs).toBeUndefined();
+    }
+  },
+);

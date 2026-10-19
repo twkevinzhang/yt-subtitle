@@ -1,4 +1,4 @@
-import type { AcousticInput } from "./model-session";
+import type { AcousticInput, RecognitionInput } from "./model-session";
 import type { AlignedLine } from "../shared/types";
 import {
   segmentSchema,
@@ -7,6 +7,7 @@ import {
   MODEL_REVISION,
 } from "./contracts";
 import { prepareModelAssets } from "./model-assets";
+import { refineTokenOnset } from "./token-onset";
 // Transformers.js' timestamp extraction is an internal API: pinned and isolated here.
 // Avoid importing the package-wide declarations: 3.8.1 includes unrelated
 // Float16Array/processor declarations incompatible with this project's TS lib.
@@ -40,7 +41,12 @@ export class WhisperAdapter {
       dtype: "q8",
     });
   }
-  async align({ segment, lines, pcm }: AcousticInput): Promise<AlignedLine[]> {
+  async align({
+    segment,
+    lines,
+    pcm,
+    leadingText,
+  }: AcousticInput): Promise<AlignedLine[]> {
     segmentSchema.parse(segment);
     assertSegmentLines(
       segment,
@@ -55,10 +61,18 @@ export class WhisperAdapter {
     if (!this.pipeline || !this.runtime) throw new Error("模型尚未就緒");
     const included = new Set([...segment.lineIds, ...segment.contextLineIds]);
     const selected = lines.filter((l) => included.has(l.id));
+    if (leadingText?.trim())
+      selected.unshift({
+        id: "__audio-context",
+        original: leadingText,
+        cueIds: [],
+        status: "unaligned",
+        excluded: false,
+      });
     const { Tensor } = this.runtime,
       transcriber = this.pipeline;
     const pieces = selected.map((l) =>
-      transcriber.tokenizer.encode(" " + l.original, {
+      transcriber.tokenizer.encode(" " + (l.alignmentText ?? l.original), {
         add_special_tokens: false,
       }),
     );
@@ -125,10 +139,33 @@ export class WhisperAdapter {
           punctuation.test(transcriber.tokenizer.decode([piece[b - 1]]))
         )
           b--;
-        if (segment.lineIds.includes(line.id))
+        if (segment.lineIds.includes(line.id)) {
+          const rows = transcriber.model.generation_config.alignment_heads.map(
+            ([layer, head]: [number, number]) => {
+              // Onset attention belongs to the supplied token's decoder row,
+              // not the previous row that predicts it.
+              const tensor = output[`cross_attentions.${layer}`].slice(
+                null,
+                head,
+                [prefix.length + cursor + a, prefix.length + cursor + a + 1],
+                [0, frames],
+              );
+              const row = Float32Array.from(tensor.data);
+              tensor.dispose?.();
+              return row;
+            },
+          );
+          const onset =
+            cursor + a === 0
+              ? refineTokenOnset(
+                  rows,
+                  times[cursor + a] * 1000,
+                  times[cursor + a + 1] * 1000,
+                )
+              : times[cursor + a] * 1000;
           result.push({
             ...line,
-            startMs: Math.round(segment.startMs + times[cursor + a] * 1000),
+            startMs: Math.round(segment.startMs + onset),
             endMs: Math.round(segment.startMs + times[cursor + b] * 1000),
             status: "estimated",
             cueIds: segment.evidenceCueIds,
@@ -141,6 +178,7 @@ export class WhisperAdapter {
                 }
               : {}),
           });
+        }
         cursor += piece.length;
       });
       return result;
@@ -151,6 +189,26 @@ export class WhisperAdapter {
       for (const value of Object.values(output ?? {}))
         (value as any)?.dispose?.();
     }
+  }
+  async transcribe({ pcm, language }: RecognitionInput): Promise<string> {
+    if (
+      !this.pipeline ||
+      !pcm.length ||
+      pcm.length > 480000 ||
+      pcm.some((v) => !Number.isFinite(v)) ||
+      !["ja", "zh", "en"].includes(language)
+    )
+      throw new Error("辨識片段不合法");
+    const output = await this.pipeline(pcm, {
+      language,
+      task: "transcribe",
+      max_new_tokens: 160,
+      do_sample: false,
+      return_timestamps: false,
+    });
+    if (typeof output?.text !== "string")
+      throw new Error("音訊辨識沒有文字結果");
+    return output.text;
   }
   async dispose() {
     await this.pipeline?.dispose();

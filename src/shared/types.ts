@@ -2,6 +2,7 @@ export type Language = "ja" | "zh" | "en";
 export type TargetLanguage = "ja" | "zh-Hant" | "en";
 export type DisplayMode = "original" | "bilingual" | "translation";
 export interface Cue {
+  tokens?: { text: string; startMs: number }[];
   endEstimated?: boolean;
   id: string;
   startMs: number;
@@ -11,6 +12,8 @@ export interface Cue {
 export interface AlignedLine {
   id: string;
   original: string;
+  // Spoken text when original also contains an adjacent, unsung translation.
+  alignmentText?: string;
   translation?: string;
   startMs?: number;
   endMs?: number;

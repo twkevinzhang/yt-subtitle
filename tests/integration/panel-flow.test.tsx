@@ -229,10 +229,10 @@ it("previews imported timestamps before sending and keeps local timed import usa
     false,
   );
   fireEvent.click(screen.getByRole("button", { name: "確認並開始對齊" }));
-  await screen.findByText("AI 對齊完成，請檢查後套用並保存。");
+  await screen.findByText("已讀取時間戳，可直接套用並保存。");
   expect(
     mockRequest.mock.calls.filter(([m]) => m.type === "generate"),
-  ).toHaveLength(1);
+  ).toHaveLength(0);
   expect(overlay.setResult).not.toHaveBeenCalled();
 });
 it("keeps the previous result and edited body after a retry fails", async () => {
