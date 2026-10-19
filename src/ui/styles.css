@@ -194,6 +194,9 @@ summary {
   justify-content: space-between;
   align-items: center;
 }
+:host([data-dock="sidebar"]) .panel {
+  margin-top: 0;
+}
 .panel header h2 {
   margin: 0;
 }

@@ -112,7 +112,7 @@ test("Brave: settings, mock search, alignment, manual import, overlay and SRT", 
     const playerBox = await welcome.locator("#movie_player").boundingBox();
     const panelBox = await welcomePanel.boundingBox();
     expect(panelBox!.x).toBeGreaterThanOrEqual(playerBox!.x + playerBox!.width);
-    expect(panelBox!.y).toBeLessThan(playerBox!.y + playerBox!.height);
+    expect(Math.abs(panelBox!.y - playerBox!.y)).toBeLessThanOrEqual(1);
     await expect(
       welcome.locator("#secondary-inner > [data-ai-lyrics-panel]"),
     ).toHaveCount(1);
