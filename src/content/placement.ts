@@ -1,46 +1,78 @@
-// YouTube positions its recommendation column below a theater player and beside
-// a standard player. Docking there lets its own layout handle both modes.
+// Do not publish at a provisional full-width anchor: wait for the final column.
 export function mountWatchPanel(player: HTMLElement, host: HTMLElement) {
-  const place = () => {
-    if (!player.isConnected) return;
-    const sidebar =
-      document.querySelector("#secondary-inner") ||
-      document.querySelector("#secondary");
-    if (sidebar) {
-      host.dataset.dock = "sidebar";
-      host.style.maxWidth = "";
-      host.style.marginInline = "";
-      if (host.parentElement !== sidebar || sidebar.firstElementChild !== host)
-        sidebar.prepend(host);
+  let sidebar: HTMLElement | null = null;
+  let frame = 0,
+    stopped = false,
+    published = false;
+  let sample: { width: number; x: number; y: number } | undefined;
+  host.style.display = "none";
+  host.dataset.dock = "sidebar";
+  const schedule = () => {
+    if (!stopped && !frame && !published && sidebar)
+      frame = requestAnimationFrame(checkGeometry);
+  };
+  const checkGeometry = () => {
+    frame = 0;
+    if (stopped || !sidebar?.isConnected || !player.isConnected) return;
+    const rect = sidebar.getBoundingClientRect();
+    const video = player.getBoundingClientRect();
+    const beside = rect.x >= video.x + video.width - 1;
+    const belowRight =
+      rect.y >= video.y + video.height - 1 &&
+      rect.x >= video.x + video.width / 2;
+    if (rect.width <= 0 || video.width <= 0 || !(beside || belowRight)) {
+      sample = undefined;
+      schedule();
       return;
     }
-    // While the column is being rebuilt, keep the same mounted React tree.
-    host.dataset.dock = "below";
-    const below = document.querySelector("#primary-inner #below");
-    if (below?.parentNode) {
-      host.style.maxWidth = "";
-      if (host.nextSibling !== below)
-        below.parentNode.insertBefore(host, below);
-    } else if (player.parentNode) {
-      const width = player.getBoundingClientRect().width;
-      if (width > 0) host.style.maxWidth = `${width}px`;
-      host.style.marginInline = "auto";
-      if (player.nextSibling !== host)
-        player.parentNode.insertBefore(host, player.nextSibling);
+    if (
+      sample &&
+      Math.abs(rect.width - sample.width) < 0.5 &&
+      Math.abs(rect.x - sample.x) < 0.5 &&
+      Math.abs(rect.y - sample.y) < 0.5
+    ) {
+      published = true;
+      host.style.display = "block";
+    } else {
+      sample = { width: rect.width, x: rect.x, y: rect.y };
+      schedule();
     }
   };
-  place();
+  const resize =
+    typeof ResizeObserver === "undefined"
+      ? undefined
+      : new ResizeObserver(schedule);
+  const place = () => {
+    if (stopped) return;
+    const next = player.isConnected
+      ? document.querySelector<HTMLElement>("#secondary-inner")
+      : null;
+    if (next !== sidebar) {
+      if (frame) cancelAnimationFrame(frame);
+      frame = 0;
+      sample = undefined;
+      published = false;
+      host.style.display = "none";
+      if (sidebar) resize?.unobserve(sidebar);
+      sidebar = next;
+      if (sidebar) resize?.observe(sidebar);
+    }
+    if (!sidebar) return;
+    if (host.parentElement !== sidebar || sidebar.firstElementChild !== host)
+      sidebar.prepend(host);
+    schedule();
+  };
   const observer = new MutationObserver(place);
   observer.observe(document.documentElement, {
     childList: true,
     subtree: true,
+    attributes: true,
+    attributeFilter: ["id"],
   });
-  const resize =
-    typeof ResizeObserver === "undefined"
-      ? undefined
-      : new ResizeObserver(place);
-  resize?.observe(player);
+  place();
   return () => {
+    stopped = true;
+    if (frame) cancelAnimationFrame(frame);
     observer.disconnect();
     resize?.disconnect();
   };

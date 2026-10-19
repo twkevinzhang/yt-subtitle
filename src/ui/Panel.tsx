@@ -19,6 +19,7 @@ import { Consent } from "./Consent";
 import { Candidates } from "./Candidates";
 import { Editor } from "./Editor";
 import { LyricsPreview } from "./LyricsPreview";
+import { ContentSkeleton } from "./Skeleton";
 import type { createOverlay } from "../content/overlay";
 import type { RunRecord } from "../background/runs";
 import {
@@ -38,11 +39,15 @@ export function Panel({
   onClose: () => void;
   publicSettings?: PublicSettings;
 }) {
-  const [settings, setSettings] = useState<PublicSettings>(),
+  const [settings, setSettings] = useState<PublicSettings | undefined>(
+      publicSettings,
+    ),
     [video, setVideo] = useState<VideoContext>(),
     [tracks, setTracks] = useState<CaptionTrack[]>([]),
     [trackId, setTrackId] = useState(""),
     [cues, setCues] = useState<Cue[]>([]);
+  const [metadataLoading, setMetadataLoading] = useState(true);
+  const [captionsLoading, setCaptionsLoading] = useState(false);
   const [message, setMessage] = useState("正在檢查播放器…"),
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false),
@@ -98,18 +103,30 @@ export function Panel({
   }, []);
   useEffect(() => {
     live.current = true;
+    // These reads are independent: a slow cache or caption endpoint must not
+    // hold up video metadata or local import controls.
+    void (
+      publicSettings
+        ? Promise.resolve(publicSettings)
+        : request<PublicSettings>({ type: "settings-public" })
+    )
+      .then((s) => {
+        if (live.current) {
+          setSettings(s);
+          setMode(s.preferences.mode);
+        }
+      })
+      .catch(() => {});
+    void request<SavedResult[]>({
+      type: "results-list",
+      videoId: binding.videoId,
+    })
+      .then((local) => {
+        if (live.current) setSaved(local);
+      })
+      .catch(() => {});
     void (async () => {
       try {
-        const s = await request<PublicSettings>({ type: "settings-public" });
-        if (!live.current) return;
-        setSettings(s);
-        setMode(s.preferences.mode);
-        const local = await request<SavedResult[]>({
-          type: "results-list",
-          videoId: binding.videoId,
-        });
-        if (!live.current) return;
-        setSaved(local);
         const ctx = await request<{
           video: VideoContext;
           tracks: CaptionTrack[];
@@ -117,14 +134,16 @@ export function Panel({
         if (!live.current || ctx.video.videoId !== binding.videoId) return;
         setVideo(ctx.video);
         setTracks(ctx.tracks);
+        setMetadataLoading(false);
         const track = ctx.tracks.find((t) => !t.isTranslated);
         setMessage(
-          ctx.tracks.length
+          track
             ? "已發現字幕軌，正在讀取內容…"
             : "這支影片未提供可讀取的字幕；可匯入或手動校時",
         );
         if (track) {
           setTrackId(track.id);
+          setCaptionsLoading(true);
           try {
             const c = await request<Cue[]>({
               type: "read-track",
@@ -137,11 +156,13 @@ export function Panel({
           } catch {
             if (live.current)
               setMessage("字幕內容讀取失敗，請啟用原生字幕後按「重新讀取」");
+          } finally {
+            if (live.current) setCaptionsLoading(false);
           }
         }
       } catch (e) {
         if (live.current) {
-          setError(String((e as Error).message));
+          setError((e as Error).message);
           setVideo({
             schemaVersion: 1,
             videoId: binding.videoId,
@@ -150,6 +171,7 @@ export function Panel({
             description: "",
             durationMs: Math.round(binding.video.duration * 1000) || 0,
           });
+          setMetadataLoading(false);
         }
       }
     })();
@@ -395,8 +417,23 @@ export function Panel({
         >
           {settings?.configured && (
             <div className="section">
-              <h3>{video?.title || "目前影片"}</h3>
-              <p className="muted">{message}</p>
+              {!video ? (
+                <ContentSkeleton label="正在讀取影片資料" />
+              ) : (
+                <h3>{video.title}</h3>
+              )}
+              {captionsLoading ? (
+                <div
+                  role="status"
+                  aria-label="正在讀取字幕"
+                  className="caption-loading"
+                >
+                  <span className="skeleton-bar" aria-hidden="true" />
+                  <small>正在讀取字幕；貼上與匯入仍可使用。</small>
+                </div>
+              ) : (
+                <p className="muted">{message}</p>
+              )}
               {tracks.length > 0 && (
                 <div className="row">
                   <select
@@ -565,6 +602,7 @@ export function Panel({
                 />
                 <div className="row">
                   <button
+                    disabled={!video}
                     onClick={() =>
                       attempt(async () => {
                         if (!video) throw new Error("影片尚未就緒");
@@ -599,6 +637,7 @@ export function Panel({
                     匯入 LRC／SRT
                     <input
                       type="file"
+                      disabled={!video}
                       accept=".lrc,.srt,.txt"
                       onChange={(e) => {
                         const file = e.target.files?.[0];
@@ -795,6 +834,8 @@ export function Panel({
                 void binding.video.play().catch(() => {});
               }}
             />
+          ) : metadataLoading ? (
+            <ContentSkeleton label="正在載入影片資訊" />
           ) : (
             <div className="empty-preview">
               <h3>{video?.title || "目前影片"}</h3>

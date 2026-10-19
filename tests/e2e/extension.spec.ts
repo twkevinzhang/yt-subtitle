@@ -70,6 +70,26 @@ test("Brave: settings, mock search, alignment, manual import, overlay and SRT", 
     path.join(testExtension, "manifest.json"),
     JSON.stringify(manifest),
   );
+  // Test-only delays reproduce slow initial settings/metadata/captions. The
+  // production bundle is unchanged; every pending callback has a finite delay.
+  const workerPath = path.join(testExtension, "background.js");
+  await writeFile(
+    workerPath,
+    `
+    const originalAdd = chrome.runtime.onMessage.addListener.bind(chrome.runtime.onMessage);
+    const delayed = new Set(); globalThis.__loadingTestPending = new Set();
+    const settingsReadyAt = Date.now() + 6000;
+    chrome.runtime.onMessage.addListener = callback => originalAdd((message,sender,reply) => {
+      const delay = message.type === 'settings-public' ? Math.max(0,settingsReadyAt-Date.now()) : {'inspect':900,'results-list':2000,'read-track':4000}[message.type];
+      if(delay && (message.type === 'settings-public' || !delayed.has(message.type))) {
+        delayed.add(message.type); globalThis.__loadingTestPending.add(message.type);
+        setTimeout(()=>{globalThis.__loadingTestPending.delete(message.type);callback(message,sender,reply);},delay);
+        return true;
+      }
+      return callback(message,sender,reply);
+    });
+  ` + (await readFile(workerPath, "utf8")),
+  );
   try {
     context = await chromium.launchPersistentContext(profile, {
       executablePath:
@@ -94,14 +114,77 @@ test("Brave: settings, mock search, alignment, manual import, overlay and SRT", 
     const id = new URL(worker.url()).host;
     console.log("Extension worker ready");
     await mkdir("artifacts", { recursive: true });
-    await context.route("https://www.youtube.com/watch*", async (route) =>
-      route.fulfill({
+    let firstWatch = true;
+    await context.route("https://www.youtube.com/watch*", async (route) => {
+      let body = await readFile("tests/fixtures/watch.html", "utf8");
+      if (firstWatch) {
+        firstWatch = false;
+        body = body.replace(
+          'id="secondary-inner"',
+          'id="pending-secondary-inner"',
+        );
+      }
+      await route.fulfill({
         contentType: "text/html",
-        body: await readFile("tests/fixtures/watch.html", "utf8"),
-      }),
-    );
+        body,
+      });
+    });
     const welcome = await context.newPage();
     await welcome.goto("https://www.youtube.com/watch?v=12345678901");
+    await welcome.getByRole("button", { name: "AI 歌詞", exact: true }).click();
+    expect(await welcome.locator("[data-ai-lyrics-panel]").count()).toBe(0);
+    await welcome.evaluate(() => {
+      (document.querySelector("#secondary") as HTMLElement).style.gridColumn =
+        "1 / -1";
+      document.querySelector("#pending-secondary-inner")!.id =
+        "secondary-inner";
+    });
+    await welcome.evaluate(async () => {
+      for (let i = 0; i < 4; i++) await new Promise(requestAnimationFrame);
+    });
+    await expect(welcome.locator("[data-ai-lyrics-panel]")).toBeHidden();
+    await welcome.evaluate(() => {
+      (document.querySelector("#secondary") as HTMLElement).style.gridColumn =
+        "";
+    });
+    await welcome
+      .getByRole("status", { name: "正在載入 AI 歌詞面板", exact: true })
+      .waitFor();
+    const skeletonBox = await welcome.locator(".panel").boundingBox();
+    await welcome.screenshot({
+      path: "artifacts/loading-skeleton.png",
+      fullPage: true,
+    });
+    await welcome
+      .getByRole("status", { name: "正在載入影片資訊", exact: true })
+      .waitFor();
+    const metadataBox = await welcome.locator(".panel").boundingBox();
+    expect(
+      Math.abs(metadataBox!.height - skeletonBox!.height),
+    ).toBeLessThanOrEqual(1);
+    expect(
+      Math.abs(metadataBox!.width - skeletonBox!.width),
+    ).toBeLessThanOrEqual(1);
+    await welcome
+      .getByRole("status", { name: "正在載入影片資訊", exact: true })
+      .waitFor({ state: "detached" });
+    const loadedBox = await welcome.locator(".panel").boundingBox();
+    expect(
+      Math.abs(loadedBox!.height - skeletonBox!.height),
+    ).toBeLessThanOrEqual(1);
+    expect(Math.abs(loadedBox!.width - skeletonBox!.width)).toBeLessThanOrEqual(
+      1,
+    );
+    expect(Math.abs(loadedBox!.y - skeletonBox!.y)).toBeLessThanOrEqual(1);
+    expect(
+      await worker.evaluate(() =>
+        (globalThis as any).__loadingTestPending.has("read-track"),
+      ),
+    ).toBe(true);
+    await expect(welcome.getByLabel("匯入 LRC／SRT")).toBeEnabled();
+    await expect(
+      welcome.getByRole("button", { name: "使用貼上歌詞", exact: true }),
+    ).toBeEnabled();
     await expect(
       welcome.getByRole("heading", { name: "AI 歌詞", exact: true }),
     ).toBeVisible();

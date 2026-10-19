@@ -22,6 +22,19 @@ afterEach(() => {
   cleanup();
   document.documentElement.removeAttribute("dark");
 });
+it("uses a full-size loading shell when opened before settings arrive", async () => {
+  requestMock.mockReturnValue(new Promise(() => {}));
+  const button = document.createElement("button");
+  const { container } = render(
+    <Onboarding button={button} binding={{} as any} overlay={{} as any} />,
+  );
+  fireEvent.click(button);
+  expect(
+    screen.getByRole("status", { name: "正在載入 AI 歌詞面板" }),
+  ).toBeTruthy();
+  expect(container.querySelector(".panel .workspace")).toBeTruthy();
+  expect(container.querySelectorAll(".skeleton-column")).toHaveLength(2);
+});
 it("auto opens the same local workspace before and after configuration even when offline", async () => {
   let configured = false;
   requestMock.mockImplementation(async (m: any) => {

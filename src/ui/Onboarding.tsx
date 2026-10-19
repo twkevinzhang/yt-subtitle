@@ -3,6 +3,7 @@ import { request } from "../shared/messages";
 import type { PublicSettings, PlayerBinding } from "../shared/types";
 import type { createOverlay } from "../content/overlay";
 import { Panel } from "./Panel";
+import { PanelSkeleton } from "./Skeleton";
 
 export function Onboarding({
   button,
@@ -16,6 +17,8 @@ export function Onboarding({
   const [settings, setSettings] = useState<PublicSettings>();
   const [visible, setVisible] = useState(false);
   const [opened, setOpened] = useState(false);
+  const [settingsError, setSettingsError] = useState("");
+  const [retry, setRetry] = useState(0);
   useEffect(() => {
     let live = true,
       first = true,
@@ -28,6 +31,7 @@ export function Onboarding({
         const s = await request<PublicSettings>({ type: "settings-public" });
         if (!live) return;
         setSettings(s);
+        setSettingsError("");
         if (first) {
           first = false;
           if (!s.configured) {
@@ -41,7 +45,7 @@ export function Onboarding({
           void request({ type: "connection-check" }).catch(() => {});
         }
       } catch {
-        /* Preserve current UI on transient extension errors. */
+        if (live) setSettingsError("設定暫時讀取失敗，請重試。");
       } finally {
         refreshing = false;
       }
@@ -71,17 +75,19 @@ export function Onboarding({
       window.removeEventListener("focus", focus);
       document.removeEventListener("visibilitychange", visibility);
     };
-  }, [button]);
+  }, [button, retry]);
   return (
     <div style={{ display: visible ? "block" : "none" }}>
       {!settings
         ? opened && (
-            <section className="panel">
-              <div className="panel-body">
-                <p role="status">正在讀取設定…</p>
-                <button onClick={() => setVisible(false)}>關閉</button>
-              </div>
-            </section>
+            <PanelSkeleton
+              onClose={() => setVisible(false)}
+              error={settingsError}
+              onRetry={() => {
+                setSettingsError("");
+                setRetry((v) => v + 1);
+              }}
+            />
           )
         : opened && (
             <Panel

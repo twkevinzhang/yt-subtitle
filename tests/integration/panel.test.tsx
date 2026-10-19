@@ -13,6 +13,75 @@ import { Panel } from "../../src/ui/Panel";
 const { mockRequest } = vi.hoisted(() => ({ mockRequest: vi.fn() }));
 vi.mock("../../src/shared/messages", () => ({ request: mockRequest }));
 afterEach(cleanup);
+it("loads video independently of cache and keeps local paste available while captions are pending", async () => {
+  mockRequest.mockClear();
+  const settings = {
+    configured: false,
+    baseUrl: "",
+    model: "",
+    settingsRevision: 0,
+    sources: [],
+    preferences: {
+      mode: "original",
+      targetLanguage: "zh-Hant",
+      fontSize: 28,
+      position: "bottom",
+    },
+  };
+  let finishVideo!: (value: any) => void;
+  mockRequest.mockImplementation((m: any) => {
+    if (m.type === "settings-public") return Promise.resolve(settings);
+    if (m.type === "inspect")
+      return new Promise((resolve) => {
+        finishVideo = resolve;
+      });
+    return new Promise(() => {});
+  });
+  render(
+    <Panel
+      binding={{
+        video: document.createElement("video"),
+        container: document.createElement("div"),
+        videoId: "12345678901",
+        isAd: () => false,
+      }}
+      overlay={{ setResult: vi.fn(), stop: vi.fn(), destroy: vi.fn() }}
+      onClose={() => {}}
+    />,
+  );
+  await screen.findByRole("status", { name: "正在載入影片資訊" });
+  await waitFor(() => expect(finishVideo).toBeTypeOf("function"));
+  finishVideo({
+    video: {
+      schemaVersion: 1,
+      videoId: "12345678901",
+      title: "延遲字幕測試",
+      channel: "test",
+      description: "",
+      durationMs: 10000,
+    },
+    tracks: [
+      {
+        id: "0",
+        label: "日文",
+        isAuto: true,
+        isTranslated: false,
+        language: "ja",
+      },
+    ],
+  });
+  await screen.findByText("延遲字幕測試");
+  fireEvent.change(screen.getByLabelText("歌詞全文"), {
+    target: { value: "本機歌詞" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "使用貼上歌詞" }));
+  await screen.findByRole("heading", { name: "逐句預覽與校時" });
+  expect(mockRequest).toHaveBeenCalledWith({
+    type: "read-track",
+    trackId: "0",
+  });
+  expect(screen.queryByRole("status", { name: "正在載入影片資訊" })).toBeNull();
+});
 it("resaving a loaded result retains its real source, translation language and model", async () => {
   mockRequest.mockClear();
   const saved = {
