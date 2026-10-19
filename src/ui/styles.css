@@ -1,0 +1,249 @@
+:host {
+  font:
+    14px/1.5 "Segoe UI",
+    "Noto Sans TC",
+    sans-serif;
+  color: #e8edf5;
+  color-scheme: dark;
+}
+* {
+  box-sizing: border-box;
+}
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+button {
+  cursor: pointer;
+  border: 1px solid #60718a;
+  border-radius: 6px;
+  background: #26364c;
+  color: #f3f6fc;
+  padding: 8px 12px;
+}
+button:hover {
+  background: #344b67;
+}
+button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+button.primary {
+  background: #2665b6;
+  border-color: #5793e4;
+}
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: 2px solid #8fbaff;
+  outline-offset: 2px;
+}
+input,
+textarea,
+select {
+  background: #152033;
+  color: #edf2fc;
+  border: 1px solid #52647c;
+  border-radius: 4px;
+  padding: 8px;
+  max-width: 100%;
+}
+textarea {
+  width: 100%;
+  resize: vertical;
+  min-height: 110px;
+}
+a {
+  color: #a7ceff;
+}
+label {
+  display: block;
+  margin: 8px 0;
+}
+label > span {
+  display: block;
+  margin-bottom: 4px;
+}
+input[type="checkbox"] {
+  margin-right: 8px;
+}
+h1,
+h2,
+h3,
+p {
+  margin: 0 0 12px;
+}
+h2 {
+  font-size: 20px;
+}
+h3 {
+  font-size: 16px;
+}
+small {
+  color: #b4c2d5;
+}
+pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: 12px/1.5 monospace;
+  max-height: 180px;
+  overflow: auto;
+}
+details {
+  margin: 10px 0;
+}
+summary {
+  cursor: pointer;
+}
+.row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.stack > * + * {
+  margin-top: 12px;
+}
+.notice {
+  padding: 10px 12px;
+  background: #243754;
+  border-left: 3px solid #8fbaff;
+}
+.error {
+  border-color: #ff9e9e;
+  background: #472d37;
+  color: #ffdae0;
+}
+.panel {
+  position: absolute;
+  right: 16px;
+  top: 16px;
+  bottom: 70px;
+  width: min(540px, calc(100% - 32px));
+  background: #19263a;
+  border: 1px solid #566c87;
+  border-radius: 10px;
+  box-shadow: 0 14px 36px #0008;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  pointer-events: auto;
+  text-align: left;
+}
+.panel header {
+  padding: 14px 18px;
+  background: #22334c;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.panel header h2 {
+  margin: 0;
+}
+.panel-body {
+  overflow: auto;
+  padding: 18px;
+  flex: 1;
+}
+.section {
+  padding-bottom: 16px;
+  margin-bottom: 16px;
+  border-bottom: 1px solid #3c4f69;
+}
+.candidate {
+  padding: 12px 0;
+  border-bottom: 1px solid #3c4f69;
+}
+.candidate .row {
+  justify-content: space-between;
+}
+.editor-row {
+  padding: 12px 0;
+  border-bottom: 1px solid #3c4f69;
+}
+.editor-row input[type="number"] {
+  width: 100px;
+}
+.editor-row textarea {
+  min-height: 65px;
+}
+.time-controls {
+  margin-top: 8px;
+}
+.muted {
+  color: #b4c2d5;
+}
+.options {
+  max-width: 900px;
+  margin: 40px auto;
+  padding: 0 24px 48px;
+}
+.options h1 {
+  font-size: 30px;
+}
+.options section {
+  padding: 24px 0;
+  border-bottom: 1px solid #c7d1dd;
+}
+.options .grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px 24px;
+}
+.options input:not([type="checkbox"]),
+.options select {
+  width: 100%;
+}
+.options .source {
+  display: grid;
+  grid-template-columns: 24px 1fr 1.5fr auto;
+  gap: 10px;
+  align-items: center;
+  margin: 12px 0;
+}
+.options .source input[type="checkbox"] {
+  width: auto;
+}
+.options .source label {
+  grid-column: 2/4;
+}
+.options .row {
+  margin-top: 12px;
+}
+.options .summary {
+  max-width: 65ch;
+}
+.options .records {
+  margin: 12px 0;
+}
+.options .notice {
+  margin-top: 16px;
+}
+@media (max-width: 650px) {
+  .options {
+    margin: 20px auto;
+  }
+  .options .grid {
+    grid-template-columns: 1fr;
+  }
+  .panel {
+    right: 8px;
+    width: calc(100% - 16px);
+  }
+  .options .source {
+    grid-template-columns: 24px 1fr;
+  }
+  .options .source > * {
+    grid-column: 2;
+  }
+  .options .source > input[type="checkbox"] {
+    grid-column: 1;
+    grid-row: 1;
+  }
+  .options .source label {
+    grid-column: 2;
+  }
+}
