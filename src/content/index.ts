@@ -4,7 +4,7 @@ import { bindPlayer } from "./player";
 import { createOverlay } from "./overlay";
 import { Onboarding } from "../ui/Onboarding";
 import { followYouTubeTheme } from "./theme";
-import { mountBelowPlayer } from "./placement";
+import { mountWatchPanel } from "./placement";
 import css from "../ui/styles.css?inline";
 let cleanup = () => {};
 bindPlayer((binding) => {
@@ -29,7 +29,7 @@ bindPlayer((binding) => {
   style.textContent = css;
   const mount = document.createElement("div");
   shadow.append(style, mount);
-  const stopPlacement = mountBelowPlayer(binding.container, host);
+  const stopPlacement = mountWatchPanel(binding.container, host);
   const overlay = createOverlay(binding);
   const stopTheme = followYouTubeTheme(host);
   const root = createRoot(mount);

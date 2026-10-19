@@ -111,10 +111,12 @@ test("Brave: settings, mock search, alignment, manual import, overlay and SRT", 
     const welcomePanel = welcome.locator(".panel");
     const playerBox = await welcome.locator("#movie_player").boundingBox();
     const panelBox = await welcomePanel.boundingBox();
-    expect(panelBox!.width).toBeLessThanOrEqual(playerBox!.width + 1);
-    expect(panelBox!.y).toBeGreaterThanOrEqual(
-      playerBox!.y + playerBox!.height,
-    );
+    expect(panelBox!.x).toBeGreaterThanOrEqual(playerBox!.x + playerBox!.width);
+    expect(panelBox!.y).toBeLessThan(playerBox!.y + playerBox!.height);
+    await expect(
+      welcome.locator("#secondary-inner > [data-ai-lyrics-panel]"),
+    ).toHaveCount(1);
+    expect(await welcome.locator("#related").count()).toBe(1);
     const operationsBox = await welcome
       .getByRole("complementary", { name: "歌詞操作與設定" })
       .boundingBox();
@@ -122,6 +124,42 @@ test("Brave: settings, mock search, alignment, manual import, overlay and SRT", 
       .getByRole("region", { name: "字幕編輯與預覽" })
       .boundingBox();
     expect(previewBox!.x).toBeGreaterThan(operationsBox!.x);
+    await welcome.getByLabel("歌詞全文").fill("切換模式保留草稿");
+    await welcome.evaluate(() => {
+      document.querySelector("#watch-shell")!.setAttribute("data-theater", "");
+      document.body.prepend(document.querySelector("#player")!);
+    });
+    await expect
+      .poll(async () => {
+        const p = await welcome.locator("#movie_player").boundingBox();
+        const w = await welcomePanel.boundingBox();
+        return w!.y >= p!.y + p!.height;
+      })
+      .toBe(true);
+    await expect(welcome.getByLabel("歌詞全文")).toHaveValue(
+      "切換模式保留草稿",
+    );
+    await welcome.screenshot({
+      path: "artifacts/sidebar-theater.png",
+      fullPage: true,
+    });
+    await welcome.evaluate(() => {
+      document
+        .querySelector("#primary-inner")!
+        .prepend(document.querySelector("#player")!);
+      document.querySelector("#watch-shell")!.removeAttribute("data-theater");
+    });
+    await expect
+      .poll(async () => {
+        const p = await welcome.locator("#movie_player").boundingBox();
+        const w = await welcomePanel.boundingBox();
+        return w!.x >= p!.x + p!.width;
+      })
+      .toBe(true);
+    await expect(welcome.getByLabel("歌詞全文")).toHaveValue(
+      "切換模式保留草稿",
+    );
+    await welcome.getByLabel("歌詞全文").fill("");
     await welcomePanel.scrollIntoViewIfNeeded();
     await expect(welcomePanel).toHaveCSS(
       "background-color",

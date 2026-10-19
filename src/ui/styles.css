@@ -13,6 +13,7 @@
   --error-text: #8f1833;
   --border: #c7d1dd;
   color: var(--text);
+  container-type: inline-size;
   color-scheme: light;
 }
 :host([data-theme="dark"]) {
@@ -258,6 +259,42 @@ summary {
 }
 .operations input[type="file"] {
   width: 100%;
+}
+@container (max-width: 600px) {
+  .workspace {
+    grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr);
+    height: 620px;
+  }
+  .operations,
+  .lyrics-preview {
+    padding: 12px;
+  }
+  .operations {
+    font-size: 13px;
+  }
+  .lyric-line {
+    padding: 12px 4px;
+    font-size: 17px;
+  }
+  .lyric-translation {
+    font-size: 14px;
+  }
+  .panel header {
+    padding: 12px;
+  }
+  .empty-preview {
+    padding: 12px;
+  }
+  .row > *,
+  .operations input,
+  .operations select {
+    min-width: 0;
+    max-width: 100%;
+  }
+  .operations h3,
+  .empty-preview {
+    overflow-wrap: anywhere;
+  }
 }
 .empty-preview {
   min-height: 200px;
