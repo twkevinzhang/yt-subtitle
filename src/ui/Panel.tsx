@@ -18,6 +18,7 @@ import { toSrt, safeFilename } from "../lyrics/export";
 import { Consent } from "./Consent";
 import { Candidates } from "./Candidates";
 import { Editor } from "./Editor";
+import { LyricsPreview } from "./LyricsPreview";
 import type { createOverlay } from "../content/overlay";
 import type { RunRecord } from "../background/runs";
 import {
@@ -30,10 +31,12 @@ export function Panel({
   binding,
   overlay,
   onClose,
+  publicSettings,
 }: {
   binding: PlayerBinding;
   overlay: ReturnType<typeof createOverlay>;
   onClose: () => void;
+  publicSettings?: PublicSettings;
 }) {
   const [settings, setSettings] = useState<PublicSettings>(),
     [video, setVideo] = useState<VideoContext>(),
@@ -66,6 +69,12 @@ export function Panel({
     provenance: DraftProvenance | undefined;
     hash: string;
   }>();
+  useEffect(() => {
+    if (publicSettings) {
+      setSettings(publicSettings);
+      setConfirm(null);
+    }
+  }, [publicSettings?.settingsRevision, publicSettings?.configured]);
   useEffect(() => {
     const refresh = () => {
       void request<PublicSettings>({ type: "settings-public" })
@@ -371,375 +380,460 @@ export function Panel({
       setTimeout(() => URL.revokeObjectURL(url), 1000);
     });
   return (
-    <div className="panel" role="dialog" aria-label="AI 歌詞工作面板">
+    <div className="panel" role="region" aria-label="AI 歌詞工作面板">
       <header>
         <h2>AI 歌詞</h2>
         <button aria-label="關閉面板" onClick={onClose}>
           ×
         </button>
       </header>
-      <div className="panel-body stack">
-        <div className="section">
-          <h3>{video?.title || "目前影片"}</h3>
-          <p className="muted">{message}</p>
-          {tracks.length > 0 && (
-            <div className="row">
-              <select
-                aria-label="字幕來源"
-                value={trackId}
-                disabled={busy}
-                onChange={(e) => setTrackId(e.target.value)}
-              >
-                {tracks.map((t) => (
-                  <option key={t.id} value={t.id}>
-                    {t.label}
-                    {t.isAuto ? "（自動產生）" : ""}
-                    {t.isTranslated ? "（翻譯）" : ""}
-                  </option>
-                ))}
-              </select>
-              <button
-                disabled={busy}
-                onClick={() =>
-                  attempt(async () => {
-                    const c = await request<Cue[]>({
-                      type: "read-track",
-                      trackId,
-                    });
-                    setCues(c);
-                    setMessage(`已讀取 ${c.length} 段字幕`);
-                  })
-                }
-              >
-                重新讀取
+      <div className="workspace">
+        <aside
+          className="panel-body operations stack"
+          aria-label="歌詞操作與設定"
+          tabIndex={0}
+        >
+          {settings?.configured && (
+            <div className="section">
+              <h3>{video?.title || "目前影片"}</h3>
+              <p className="muted">{message}</p>
+              {tracks.length > 0 && (
+                <div className="row">
+                  <select
+                    aria-label="字幕來源"
+                    value={trackId}
+                    disabled={busy}
+                    onChange={(e) => setTrackId(e.target.value)}
+                  >
+                    {tracks.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {t.label}
+                        {t.isAuto ? "（自動產生）" : ""}
+                        {t.isTranslated ? "（翻譯）" : ""}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    disabled={busy}
+                    onClick={() =>
+                      attempt(async () => {
+                        const c = await request<Cue[]>({
+                          type: "read-track",
+                          trackId,
+                        });
+                        setCues(c);
+                        setMessage(`已讀取 ${c.length} 段字幕`);
+                      })
+                    }
+                  >
+                    重新讀取
+                  </button>
+                </div>
+              )}
+              <button onClick={() => void request({ type: "open-options" })}>
+                開啟設定
               </button>
             </div>
           )}
-          <button onClick={() => void request({ type: "open-options" })}>
-            開啟設定
-          </button>
-        </div>
-        {error && (
-          <p role="alert" className="notice error">
-            {error}
-          </p>
-        )}
-        {busy ? (
-          <div className="notice">
-            <p>處理中…{progress}</p>
-            <button
-              onClick={() =>
-                activeRun.current &&
-                void request({ type: "cancel", runId: activeRun.current })
-              }
-            >
-              取消工作
-            </button>
-          </div>
-        ) : (
-          <>
-            {!settings?.configured && (
-              <p className="notice">
-                先在設定頁填入你自己的 AI 服務。匯入或手動校時仍可使用。
-              </p>
-            )}
-            {saved.length > 0 && (
-              <section>
-                <h3>本機保存的版本</h3>
-                {saved.map((r) => (
-                  <div className="row" key={r.key.inputHash}>
-                    <small>
-                      {new Date(r.updatedAt).toLocaleString()}／{r.lines.length}{" "}
-                      句／{r.key.targetLanguage}
-                    </small>
+          {error && (
+            <p role="alert" className="notice error">
+              {error}
+            </p>
+          )}
+          {!settings?.configured && lines.length > 0 && (
+            <p className="notice">
+              先在設定頁填入你自己的 AI 服務，解鎖搜尋、對齊與翻譯。
+              <button onClick={() => void request({ type: "open-options" })}>
+                前往設定
+              </button>
+            </p>
+          )}
+          {!settings?.configured && lines.length > 0 && (
+            <p role="status" className="muted">
+              {message}
+            </p>
+          )}
+          {busy ? (
+            <div className="notice">
+              <p>處理中…{progress}</p>
+              <button
+                onClick={() =>
+                  activeRun.current &&
+                  void request({ type: "cancel", runId: activeRun.current })
+                }
+              >
+                取消工作
+              </button>
+            </div>
+          ) : (
+            <>
+              {saved.length > 0 && (
+                <section>
+                  <h3>本機保存的版本</h3>
+                  {saved.map((r) => (
+                    <div className="row" key={r.key.inputHash}>
+                      <small>
+                        {new Date(r.updatedAt).toLocaleString()}／
+                        {r.lines.length} 句／{r.key.targetLanguage}
+                      </small>
+                      <button
+                        onClick={() => {
+                          setLines(r.lines);
+                          setOffset(r.offsetMs);
+                          setSelected(undefined);
+                          provenance.current = provenanceOf(r);
+                          originalHash.current = r.key.inputHash;
+                          setMessage("已載入本機結果，不會呼叫 AI");
+                        }}
+                      >
+                        載入
+                      </button>
+                    </div>
+                  ))}
+                </section>
+              )}
+              {settings?.configured && (
+                <section className="section">
+                  <h3>尋找歌詞</h3>
+                  {previousDraft && (
                     <button
                       onClick={() => {
-                        setLines(r.lines);
-                        setOffset(r.offsetMs);
-                        setSelected(undefined);
-                        provenance.current = provenanceOf(r);
-                        originalHash.current = r.key.inputHash;
-                        setMessage("已載入本機結果，不會呼叫 AI");
+                        setLines(previousDraft.lines);
+                        setOffset(previousDraft.offset);
+                        setText(previousDraft.text);
+                        setSelected(previousDraft.selected);
+                        provenance.current = previousDraft.provenance;
+                        originalHash.current = previousDraft.hash;
+                        setPreviousDraft(undefined);
                       }}
                     >
-                      載入
+                      返回上一份草稿
                     </button>
-                  </div>
-                ))}
-              </section>
-            )}
-            <section className="section">
-              <h3>尋找歌詞</h3>
-              {previousDraft && (
-                <button
-                  onClick={() => {
-                    setLines(previousDraft.lines);
-                    setOffset(previousDraft.offset);
-                    setText(previousDraft.text);
-                    setSelected(previousDraft.selected);
-                    provenance.current = previousDraft.provenance;
-                    originalHash.current = previousDraft.hash;
-                    setPreviousDraft(undefined);
-                  }}
-                >
-                  返回上一份草稿
-                </button>
-              )}
-              <p>由你的 AI 服務搜尋勾選來源，選好版本後再對齊。</p>
-              <button
-                className="primary"
-                disabled={
-                  !settings?.configured ||
-                  !settings.sources.some((s) => s.enabled) ||
-                  !video
-                }
-                onClick={() => setConfirm("search")}
-              >
-                搜尋歌詞
-              </button>
-              {settings && !settings.sources.some((s) => s.enabled) && (
-                <p>尚未勾選歌詞來源。</p>
-              )}
-            </section>
-            {confirm === "search" && searchPayload && (
-              <Consent
-                title="開始搜尋"
-                endpoint={settings!.baseUrl}
-                payload={searchPayload}
-                onConfirm={startSearch}
-                onCancel={() => setConfirm(null)}
-              />
-            )}
-            {candidates && (
-              <Candidates candidates={candidates} onSelect={useCandidate} />
-            )}
-            <section className="section">
-              <h3>
-                {selected ? `選定版本：${selected.title}` : "貼上或匯入歌詞"}
-              </h3>
-              {selected && (
-                <p>
-                  <a
-                    href={selected.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                  >
-                    開啟來源並取得全文
-                  </a>
-                  ；貼入文字由你提供，不代表已核實。
-                </p>
-              )}
-              <textarea
-                aria-label="歌詞全文"
-                placeholder="每行一句歌詞；也可以直接匯入 LRC 或 SRT。"
-                value={text}
-                onChange={(e) => setText(e.target.value)}
-              />
-              <div className="row">
-                <button
-                  onClick={() =>
-                    attempt(async () => {
-                      if (!video) throw new Error("影片尚未就緒");
-                      setLines(
-                        parseLyrics(
-                          new TextEncoder().encode(text),
-                          "txt",
-                          video.durationMs,
-                        ),
-                      );
-                      userProvided.current = true;
-                      provenance.current = {
-                        source: selected
-                          ? {
-                              kind: "user",
-                              url: selected.url,
-                              version: selected.version,
-                            }
-                          : { kind: "user" },
-                        targetLanguage:
-                          settings?.preferences.targetLanguage || "zh-Hant",
-                        model: "",
-                      };
-                      originalHash.current = await hashInput(text);
-                      setConfirm(null);
-                    })
-                  }
-                >
-                  使用貼上歌詞
-                </button>
-                <label>
-                  匯入 LRC／SRT
-                  <input
-                    type="file"
-                    accept=".lrc,.srt,.txt"
-                    onChange={(e) => {
-                      const file = e.target.files?.[0];
-                      if (file)
-                        void attempt(async () => {
-                          if (file.size > 2097152)
-                            throw new Error("檔案超過 2 MiB");
-                          if (!video) throw new Error("影片尚未就緒");
-                          const bytes = new Uint8Array(
-                            await file.arrayBuffer(),
-                          );
-                          const ext = file.name.toLowerCase().split(".").at(-1);
-                          setLines(
-                            parseLyrics(
-                              bytes,
-                              ext === "lrc"
-                                ? "lrc"
-                                : ext === "srt"
-                                  ? "srt"
-                                  : "txt",
-                              video.durationMs,
-                            ),
-                          );
-                          setSelected(undefined);
-                          provenance.current = {
-                            source: { kind: "user" },
-                            targetLanguage:
-                              settings?.preferences.targetLanguage || "zh-Hant",
-                            model: "",
-                          };
-                          originalHash.current = await hashInput([...bytes]);
-                          setConfirm(null);
-                        });
-                      e.target.value = "";
-                    }}
-                  />
-                </label>
-              </div>
-            </section>
-            {lines.length > 0 && (
-              <>
-                <section className="section">
-                  <label>
-                    <input
-                      type="checkbox"
-                      checked={translate}
-                      onChange={(e) => setTranslate(e.target.checked)}
-                    />
-                    生成譯文（
-                    {settings?.preferences.targetLanguage || "zh-Hant"}）
-                  </label>
-                  <p>
-                    <small>
-                      本次最多 {Math.ceil(lines.length / 40)} 批；每個請求 120
-                      秒、整次 10 分鐘，最多 20 次。
-                    </small>
-                  </p>
+                  )}
+                  <p>由你的 AI 服務搜尋勾選來源，選好版本後再對齊。</p>
                   <button
+                    className="primary"
                     disabled={
                       !settings?.configured ||
-                      (!cues.length &&
-                        lines.some(
-                          (l) => !l.excluded && l.startMs === undefined,
-                        )) ||
-                      (!translate &&
-                        lines.every((l) => l.startMs !== undefined))
+                      !settings.sources.some((s) => s.enabled) ||
+                      !video
                     }
-                    onClick={() => setConfirm("generate")}
+                    onClick={() => setConfirm("search")}
                   >
-                    對齊／生成譯文
+                    搜尋歌詞
                   </button>
-                  {!cues.length && (
-                    <p className="muted">
-                      沒有可用字幕時，請逐句手動校時或匯入帶時間的檔案。
-                    </p>
+                  {settings && !settings.sources.some((s) => s.enabled) && (
+                    <p>尚未勾選歌詞來源。</p>
                   )}
                 </section>
-                {confirm === "generate" && generatePayload && (
+              )}
+              {settings?.configured &&
+                confirm === "search" &&
+                searchPayload && (
                   <Consent
-                    title="開始對齊／翻譯"
+                    title="開始搜尋"
                     endpoint={settings!.baseUrl}
-                    payload={generatePayload}
-                    onConfirm={startGenerate}
+                    payload={searchPayload}
+                    onConfirm={startSearch}
                     onCancel={() => setConfirm(null)}
                   />
                 )}
-                <Editor
-                  lines={lines}
-                  onChange={setLines}
-                  currentMs={() => Math.round(binding.video.currentTime * 1000)}
-                  seek={(ms) => {
-                    binding.video.currentTime = ms / 1000;
-                    void binding.video.play().catch(() => {});
-                  }}
-                />
-                <section className="section">
-                  <label>
-                    <span>顯示模式</span>
-                    <select
-                      value={mode}
-                      onChange={(e) => setMode(e.target.value as DisplayMode)}
+              {settings?.configured && candidates && (
+                <Candidates candidates={candidates} onSelect={useCandidate} />
+              )}
+              <section className="section">
+                <h3>
+                  {selected ? `選定版本：${selected.title}` : "貼上或匯入歌詞"}
+                </h3>
+                {selected && (
+                  <p>
+                    <a
+                      href={selected.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
                     >
-                      <option value="original">原文</option>
-                      <option
-                        value="bilingual"
-                        disabled={lines.some(
-                          (l) => !l.excluded && !l.translation,
-                        )}
-                      >
-                        原文＋譯文
-                      </option>
-                      <option
-                        value="translation"
-                        disabled={lines.some(
-                          (l) => !l.excluded && !l.translation,
-                        )}
-                      >
-                        僅譯文
-                      </option>
-                    </select>
-                  </label>
+                      開啟來源並取得全文
+                    </a>
+                    ；貼入文字由你提供，不代表已核實。
+                  </p>
+                )}
+                <textarea
+                  aria-label="歌詞全文"
+                  placeholder="每行一句歌詞；也可以直接匯入 LRC 或 SRT。"
+                  value={text}
+                  onChange={(e) => setText(e.target.value)}
+                />
+                <div className="row">
+                  <button
+                    onClick={() =>
+                      attempt(async () => {
+                        if (!video) throw new Error("影片尚未就緒");
+                        setLines(
+                          parseLyrics(
+                            new TextEncoder().encode(text),
+                            "txt",
+                            video.durationMs,
+                          ),
+                        );
+                        userProvided.current = true;
+                        provenance.current = {
+                          source: selected
+                            ? {
+                                kind: "user",
+                                url: selected.url,
+                                version: selected.version,
+                              }
+                            : { kind: "user" },
+                          targetLanguage:
+                            settings?.preferences.targetLanguage || "zh-Hant",
+                          model: "",
+                        };
+                        originalHash.current = await hashInput(text);
+                        setConfirm(null);
+                      })
+                    }
+                  >
+                    使用貼上歌詞
+                  </button>
                   <label>
-                    <span>整體偏移（秒，正數為延後）</span>
+                    匯入 LRC／SRT
                     <input
-                      type="number"
-                      step="0.1"
-                      value={offset / 1000}
-                      onChange={(e) =>
-                        setOffset(Math.round(Number(e.target.value) * 1000))
-                      }
+                      type="file"
+                      accept=".lrc,.srt,.txt"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file)
+                          void attempt(async () => {
+                            if (file.size > 2097152)
+                              throw new Error("檔案超過 2 MiB");
+                            if (!video) throw new Error("影片尚未就緒");
+                            const bytes = new Uint8Array(
+                              await file.arrayBuffer(),
+                            );
+                            const ext = file.name
+                              .toLowerCase()
+                              .split(".")
+                              .at(-1);
+                            setLines(
+                              parseLyrics(
+                                bytes,
+                                ext === "lrc"
+                                  ? "lrc"
+                                  : ext === "srt"
+                                    ? "srt"
+                                    : "txt",
+                                video.durationMs,
+                              ),
+                            );
+                            setSelected(undefined);
+                            provenance.current = {
+                              source: { kind: "user" },
+                              targetLanguage:
+                                settings?.preferences.targetLanguage ||
+                                "zh-Hant",
+                              model: "",
+                            };
+                            originalHash.current = await hashInput([...bytes]);
+                            setConfirm(null);
+                          });
+                        e.target.value = "";
+                      }}
                     />
                   </label>
-                  <p className="muted">
-                    {video &&
-                    validateTiming(lines, video.durationMs, offset).filter(
-                      (i) => i.severity === "warning",
-                    ).length > 0
-                      ? "部分句子時間重疊，請確認是否符合演唱。"
-                      : ""}
-                  </p>
-                  <div className="row">
+                </div>
+              </section>
+              {lines.length > 0 && (
+                <>
+                  <section className="section">
+                    <label>
+                      <input
+                        type="checkbox"
+                        disabled={!settings?.configured}
+                        checked={translate}
+                        onChange={(e) => setTranslate(e.target.checked)}
+                      />
+                      生成譯文（
+                      {settings?.preferences.targetLanguage || "zh-Hant"}）
+                    </label>
+                    <p>
+                      <small>
+                        本次最多 {Math.ceil(lines.length / 40)} 批；每個請求 120
+                        秒、整次 10 分鐘，最多 20 次。
+                      </small>
+                    </p>
                     <button
-                      className="primary"
-                      onClick={() =>
-                        attempt(async () => {
-                          const r = await result();
-                          overlay.setResult(r, mode, settings?.preferences);
-                          await request({ type: "results-save", result: r });
-                          setSaved(
-                            await request<SavedResult[]>({
-                              type: "results-list",
-                            }),
-                          );
-                          setMessage(
-                            "已套用並保存在本機。如與原生字幕重疊，請關閉 YouTube CC。",
-                          );
-                        })
+                      disabled={
+                        !settings?.configured ||
+                        (!cues.length &&
+                          lines.some(
+                            (l) => !l.excluded && l.startMs === undefined,
+                          )) ||
+                        (!translate &&
+                          lines.every((l) => l.startMs !== undefined))
                       }
+                      onClick={() => setConfirm("generate")}
                     >
-                      套用並保存
+                      對齊／生成譯文
                     </button>
-                    <button onClick={download}>下載 SRT</button>
-                    <button onClick={() => overlay.stop()}>停止顯示</button>
-                  </div>
-                </section>
-              </>
-            )}
-          </>
-        )}
+                    {!cues.length && (
+                      <p className="muted">
+                        沒有可用字幕時，請逐句手動校時或匯入帶時間的檔案。
+                      </p>
+                    )}
+                  </section>
+                  {settings?.configured &&
+                    confirm === "generate" &&
+                    generatePayload && (
+                      <Consent
+                        title="開始對齊／翻譯"
+                        endpoint={settings!.baseUrl}
+                        payload={generatePayload}
+                        onConfirm={startGenerate}
+                        onCancel={() => setConfirm(null)}
+                      />
+                    )}
+                  <Editor
+                    lines={lines}
+                    onChange={setLines}
+                    currentMs={() =>
+                      Math.round(binding.video.currentTime * 1000)
+                    }
+                    seek={(ms) => {
+                      binding.video.currentTime = ms / 1000;
+                      void binding.video.play().catch(() => {});
+                    }}
+                  />
+                  <section className="section">
+                    <label>
+                      <span>顯示模式</span>
+                      <select
+                        value={mode}
+                        onChange={(e) => setMode(e.target.value as DisplayMode)}
+                      >
+                        <option value="original">原文</option>
+                        <option
+                          value="bilingual"
+                          disabled={lines.some(
+                            (l) => !l.excluded && !l.translation,
+                          )}
+                        >
+                          原文＋譯文
+                        </option>
+                        <option
+                          value="translation"
+                          disabled={lines.some(
+                            (l) => !l.excluded && !l.translation,
+                          )}
+                        >
+                          僅譯文
+                        </option>
+                      </select>
+                    </label>
+                    <label>
+                      <span>整體偏移（秒，正數為延後）</span>
+                      <input
+                        type="number"
+                        step="0.1"
+                        value={offset / 1000}
+                        onChange={(e) =>
+                          setOffset(Math.round(Number(e.target.value) * 1000))
+                        }
+                      />
+                    </label>
+                    <p className="muted">
+                      {video &&
+                      validateTiming(lines, video.durationMs, offset).filter(
+                        (i) => i.severity === "warning",
+                      ).length > 0
+                        ? "部分句子時間重疊，請確認是否符合演唱。"
+                        : ""}
+                    </p>
+                    <div className="row">
+                      <button
+                        className="primary"
+                        onClick={() =>
+                          attempt(async () => {
+                            const r = await result();
+                            overlay.setResult(r, mode, settings?.preferences);
+                            await request({ type: "results-save", result: r });
+                            setSaved(
+                              await request<SavedResult[]>({
+                                type: "results-list",
+                              }),
+                            );
+                            setMessage(
+                              "已套用並保存在本機。如與原生字幕重疊，請關閉 YouTube CC。",
+                            );
+                          })
+                        }
+                      >
+                        套用並保存
+                      </button>
+                      <button onClick={download}>下載 SRT</button>
+                      <button onClick={() => overlay.stop()}>停止顯示</button>
+                    </div>
+                  </section>
+                </>
+              )}
+            </>
+          )}
+        </aside>
+        <section
+          className="lyrics-preview"
+          aria-label="字幕編輯與預覽"
+          tabIndex={0}
+        >
+          <h3>歌詞預覽</h3>
+          {lines.length > 0 ? (
+            <LyricsPreview
+              lines={lines}
+              mode={mode}
+              offsetMs={offset}
+              video={binding.video}
+              seek={(ms) => {
+                binding.video.currentTime = ms / 1000;
+                void binding.video.play().catch(() => {});
+              }}
+            />
+          ) : (
+            <div className="empty-preview">
+              <h3>{video?.title || "目前影片"}</h3>
+              <p className="muted">
+                {video?.channel}
+                {video?.durationMs
+                  ? ` · ${Math.floor(video.durationMs / 60000)}:${String(Math.floor(video.durationMs / 1000) % 60).padStart(2, "0")}`
+                  : ""}
+              </p>
+              {!settings?.configured ? (
+                <>
+                  <p className="notice">
+                    先在設定頁填入你自己的 AI 服務，即可使用 AI
+                    搜尋、對齊與翻譯。
+                  </p>
+                  <p>
+                    貼上、匯入及手動校時現在就能使用。請從左側貼上歌詞或匯入
+                    LRC／SRT，歌詞會完整顯示在這裡。
+                  </p>
+                  <button
+                    className="primary"
+                    onClick={() => void request({ type: "open-options" })}
+                  >
+                    前往設定
+                  </button>
+                  <p className="muted">
+                    設定 API 網址、API Token
+                    與模型名稱並儲存後，返回影片即可啟用 AI。
+                  </p>
+                </>
+              ) : (
+                <p className="muted">
+                  從左側貼上、匯入或使用 AI
+                  尋找歌詞。每一句會顯示在這裡，點擊已校時的歌詞可跳至該句。
+                </p>
+              )}
+            </div>
+          )}
+        </section>
       </div>
     </div>
   );

@@ -38,8 +38,8 @@ export const preferencesSchema = z.object({
 export const providerSchema = z.object({
   schemaVersion: z.literal(1),
   baseUrl: z.string().url(),
-  apiToken: z.string().min(1),
-  model: z.string().min(1),
+  apiToken: z.string().trim().min(1),
+  model: z.string().trim().min(1),
   cfClientId: z.string().optional(),
   cfClientSecret: z.string().optional(),
 });
@@ -60,6 +60,7 @@ const msg = z.discriminatedUnion("type", [
   }),
   z.object({ type: z.literal("clear-credentials") }),
   z.object({ type: z.literal("models") }),
+  z.object({ type: z.literal("connection-check") }),
   z.object({ type: z.literal("open-options") }),
   z.object({ type: z.literal("inspect") }),
   z.object({ type: z.literal("read-track"), trackId: z.string() }),

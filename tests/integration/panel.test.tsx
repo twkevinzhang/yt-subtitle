@@ -146,6 +146,44 @@ it("refreshes settings when returning from the options tab", async () => {
     />,
   );
   await screen.findByText(/先在設定頁填入/);
+  expect(screen.queryByRole("button", { name: /^搜尋歌詞$/ })).toBeNull();
+  expect(
+    screen
+      .getByRole("button", { name: "使用貼上歌詞" })
+      .hasAttribute("disabled"),
+  ).toBe(false);
+  expect(screen.getByLabelText("匯入 LRC／SRT").hasAttribute("disabled")).toBe(
+    false,
+  );
+  expect(
+    screen.getByRole("region", { name: "字幕編輯與預覽" }).textContent,
+  ).toContain("test");
+  fireEvent.change(screen.getByLabelText("歌詞全文"), {
+    target: { value: "本機歌詞" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "使用貼上歌詞" }));
+  await screen.findByRole("heading", { name: "逐句預覽與校時" });
+  expect(
+    screen
+      .getByRole("button", { name: "對齊／生成譯文" })
+      .hasAttribute("disabled"),
+  ).toBe(true);
+  expect(
+    screen.getByRole("checkbox", { name: /生成譯文/ }).hasAttribute("disabled"),
+  ).toBe(true);
+  fireEvent.change(screen.getByLabelText("第 1 句開始秒數"), {
+    target: { value: "1" },
+  });
+  fireEvent.change(screen.getByLabelText("第 1 句結束秒數"), {
+    target: { value: "2" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "套用並保存" }));
+  await waitFor(() =>
+    expect(
+      mockRequest.mock.calls.some(([m]) => m.type === "results-save"),
+    ).toBe(true),
+  );
+  await screen.findByText(/已套用並保存在本機/);
   configured = true;
   fireEvent.focus(window);
   await waitFor(() => expect(screen.queryByText(/先在設定頁填入/)).toBeNull());

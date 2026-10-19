@@ -78,6 +78,20 @@ export async function handleMessage(
         new AbortController().signal,
       );
     }
+    case "connection-check": {
+      const s = await getSettings();
+      if (!s.provider) return { reachable: false };
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 8000);
+      try {
+        await createAiClient(s.provider).listModels(controller.signal);
+        return { reachable: true };
+      } catch {
+        return { reachable: false };
+      } finally {
+        clearTimeout(timeout);
+      }
+    }
     case "open-options":
       return chrome.runtime.openOptionsPage();
     case "inspect":

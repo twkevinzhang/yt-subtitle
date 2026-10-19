@@ -2,7 +2,9 @@ import React from "react";
 import { createRoot } from "react-dom/client";
 import { bindPlayer } from "./player";
 import { createOverlay } from "./overlay";
-import { Panel } from "../ui/Panel";
+import { Onboarding } from "../ui/Onboarding";
+import { followYouTubeTheme } from "./theme";
+import { mountBelowPlayer } from "./placement";
 import css from "../ui/styles.css?inline";
 let cleanup = () => {};
 bindPlayer((binding) => {
@@ -20,33 +22,22 @@ bindPlayer((binding) => {
   button.dataset.aiLyricsButton = "";
   controls.prepend(button);
   const host = document.createElement("div");
-  host.style.cssText =
-    "position:absolute;inset:0;pointer-events:none;z-index:60";
+  host.dataset.aiLyricsPanel = "";
+  host.style.cssText = "display:block;width:100%;position:relative;z-index:1";
   const shadow = host.attachShadow({ mode: "open" });
   const style = document.createElement("style");
   style.textContent = css;
   const mount = document.createElement("div");
   shadow.append(style, mount);
-  binding.container.append(host);
+  const stopPlacement = mountBelowPlayer(binding.container, host);
   const overlay = createOverlay(binding);
-  let root: ReturnType<typeof createRoot> | undefined,
-    visible = false;
-  const close = () => {
-    visible = false;
-    mount.style.display = "none";
-  };
-  button.onclick = () => {
-    if (!root) {
-      root = createRoot(mount);
-      root.render(
-        React.createElement(Panel, { binding, overlay, onClose: close }),
-      );
-    }
-    visible = !visible;
-    mount.style.display = visible ? "block" : "none";
-  };
+  const stopTheme = followYouTubeTheme(host);
+  const root = createRoot(mount);
+  root.render(React.createElement(Onboarding, { binding, overlay, button }));
   cleanup = () => {
-    root?.unmount();
+    root.unmount();
+    stopTheme();
+    stopPlacement();
     overlay.destroy();
     button.remove();
     host.remove();

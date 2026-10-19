@@ -5,12 +5,14 @@ import path from "node:path";
 import os from "node:os";
 test("Brave: settings, mock search, alignment, manual import, overlay and SRT", async () => {
   const requests: { path: string; body: any }[] = [];
+  let failModels = false;
   const server = createServer(async (req, res) => {
     let body = "";
     for await (const c of req) body += c;
     res.setHeader("Content-Type", "application/json");
     requests.push({ path: req.url!, body: body ? JSON.parse(body) : null });
     if (req.url === "/v1/models") {
+      if (failModels) res.statusCode = 503;
       res.end(JSON.stringify({ data: [{ id: "test-model" }] }));
       return;
     }
@@ -91,12 +93,97 @@ test("Brave: settings, mock search, alignment, manual import, overlay and SRT", 
       (await context.waitForEvent("serviceworker", { timeout: 15000 }));
     const id = new URL(worker.url()).host;
     console.log("Extension worker ready");
+    await mkdir("artifacts", { recursive: true });
+    await context.route("https://www.youtube.com/watch*", async (route) =>
+      route.fulfill({
+        contentType: "text/html",
+        body: await readFile("tests/fixtures/watch.html", "utf8"),
+      }),
+    );
+    const welcome = await context.newPage();
+    await welcome.goto("https://www.youtube.com/watch?v=12345678901");
+    await expect(
+      welcome.getByRole("heading", { name: "AI 歌詞", exact: true }),
+    ).toBeVisible();
+    await expect(
+      welcome.getByRole("button", { name: "搜尋歌詞", exact: true }),
+    ).toHaveCount(0);
+    const welcomePanel = welcome.locator(".panel");
+    const playerBox = await welcome.locator("#movie_player").boundingBox();
+    const panelBox = await welcomePanel.boundingBox();
+    expect(panelBox!.width).toBeLessThanOrEqual(playerBox!.width + 1);
+    expect(panelBox!.y).toBeGreaterThanOrEqual(
+      playerBox!.y + playerBox!.height,
+    );
+    const operationsBox = await welcome
+      .getByRole("complementary", { name: "歌詞操作與設定" })
+      .boundingBox();
+    const previewBox = await welcome
+      .getByRole("region", { name: "字幕編輯與預覽" })
+      .boundingBox();
+    expect(previewBox!.x).toBeGreaterThan(operationsBox!.x);
+    await welcomePanel.scrollIntoViewIfNeeded();
+    await expect(welcomePanel).toHaveCSS(
+      "background-color",
+      "rgb(255, 255, 255)",
+    );
+    await welcome.screenshot({ path: "artifacts/welcome-light.png" });
+    await welcome.evaluate(() =>
+      document.documentElement.setAttribute("dark", ""),
+    );
+    await expect(welcomePanel).toHaveCSS("background-color", "rgb(25, 38, 58)");
+    await welcome.screenshot({ path: "artifacts/welcome-dark.png" });
+    await expect(
+      welcome.getByRole("region", { name: "字幕編輯與預覽" }),
+    ).toContainText("測試歌曲");
+    await welcome.getByLabel("匯入 LRC／SRT").setInputFiles({
+      name: "before-ai.srt",
+      mimeType: "text/plain",
+      buffer: Buffer.from("1\n00:00:01,000 --> 00:00:02,000\n未設定也可使用\n"),
+    });
+    await expect(welcome.getByLabel("第 1 句開始秒數")).toHaveValue("1");
+    await expect(
+      welcome.getByRole("button", { name: "對齊／生成譯文", exact: true }),
+    ).toBeDisabled();
+    await welcome
+      .getByRole("button", { name: "套用並保存", exact: true })
+      .click();
+    await welcome.getByText(/已套用並保存在本機/).waitFor();
+    const localDownloadPromise = welcome.waitForEvent("download");
+    await welcome
+      .getByRole("button", { name: "下載 SRT", exact: true })
+      .click();
+    const localDownload = await localDownloadPromise;
+    await localDownload.saveAs("artifacts/unconfigured-import.srt");
+    expect(
+      await readFile("artifacts/unconfigured-import.srt", "utf8"),
+    ).toContain("未設定也可使用");
+    expect(
+      requests.filter((r) => r.path === "/v1/chat/completions"),
+    ).toHaveLength(0);
+    await welcome
+      .getByRole("button", { name: "關閉面板", exact: true })
+      .click();
+    await expect(welcomePanel).toBeHidden();
+    await welcome.getByRole("button", { name: "AI 歌詞", exact: true }).click();
+    await expect(welcomePanel).toBeVisible();
     const options = await context.newPage();
     await options.goto(`chrome-extension://${id}/options.html`);
     await options
       .getByText("設定保存在這台電腦", { exact: false })
       .waitFor({ timeout: 15000 });
     console.log("Options loaded");
+    await options.emulateMedia({ colorScheme: "light" });
+    await expect(options.locator("body")).toHaveCSS(
+      "background-color",
+      "rgb(255, 255, 255)",
+    );
+    await options.screenshot({ path: "artifacts/options-light.png" });
+    await options.emulateMedia({ colorScheme: "dark" });
+    await expect(options.locator("body")).toHaveCSS(
+      "background-color",
+      "rgb(25, 38, 58)",
+    );
     await options
       .getByLabel("Base URL（通常包含 /v1）")
       .fill(`http://127.0.0.1:${address.port}/v1`);
@@ -108,6 +195,16 @@ test("Brave: settings, mock search, alignment, manual import, overlay and SRT", 
       .getByRole("button", { name: "儲存設定", exact: true })
       .click();
     await options.getByText("已儲存設定。搜尋能力需另外測試。").waitFor();
+    await welcome.bringToFront();
+    await expect(welcome.getByText(/^先在設定頁填入/)).toHaveCount(0);
+    await expect(
+      welcome.getByRole("button", { name: "搜尋歌詞", exact: true }),
+    ).toBeVisible();
+    await expect(welcome.getByLabel("第 1 句開始秒數")).toHaveValue("1");
+    await expect(
+      welcome.getByRole("textbox", { name: "原文", exact: true }),
+    ).toHaveValue("未設定也可使用");
+    await welcome.close();
     await options.getByRole("button", { name: "測試連線／載入模型" }).click();
     await options
       .getByText("連線成功，取得 1 個模型。搜尋尚未驗證。")
@@ -117,6 +214,7 @@ test("Brave: settings, mock search, alignment, manual import, overlay and SRT", 
       path: "artifacts/settings.png",
       fullPage: true,
     });
+    failModels = true;
     const page = await context.newPage();
     await context.route("https://www.youtube.com/watch*", async (route) =>
       route.fulfill({
@@ -147,6 +245,9 @@ test("Brave: settings, mock search, alignment, manual import, overlay and SRT", 
     await expect(
       page.getByRole("button", { name: "AI 歌詞", exact: true }),
     ).toHaveCount(1);
+    await expect(
+      page.getByRole("heading", { name: "歡迎使用 AI 歌詞" }),
+    ).toHaveCount(0);
     await page.getByRole("button", { name: "AI 歌詞", exact: true }).click();
     await page.getByText("已讀取 2 段字幕，可用來對齊歌詞").waitFor();
     expect(
@@ -202,7 +303,9 @@ test("Brave: settings, mock search, alignment, manual import, overlay and SRT", 
       expect(JSON.stringify(r.body)).not.toContain("test-only-token");
     await page.getByRole("button", { name: "關閉面板" }).click();
     await page.getByRole("button", { name: "AI 歌詞", exact: true }).click();
-    await expect(page.getByRole("dialog")).toBeVisible();
+    await expect(
+      page.getByRole("region", { name: "AI 歌詞工作面板", exact: true }),
+    ).toBeVisible();
     const badImport = "1\n00:00:01,000 --> 00:00:02,000\n匯入測試\n";
     await page.getByLabel("匯入 LRC／SRT").setInputFiles({
       name: "local.srt",
@@ -223,6 +326,49 @@ test("Brave: settings, mock search, alignment, manual import, overlay and SRT", 
     expect(
       requests.filter((x) => x.path === "/v1/chat/completions"),
     ).toHaveLength(4);
+    const longLyrics = Array.from(
+      { length: 60 },
+      (_, i) => `完整歌詞第 ${i + 1} 句`,
+    ).join("\n");
+    await page.getByLabel("歌詞全文").fill(longLyrics);
+    await page
+      .getByRole("button", { name: "使用貼上歌詞", exact: true })
+      .click();
+    await expect(page.locator(".lyrics-preview .lyric-line")).toHaveCount(60);
+    const leftScroll = await page
+      .locator(".operations")
+      .evaluate((el) => el.scrollTop);
+    await page.locator(".lyrics-preview").evaluate((el) => {
+      el.scrollTop = el.scrollHeight;
+    });
+    expect(
+      await page.locator(".lyrics-preview").evaluate((el) => el.scrollTop),
+    ).toBeGreaterThan(0);
+    expect(
+      await page.locator(".operations").evaluate((el) => el.scrollTop),
+    ).toBe(leftScroll);
+    await page.locator(".lyrics-preview").evaluate((el) => {
+      el.scrollTop = 0;
+    });
+    await page.locator(".operations").evaluate((el) => {
+      el.scrollTop = 0;
+    });
+    await page.locator(".panel").scrollIntoViewIfNeeded();
+    await page.screenshot({
+      path: "artifacts/below-player-lyrics.png",
+      fullPage: true,
+    });
+    await page.evaluate(() =>
+      document.documentElement.setAttribute("dark", ""),
+    );
+    await expect(page.locator(".panel")).toHaveCSS(
+      "background-color",
+      "rgb(25, 38, 58)",
+    );
+    await page.screenshot({
+      path: "artifacts/below-player-lyrics-dark.png",
+      fullPage: true,
+    });
     await writeFile(
       "artifacts/browser-verification.json",
       JSON.stringify(

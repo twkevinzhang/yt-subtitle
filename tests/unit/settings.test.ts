@@ -10,6 +10,10 @@ const p = {
   apiToken: "secret",
   model: "m",
 };
+it("rejects blank token and model after trimming", () => {
+  expect(() => normalizeProvider({ ...p, apiToken: "   " })).toThrow();
+  expect(() => normalizeProvider({ ...p, model: "   " })).toThrow();
+});
 it("normalizes URL but rejects cleartext remote and partial CF", () => {
   expect(normalizeProvider(p).baseUrl).toBe("https://ai.test/v1");
   expect(() =>
