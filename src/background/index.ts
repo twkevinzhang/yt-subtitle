@@ -28,11 +28,7 @@ import {
   type AlignmentDecision,
 } from "../lyrics/alignment";
 import { makeBatches, prepareAlignmentRetry } from "../lyrics/batches";
-import type {
-  ConsentReceipt,
-  AlignedLine,
-  SearchTestResult,
-} from "../shared/types";
+import type { ConsentReceipt, AlignedLine } from "../shared/types";
 const journal = new RunJournal({
   get: () => chrome.storage.session.get(null),
   set: (v) => chrome.storage.session.set(v),
@@ -149,33 +145,35 @@ export async function handleMessage(
       if (r && r.state.tabId === tabId) runs.cancel(m.runId);
       return null;
     }
-    case "search-test":
+    case "search-test": {
+      const s = await getSettings();
+      if (!s.provider?.model) throw new Error("請先載入、選擇模型並儲存設定");
+      await consent(
+        m.consent,
+        "search-test",
+        { purpose: "search-test", body: m.body },
+        s.revision,
+      );
+      const client = createAiClient(s.provider);
+      return runs.start(
+        tabId,
+        "00000000000",
+        s.revision,
+        async (tools) =>
+          tools.request(() => client.testSearch(m.body, tools.signal)),
+        "searching",
+      );
+    }
     case "search": {
       const s = await getSettings();
       if (!s.provider?.model) throw new Error("請先載入、選擇模型並儲存設定");
-      const video =
-        m.type === "search"
-          ? m.video
-          : {
-              schemaVersion: 1 as const,
-              videoId: "00000000000",
-              title:
-                "搜尋測試：查詢 LRCLIB 官方說明並回傳可核對來源；不要編造歌詞",
-              channel: "",
-              description: "",
-              durationMs: 0,
-            };
-      if (
-        m.type === "search" &&
-        video.videoId !== new URL(sender.url!).searchParams.get("v")
-      )
+      const video = m.video;
+      if (video.videoId !== new URL(sender.url!).searchParams.get("v"))
         throw new Error("影片已切換");
       await consent(
         m.consent,
-        m.type === "search" ? "search" : "search-test",
-        m.type === "search"
-          ? { video, sources: s.sources.filter((x) => x.enabled) }
-          : { purpose: "search-test" },
+        "search",
+        { video, sources: s.sources.filter((x) => x.enabled) },
         s.revision,
       );
       const messages = searchMessages(video, s.sources);
@@ -188,8 +186,6 @@ export async function handleMessage(
           const result = await tools.request(() =>
             client.searchText(messages, tools.signal),
           );
-          if (m.type === "search-test")
-            return result satisfies SearchTestResult;
           return parseSearchReply(result.text, s.sources, result.evidence);
         },
         "searching",

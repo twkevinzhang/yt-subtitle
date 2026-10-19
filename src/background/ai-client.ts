@@ -3,6 +3,7 @@ import type {
   ChatMessage,
   CompletionEnvelope,
   SearchTestResult,
+  SearchHttpResult,
 } from "../shared/types";
 export function createAiClient(
   provider: ProviderSettings,
@@ -12,12 +13,14 @@ export function createAiClient(
     path: string,
     signal: AbortSignal,
     body?: unknown,
+    diagnostic = false,
   ): Promise<any> {
     const controller = new AbortController();
     const abort = () => controller.abort();
     signal.addEventListener("abort", abort, { once: true });
     if (signal.aborted) controller.abort();
     const timeout = setTimeout(abort, 120000);
+    let responseStatus: number | null = null;
     try {
       const headers: Record<string, string> = {
         Authorization: `Bearer ${provider.apiToken}`,
@@ -36,8 +39,13 @@ export function createAiClient(
         credentials: "omit",
         cache: "no-store",
       });
-      if (!response.ok) throw new Error(`AI 服務回應 HTTP ${response.status}`);
-      if (!response.headers.get("Content-Type")?.includes("application/json"))
+      responseStatus = response.status;
+      if (!diagnostic && !response.ok)
+        throw new Error(`AI 服務回應 HTTP ${response.status}`);
+      if (
+        !diagnostic &&
+        !response.headers.get("Content-Type")?.includes("application/json")
+      )
         throw new Error("服務未回傳 JSON，請檢查 Cloudflare 驗證");
       const reader = response.body?.getReader();
       let length = 0;
@@ -60,15 +68,34 @@ export function createAiClient(
         bytes.set(c, offset);
         offset += c.length;
       }
+      const raw = new TextDecoder().decode(bytes);
+      if (diagnostic) {
+        let body: unknown = raw;
+        try {
+          body = JSON.parse(raw);
+        } catch {
+          /* Preserve non-JSON HTTP responses as text. */
+        }
+        return { status: response.status, body } satisfies SearchHttpResult;
+      }
       try {
-        return JSON.parse(new TextDecoder().decode(bytes));
+        return JSON.parse(raw);
       } catch {
         throw new Error("AI 服務回傳無效 JSON");
       }
     } catch (e) {
-      if (controller.signal.aborted) throw new Error("請求已取消或逾時");
-      if (e instanceof Error && /^(AI |服務|請求)/.test(e.message)) throw e;
-      throw new Error("AI 連線失敗，請檢查網址、權限與憑證");
+      const message = controller.signal.aborted
+        ? "請求已取消或逾時"
+        : e instanceof Error && /^(AI |服務|請求)/.test(e.message)
+          ? e.message
+          : "AI 連線失敗，請檢查網址、權限與憑證";
+      if (diagnostic)
+        return {
+          status: responseStatus,
+          body: null,
+          error: message,
+        } satisfies SearchHttpResult;
+      throw new Error(message);
     } finally {
       clearTimeout(timeout);
       signal.removeEventListener("abort", abort);
@@ -91,6 +118,20 @@ export function createAiClient(
   }
   return {
     completeText,
+    async testSearch(
+      body: Record<string, unknown>,
+      signal: AbortSignal,
+    ): Promise<SearchHttpResult> {
+      try {
+        return await call("responses", signal, body, true);
+      } catch (error) {
+        return {
+          status: null,
+          body: null,
+          error: error instanceof Error ? error.message : "AI 連線失敗",
+        };
+      }
+    },
     async searchText(
       messages: ChatMessage[],
       signal: AbortSignal,

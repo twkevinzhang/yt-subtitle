@@ -11,12 +11,8 @@ import type {
   SourceSettings,
   Preferences,
   SavedResult,
-  RunState,
-  SearchTestResult,
 } from "../shared/types";
-import { hashInput } from "../background/results";
-import type { RunRecord } from "../background/runs";
-import { AiReply } from "../ui/AiReply";
+import { SearchTest } from "./SearchTest";
 const emptyProvider: ProviderSettings = {
   schemaVersion: 1,
   baseUrl: "",
@@ -45,7 +41,7 @@ export function Options() {
     }),
     [models, setModels] = useState<string[]>([]),
     [records, setRecords] = useState<SavedResult[]>([]),
-    [testReply, setTestReply] = useState<string | null>(null),
+    [testOpen, setTestOpen] = useState(false),
     [feedback, setFeedback] = useState<Partial<Record<SectionId, Notice>>>({
       ai: { status: "正在載入…" },
     }),
@@ -120,7 +116,6 @@ export function Options() {
         onChange={(e) => {
           setProvider({ ...provider, [key]: e.target.value, model: "" });
           setModels([]);
-          setTestReply(null);
           notify("ai", { status: "服務資料已變更，請重新載入模型。" });
         }}
       />
@@ -226,49 +221,6 @@ export function Options() {
           status: `連線成功，取得 ${choices.length} 個模型。搜尋尚未驗證。`,
         });
     });
-  const testSearch = () =>
-    attempt("ai", async () => {
-      if (
-        !window.confirm(
-          "會使用已儲存的 AI 設定與來源，發送一次搜尋測試並消耗模型額度。繼續？",
-        )
-      )
-        return;
-      setTestReply(null);
-      const s = await request<SettingsRecord>({ type: "settings-edit" });
-      const consent = {
-        purpose: "search-test" as const,
-        inputHash: await hashInput({ purpose: "search-test" }),
-        settingsRevision: s.revision,
-        confirmedAt: Date.now(),
-      };
-      const run = await request<RunState>({ type: "search-test", consent });
-      try {
-        const deadline = Date.now() + 130000;
-        while (Date.now() < deadline) {
-          const r = await request<RunRecord>({ type: "run", runId: run.runId });
-          if (r.state.phase === "complete") {
-            const output = r.output as Partial<SearchTestResult> | undefined;
-            if (typeof output?.text !== "string")
-              throw new Error("服務未提供可顯示的 AI 回覆，請重新測試。");
-            setTestReply(output.text);
-            notify("ai", {
-              status:
-                output?.evidence?.status === "verified"
-                  ? "測試完成；已確認搜尋工具執行。"
-                  : "測試完成；未取得搜尋工具完成證據。",
-            });
-            return;
-          }
-          if (["failed", "cancelled", "interrupted"].includes(r.state.phase))
-            throw new Error(r.state.errorCode || "測試中斷");
-          await new Promise((r) => setTimeout(r, 1000));
-        }
-        throw new Error("測試逾時");
-      } finally {
-        await request({ type: "cancel", runId: run.runId });
-      }
-    });
   return (
     <main className="options">
       <header>
@@ -306,7 +258,6 @@ export function Options() {
                 value={provider.model}
                 onChange={(e) => {
                   setProvider({ ...provider, model: e.target.value });
-                  setTestReply(null);
                   notify("ai", { status: "模型選擇已變更，請儲存設定。" });
                 }}
               >
@@ -331,12 +282,25 @@ export function Options() {
           >
             儲存設定
           </button>
-          <button disabled={!!busy || !savedModelReady} onClick={testSearch}>
+          <button
+            disabled={!savedModelReady}
+            aria-expanded={testOpen}
+            aria-controls="search-test"
+            onClick={() => setTestOpen(!testOpen)}
+          >
             測試搜尋（使用額度）
+            <span aria-hidden="true">{testOpen ? " ▴" : " ▾"}</span>
           </button>
         </div>
         {sectionNotice("ai")}
-        {testReply !== null && <AiReply text={testReply} />}
+        <SearchTest
+          key={`${serviceKey(provider)}:${provider.model}:${JSON.stringify(sources)}`}
+          open={testOpen}
+          ready={savedModelReady}
+          model={provider.model}
+          sources={sources}
+          onBusy={(value) => setBusy(value ? "ai" : null)}
+        />
       </section>
       <section aria-label="歌詞來源">
         <h2>歌詞來源</h2>

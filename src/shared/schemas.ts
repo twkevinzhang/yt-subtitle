@@ -56,6 +56,21 @@ export const consentSchema = z.object({
   settingsRevision: z.number().int(),
   confirmedAt: time,
 });
+export const searchTestBodySchema = z
+  .object({
+    model: z
+      .string()
+      .min(1)
+      .refine((value) => !!value.trim()),
+    input: z.union([z.string().min(1), z.array(z.unknown()).min(1)]),
+    stream: z.literal(false),
+    store: z.literal(false),
+  })
+  .passthrough()
+  .refine(
+    (body) => JSON.stringify(body).length <= 120000,
+    "Request body 超過 120000 字元",
+  );
 const msg = z.discriminatedUnion("type", [
   z.object({ type: z.literal("settings-public") }),
   z.object({ type: z.literal("settings-edit") }),
@@ -77,7 +92,11 @@ const msg = z.discriminatedUnion("type", [
     video: videoSchema,
     consent: consentSchema,
   }),
-  z.object({ type: z.literal("search-test"), consent: consentSchema }),
+  z.object({
+    type: z.literal("search-test"),
+    body: searchTestBodySchema,
+    consent: consentSchema,
+  }),
   z.object({
     type: z.literal("generate"),
     input: z.object({

@@ -78,6 +78,11 @@ export interface SearchTestResult {
   text: string;
   evidence: SearchEvidence;
 }
+export interface SearchHttpResult {
+  status: number | null;
+  body: unknown;
+  error?: string;
+}
 export interface LyricSearchResult {
   text: string;
   candidates: LyricCandidate[];

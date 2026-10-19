@@ -8,6 +8,8 @@ test("Brave: settings, mock search, alignment, manual import, overlay and SRT", 
   let failModels = false;
   let mockTestReply: string | null = null;
   let replyDelay = 0;
+  let mockStatus = 200;
+  let mockNonJson: string | null = null;
   const server = createServer(async (req, res) => {
     let body = "";
     for await (const c of req) body += c;
@@ -16,6 +18,11 @@ test("Brave: settings, mock search, alignment, manual import, overlay and SRT", 
     if (req.url === "/v1/models") {
       if (failModels) res.statusCode = 503;
       res.end(JSON.stringify({ data: [{ id: "test-model" }] }));
+      return;
+    }
+    res.statusCode = mockStatus;
+    if (mockNonJson !== null) {
+      res.end(mockNonJson);
       return;
     }
     const input = JSON.parse(body);
@@ -682,46 +689,70 @@ test("Brave: settings, mock search, alignment, manual import, overlay and SRT", 
     await options
       .getByRole("button", { name: "測試搜尋（使用額度）", exact: true })
       .click();
+    const editor = options.getByRole("textbox", { name: "Request body" });
+    await expect(editor).toBeVisible();
+    const countBefore = requests.length;
+    const edited = JSON.parse(await editor.inputValue());
+    edited.input = "user edited search test";
+    await editor.fill(JSON.stringify(edited, null, 2));
+    expect(requests.length).toBe(countBefore);
+    await options.getByRole("button", { name: "搜尋", exact: true }).click();
     const replyRegion = options.getByRole("region", {
-      name: "AI 實際回覆",
+      name: "完整 API 回應",
       exact: true,
     });
-    await expect(replyRegion).toBeVisible();
+    await expect(
+      options.getByText("Response · HTTP 200", { exact: true }),
+    ).toBeVisible();
     const replyText = replyRegion.locator("pre");
-    expect(await replyText.textContent()).toBe(mockTestReply);
-    const compactHeight = (await replyText.boundingBox())!.height;
-    expect(compactHeight).toBeLessThanOrEqual(80);
-    expect(
-      await replyText.evaluate((el) => el.scrollHeight > el.clientHeight),
-    ).toBe(true);
-    await replyRegion
-      .getByRole("button", { name: "展開", exact: true })
-      .click();
-    expect((await replyText.boundingBox())!.height).toBeGreaterThan(
-      compactHeight,
+    const fullReply = JSON.parse((await replyText.textContent())!);
+    expect(fullReply.output[1].content[0].text).toBe(mockTestReply);
+    expect(await replyText.textContent()).toBe(
+      JSON.stringify(fullReply, null, 2),
     );
-    await replyRegion
-      .getByRole("button", { name: "收合", exact: true })
+    expect(requests.at(-1)!.body).toEqual(edited);
+    expect((await replyText.boundingBox())!.height).toBe(180);
+    await expect(replyRegion.getByRole("button")).toHaveCount(0);
+    await options
+      .getByRole("button", { name: "測試搜尋（使用額度）", exact: true })
       .click();
-    expect((await replyText.boundingBox())!.height).toBeLessThanOrEqual(80);
+    await expect(editor).toBeHidden();
+    await options
+      .getByRole("button", { name: "測試搜尋（使用額度）", exact: true })
+      .click();
+    await expect(editor).toHaveValue(JSON.stringify(edited, null, 2));
+    await expect(replyRegion).toBeVisible();
     await options.screenshot({
-      path: "artifacts/options-ai-reply.png",
+      path: "artifacts/options-search-test-dark.png",
       fullPage: true,
     });
     await options.emulateMedia({ colorScheme: "light" });
     await options.screenshot({
-      path: "artifacts/options-ai-reply-light.png",
+      path: "artifacts/options-search-test-light.png",
       fullPage: true,
     });
     mockTestReply = "第二次測試的 AI 回覆";
     replyDelay = 1500;
     await options
-      .getByRole("button", { name: "測試搜尋（使用額度）", exact: true })
+      .getByRole("button", { name: "再次搜尋", exact: true })
       .click();
     await expect(replyRegion).toHaveCount(0);
+    await expect(replyRegion).toBeVisible();
+    expect(
+      JSON.parse((await replyText.textContent())!).output[1].content[0].text,
+    ).toBe(mockTestReply);
+    mockStatus = 403;
+    mockNonJson = "<html>Access denied</html>";
+    await options
+      .getByRole("button", { name: "再次搜尋", exact: true })
+      .click();
     await expect(
-      options.getByText("第二次測試的 AI 回覆", { exact: true }),
+      options.getByText("Response · HTTP 403", { exact: true }),
     ).toBeVisible();
+    await expect(replyText).toHaveText(mockNonJson);
+    await expect(replyRegion.locator("html")).toHaveCount(0);
+    mockStatus = 200;
+    mockNonJson = null;
     await page.bringToFront();
     await page.getByRole("button", { name: "製作／編輯", exact: true }).click();
     mockTestReply = JSON.stringify(

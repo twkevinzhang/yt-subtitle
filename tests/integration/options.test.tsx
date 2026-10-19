@@ -39,35 +39,25 @@ afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
-it("shows the actual AI reply as compact plain text and clears it while retesting", async () => {
+it("expands without sending, submits edited JSON and retains formatted responses when collapsed", async () => {
   record.provider = {
     schemaVersion: 1,
     baseUrl: "https://ai.test/v1",
     apiToken: "test-only-token",
     model: "model-a",
   };
-  const firstReply =
-    '<img src=x onerror="alert(1)">\nAI 回覆第二行\n第三行\n第四行';
-  let reply = firstReply;
-  let verified = false;
-  let hold = false;
-  let release!: (value: { runId: string }) => void;
   const fallback = requestMock.getMockImplementation()!;
+  let status = 200;
   requestMock.mockImplementation(async (m) => {
-    if (m.type === "search-test")
-      return hold
-        ? new Promise((resolve) => {
-            release = resolve;
-          })
-        : { runId: "reply-run" };
+    if (m.type === "search-test") return { runId: "test-run" };
     if (m.type === "run")
       return {
         state: { phase: "complete" },
         output: {
-          text: reply,
-          evidence: {
-            status: verified ? "verified" : "unverified",
-            citations: [],
+          status,
+          body: {
+            id: "response-id",
+            output: [{ type: "message", text: "<img src=x>" }],
           },
         },
       };
@@ -76,28 +66,82 @@ it("shows the actual AI reply as compact plain text and clears it while retestin
   });
   vi.spyOn(window, "confirm").mockReturnValue(true);
   await open();
-  fireEvent.click(screen.getByRole("button", { name: "測試搜尋（使用額度）" }));
-  const panel = await screen.findByRole("region", { name: "AI 實際回覆" });
-  expect(panel.querySelector("pre")?.textContent).toBe(firstReply);
-  expect(panel.querySelector("img")).toBeNull();
-  expect(panel.closest("section")?.getAttribute("aria-label")).toBe("AI 服務");
-  fireEvent.click(within(panel).getByRole("button", { name: "展開" }));
+  expect(screen.queryByRole("textbox", { name: "Request body" })).toBeNull();
+  const toggle = screen.getByRole("button", { name: "測試搜尋（使用額度）" });
+  fireEvent.click(toggle);
+  const editor = await screen.findByRole("textbox", { name: "Request body" });
+  expect(requestMock.mock.calls.some(([m]) => m.type === "search-test")).toBe(
+    false,
+  );
+  const body = JSON.parse((editor as HTMLTextAreaElement).value);
+  body.input = "user edited search";
+  fireEvent.change(editor, {
+    target: { value: JSON.stringify(body, null, 2) },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "搜尋" }));
+  await screen.findByText("Response · HTTP 200");
   expect(
-    within(panel)
-      .getByRole("button", { name: "收合" })
-      .getAttribute("aria-expanded"),
-  ).toBe("true");
-  expect(screen.getByText("測試完成；未取得搜尋工具完成證據。")).toBeTruthy();
-  verified = true;
-  hold = true;
-  reply = "新的 AI 回覆";
+    requestMock.mock.calls.find(([m]) => m.type === "search-test")![0].body,
+  ).toEqual(body);
+  const response = screen.getByRole("region", { name: "完整 API 回應" });
+  expect(response.querySelector("pre")!.textContent).toContain(
+    '\n  "id": "response-id"',
+  );
+  expect(response.querySelector("img")).toBeNull();
+  expect(screen.queryByRole("button", { name: "展開" })).toBeNull();
+  fireEvent.click(toggle);
+  expect(screen.queryByRole("textbox", { name: "Request body" })).toBeNull();
+  fireEvent.click(toggle);
+  expect(
+    (
+      screen.getByRole("textbox", {
+        name: "Request body",
+      }) as HTMLTextAreaElement
+    ).value,
+  ).toContain("user edited search");
+  expect(screen.getByText("Response · HTTP 200")).toBeTruthy();
+  status = 400;
+  fireEvent.click(screen.getByRole("button", { name: "再次搜尋" }));
+  await screen.findByText("Response · HTTP 400");
+});
+it("keeps invalid JSON and network errors inside the search test section", async () => {
+  record.provider = {
+    schemaVersion: 1,
+    baseUrl: "https://ai.test/v1",
+    apiToken: "test-only-token",
+    model: "model-a",
+  };
+  const fallback = requestMock.getMockImplementation()!;
+  requestMock.mockImplementation(async (m) => {
+    if (m.type === "search-test") return { runId: "test-run" };
+    if (m.type === "run")
+      return {
+        state: { phase: "complete" },
+        output: { status: null, body: null, error: "AI 連線失敗" },
+      };
+    if (m.type === "cancel") return null;
+    return fallback(m);
+  });
+  vi.spyOn(window, "confirm").mockReturnValue(true);
+  await open();
   fireEvent.click(screen.getByRole("button", { name: "測試搜尋（使用額度）" }));
-  await waitFor(() => expect(release).toBeTypeOf("function"));
-  expect(screen.queryByRole("region", { name: "AI 實際回覆" })).toBeNull();
-  release({ runId: "reply-run-2" });
-  await screen.findByText("新的 AI 回覆");
-  expect(screen.getByText("測試完成；已確認搜尋工具執行。")).toBeTruthy();
-  expect(screen.queryByText(firstReply)).toBeNull();
+  const editor = screen.getByRole("textbox", { name: "Request body" });
+  const valid = (editor as HTMLTextAreaElement).value;
+  fireEvent.change(editor, { target: { value: "{" } });
+  fireEvent.click(screen.getByRole("button", { name: "搜尋" }));
+  const section = screen.getByRole("region", { name: "測試搜尋" });
+  expect((await within(section).findByRole("alert")).textContent).toContain(
+    "JSON",
+  );
+  expect(requestMock.mock.calls.some(([m]) => m.type === "search-test")).toBe(
+    false,
+  );
+  fireEvent.change(editor, { target: { value: valid } });
+  fireEvent.click(screen.getByRole("button", { name: "搜尋" }));
+  await within(section).findByText("Response · 未收到 HTTP 回應");
+  expect((await within(section).findByRole("alert")).textContent).toContain(
+    "連線失敗",
+  );
 });
 async function open() {
   render(<Options />);

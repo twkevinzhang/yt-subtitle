@@ -436,6 +436,39 @@ html.options-page body {
 .options .model-field {
   margin: 20px 0;
 }
+.search-test {
+  margin-top: 16px;
+}
+.search-test[hidden] {
+  display: none;
+}
+.search-test textarea,
+.search-response pre {
+  box-sizing: border-box;
+  width: 100%;
+  font:
+    12px/1.5 ui-monospace,
+    Consolas,
+    monospace;
+  tab-size: 2;
+}
+.search-test textarea {
+  display: block;
+  height: 180px;
+  min-height: 90px;
+  max-height: 480px;
+  resize: vertical;
+}
+.search-response pre {
+  height: 180px;
+  padding: 12px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--field);
+}
 .options .model-field > p {
   margin-bottom: 4px;
 }

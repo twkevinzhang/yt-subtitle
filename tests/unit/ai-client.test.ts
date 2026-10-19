@@ -6,6 +6,48 @@ const p = {
   apiToken: "private-token",
   model: "m",
 };
+it("returns full diagnostic JSON and HTTP errors without altering the edited request body", async () => {
+  const body = {
+    model: "edited-model",
+    input: "find lyrics",
+    stream: false,
+    store: false,
+  };
+  const payload = {
+    error: { message: "Invalid model", code: "model_not_found" },
+  };
+  const fetcher = vi.fn(async (_url: RequestInfo | URL, _init?: RequestInit) =>
+    Response.json(payload, { status: 400 }),
+  );
+  expect(
+    await createAiClient(p, fetcher).testSearch(
+      body,
+      new AbortController().signal,
+    ),
+  ).toEqual({ status: 400, body: payload });
+  expect(JSON.parse(fetcher.mock.calls[0][1]!.body as string)).toEqual(body);
+});
+it("retains non-JSON diagnostic responses and identifies missing HTTP responses", async () => {
+  const client = createAiClient(
+    p,
+    vi.fn(
+      async () => new Response("<html>Access denied</html>", { status: 403 }),
+    ),
+  );
+  expect(await client.testSearch({}, new AbortController().signal)).toEqual({
+    status: 403,
+    body: "<html>Access denied</html>",
+  });
+  const offline = createAiClient(
+    p,
+    vi.fn(async () => {
+      throw new TypeError("network");
+    }),
+  );
+  expect(
+    await offline.testSearch({}, new AbortController().signal),
+  ).toMatchObject({ status: null, error: expect.stringContaining("連線失敗") });
+});
 it("enables Responses web search and reads actual tool evidence", async () => {
   const fetcher = vi.fn(async (_url: RequestInfo | URL, _init?: RequestInit) =>
     Response.json({
