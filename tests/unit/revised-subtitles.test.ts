@@ -100,3 +100,112 @@ it("keeps complete AI timestamps as search bounds without sending those rows for
 it("accepts an empty AI subtitle version without restoring input rows", () => {
   expect(parseRevisedSubtitles({ lines: [] }, 2000)).toEqual([]);
 });
+it("treats shared broad AI times as coarse hints and jointly aligns the separate sentences", () => {
+  const texts = [
+    "鼻につく 革靴",
+    "治ればまた 靴擦れ",
+    "ネオンが照らす街流す 本日も",
+    "ドライバーいるから 安定の無事故",
+  ];
+  const rows = parseRevisedSubtitles(
+    {
+      lines: texts.map((text) => ({
+        text,
+        startMs: 40000,
+        endMs: 48000,
+        cueIds: ["t7"],
+      })),
+    },
+    300000,
+  );
+  expect(rows.map((l) => l.original)).toEqual(texts);
+  expect(
+    rows.every((l) => l.startMs === undefined && l.endMs === undefined),
+  ).toBe(true);
+  const plan = missingTimingPlan(
+    rows,
+    [{ id: "t7", text: "coarse", startMs: 40000, endMs: 48000 }],
+    300000,
+  );
+  expect(plan.segments).toHaveLength(1);
+  expect(plan.segments[0]).toMatchObject({
+    startMs: 40000,
+    endMs: 48000,
+    lineIds: rows.map((l) => l.id),
+  });
+  expect(plan.bounds[rows[0].id]).toEqual({ startMs: 40000, endMs: 48000 });
+  const inferred = rows.map((l, i) => ({
+    ...l,
+    startMs: 40000 + i * 2000,
+    endMs: 42000 + i * 2000,
+  }));
+  expect(
+    mergeMissingTimes(rows, inferred).map((l) => [l.startMs, l.endMs]),
+  ).toEqual([
+    [40000, 42000],
+    [42000, 44000],
+    [44000, 46000],
+    [46000, 48000],
+  ]);
+});
+it("detects slightly different broad overlapping intervals but preserves explicitly simultaneous singing", () => {
+  const sequential = parseRevisedSubtitles(
+    {
+      lines: [
+        { text: "one", startMs: 1000, endMs: 10000 },
+        { text: "two", startMs: 1200, endMs: 9800 },
+      ],
+    },
+    20000,
+  );
+  expect(sequential.every((l) => l.startMs === undefined)).toBe(true);
+  const harmony = parseRevisedSubtitles(
+    {
+      lines: [
+        { text: "lead", startMs: 1000, endMs: 10000, simultaneous: true },
+        { text: "harmony", startMs: 1000, endMs: 10000, simultaneous: true },
+      ],
+    },
+    20000,
+  );
+  expect(harmony.every((l) => l.startMs === 1000 && l.endMs === 10000)).toBe(
+    true,
+  );
+});
+it("finds broad near-duplicate windows even with a shorter interval between them", () => {
+  const rows = parseRevisedSubtitles(
+    {
+      lines: [
+        { text: "a", startMs: 0, endMs: 10000 },
+        { text: "short", startMs: 100, endMs: 4100 },
+        { text: "c", startMs: 200, endMs: 10200 },
+      ],
+    },
+    20000,
+  );
+  expect(rows[0].startMs).toBeUndefined();
+  expect(rows[2].startMs).toBeUndefined();
+  expect(rows[1].startMs).toBe(100);
+});
+it("jointly refines a suspicious group even when each row references a different coarse cue", () => {
+  const rows = parseRevisedSubtitles(
+    {
+      lines: [
+        { text: "first", startMs: 1000, endMs: 10000, cueIds: ["a"] },
+        { text: "second", startMs: 1200, endMs: 9800, cueIds: ["b"] },
+      ],
+    },
+    20000,
+  );
+  const plan = missingTimingPlan(
+    rows,
+    [
+      { id: "a", text: "coarse a", startMs: 1000, endMs: 10000 },
+      { id: "b", text: "coarse b", startMs: 1200, endMs: 9800 },
+    ],
+    20000,
+  );
+  expect(plan.segments).toHaveLength(1);
+  expect(plan.segments[0].lineIds).toEqual(rows.map((l) => l.id));
+  expect(plan.segments[0].evidenceCueIds).toEqual(["a", "b"]);
+});

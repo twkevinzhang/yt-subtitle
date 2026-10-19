@@ -26,7 +26,8 @@ export async function acquireYouTubeAudio(
     frame.style.cssText =
       "position:fixed;top:0;left:0;width:480px;height:270px;opacity:0;pointer-events:none;z-index:-1";
     const chunks: Uint8Array[] = [];
-    let bytes = 0;
+    let bytes = 0,
+      resets = 0;
     const compressed = await new Promise<Uint8Array>((resolve, reject) => {
       const cleanup = () => {
         clearTimeout(timer);
@@ -52,6 +53,16 @@ export async function acquireYouTubeAudio(
         )
           return;
         const m = event.data;
+        if (m.type === "reset") {
+          if (++resets > 2) {
+            fail("音訊來源持續切換，歌詞已保留");
+            return;
+          }
+          bytes = 0;
+          chunks.length = 0;
+          progress("音訊來源已更換，正在重新讀取完整音訊…");
+          return;
+        }
         if (m.type === "error") {
           fail(String(m.message));
           return;

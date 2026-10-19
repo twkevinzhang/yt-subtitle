@@ -17,6 +17,8 @@ export interface AlignedLine {
   translation?: string;
   startMs?: number;
   endMs?: number;
+  // Rejected broad AI timing is a search hint, never a playable timestamp.
+  timingHint?: { startMs: number; endMs: number };
   cueIds: string[];
   status: "anchor" | "estimated" | "unaligned" | "manual";
   excluded: boolean;

@@ -20,6 +20,10 @@ export const lineSchema = z.object({
   translation: z.string().optional(),
   startMs: time.optional(),
   endMs: time.optional(),
+  timingHint: z
+    .object({ startMs: time, endMs: time })
+    .refine((h) => h.endMs > h.startMs)
+    .optional(),
   cueIds: z.array(z.string()),
   status: z.enum(["anchor", "estimated", "unaligned", "manual"]),
   excluded: z.boolean(),
