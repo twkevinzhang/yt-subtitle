@@ -6,10 +6,81 @@ const p = {
   apiToken: "private-token",
   model: "m",
 };
+it("enables Responses web search and reads actual tool evidence", async () => {
+  const fetcher = vi.fn(async (_url: RequestInfo | URL, _init?: RequestInit) =>
+    Response.json({
+      output: [
+        {
+          type: "web_search_call",
+          id: "ws_1",
+          status: "completed",
+          action: { sources: [{ url: "https://lrclib.net/docs" }] },
+        },
+        {
+          type: "message",
+          content: [
+            {
+              type: "output_text",
+              text: "搜尋結果",
+              annotations: [
+                { type: "url_citation", url: "https://lrclib.net/docs" },
+              ],
+            },
+          ],
+        },
+      ],
+    }),
+  );
+  const result = await createAiClient(p, fetcher).searchText(
+    [],
+    new AbortController().signal,
+  );
+  expect(fetcher.mock.calls[0][0]).toBe("https://ai.test/v1/responses");
+  expect(JSON.parse(fetcher.mock.calls[0][1]!.body as string)).toMatchObject({
+    tools: [{ type: "web_search" }],
+    tool_choice: { type: "web_search" },
+  });
+  expect(result).toMatchObject({
+    text: "搜尋結果",
+    evidence: { status: "verified", citations: ["https://lrclib.net/docs"] },
+  });
+});
+it("does not verify search from model text or citations without a completed tool", async () => {
+  for (const status of [undefined, "failed"]) {
+    const fetcher = vi.fn(
+      async (_url: RequestInfo | URL, _init?: RequestInit) =>
+        Response.json({
+          output: [
+            ...(status ? [{ type: "web_search_call", status }] : []),
+            {
+              type: "message",
+              content: [
+                {
+                  type: "output_text",
+                  text: '{"verified":true}',
+                  annotations: [
+                    { type: "url_citation", url: "https://lrclib.net/docs" },
+                  ],
+                },
+              ],
+            },
+          ],
+        }),
+    );
+    expect(
+      (
+        await createAiClient(p, fetcher).searchText(
+          [],
+          new AbortController().signal,
+        )
+      ).evidence.status,
+    ).toBe("unverified");
+  }
+});
 it("preserves the exact assistant text for search tests even when it is not JSON", async () => {
   const text = "目前無法搜尋網路。\n請提供歌詞來源。";
   const fetcher = vi.fn(
-    async () =>
+    async (_url: RequestInfo | URL, _init?: RequestInit) =>
       new Response(
         JSON.stringify({ choices: [{ message: { content: text } }] }),
         { headers: { "Content-Type": "application/json" } },
@@ -19,6 +90,10 @@ it("preserves the exact assistant text for search tests even when it is not JSON
   expect(await client.completeText([], new AbortController().signal)).toBe(
     text,
   );
+  expect(fetcher.mock.calls[0][0]).toBe("https://ai.test/v1/chat/completions");
+  expect(
+    JSON.parse(fetcher.mock.calls[0][1]!.body as string).tools,
+  ).toBeUndefined();
   await expect(
     client.completeJson([], new AbortController().signal),
   ).rejects.toThrow("不是有效 JSON");

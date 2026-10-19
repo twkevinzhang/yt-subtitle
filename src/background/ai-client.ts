@@ -2,6 +2,7 @@ import type {
   ProviderSettings,
   ChatMessage,
   CompletionEnvelope,
+  SearchTestResult,
 } from "../shared/types";
 export function createAiClient(
   provider: ProviderSettings,
@@ -90,6 +91,72 @@ export function createAiClient(
   }
   return {
     completeText,
+    async searchText(
+      messages: ChatMessage[],
+      signal: AbortSignal,
+    ): Promise<SearchTestResult> {
+      if (!provider.model.trim())
+        throw new Error("請先載入、選擇模型並儲存設定");
+      const data = await call("responses", signal, {
+        model: provider.model,
+        input: messages,
+        tools: [{ type: "web_search" }],
+        tool_choice: { type: "web_search" },
+        include: ["web_search_call.action.sources"],
+        stream: false,
+        store: false,
+      });
+      const output = Array.isArray(data.output) ? data.output : [];
+      const calls = output.filter(
+        (item: any) =>
+          item.type === "web_search_call" && item.status === "completed",
+      );
+      const parts = output
+        .filter((item: any) => item.type === "message" && item.role !== "user")
+        .flatMap((item: any) =>
+          Array.isArray(item.content) ? item.content : [],
+        );
+      const text = parts
+        .filter(
+          (part: any) =>
+            part.type === "output_text" && typeof part.text === "string",
+        )
+        .map((part: any) => part.text)
+        .join("\n");
+      if (!text.trim()) throw new Error("AI 未提供文字結果");
+      const urls = [
+        ...calls.flatMap((item: any) =>
+          Array.isArray(item.action?.sources)
+            ? item.action.sources.map((source: any) => source.url)
+            : [],
+        ),
+        ...parts.flatMap((part: any) =>
+          Array.isArray(part.annotations)
+            ? part.annotations
+                .filter((a: any) => a.type === "url_citation")
+                .map((a: any) => a.url)
+            : [],
+        ),
+      ].filter((value: unknown): value is string => {
+        if (typeof value !== "string") return false;
+        try {
+          const url = new URL(value);
+          return url.protocol === "https:" && !url.username && !url.password;
+        } catch {
+          return false;
+        }
+      });
+      return {
+        text,
+        evidence: {
+          status: calls.length ? "verified" : "unverified",
+          citations: [...new Set<string>(urls)],
+          ...(calls.length
+            ? { toolEvidence: "web_search_call:completed" }
+            : {}),
+        },
+      };
+    },
     async listModels(signal: AbortSignal): Promise<string[]> {
       const data = await call("models", signal);
       if (!Array.isArray(data.data)) throw new Error("AI 模型清單格式錯誤");

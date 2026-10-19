@@ -19,14 +19,35 @@ test("Brave: settings, mock search, alignment, manual import, overlay and SRT", 
       return;
     }
     const input = JSON.parse(body);
+    const reply = (text: string) =>
+      req.url === "/v1/responses"
+        ? {
+            output: [
+              {
+                type: "web_search_call",
+                status: "completed",
+                action: { sources: [{ url: "https://lrclib.net/test-song" }] },
+              },
+              {
+                type: "message",
+                role: "assistant",
+                content: [{ type: "output_text", text, annotations: [] }],
+              },
+            ],
+          }
+        : { choices: [{ message: { content: text } }] };
+    if (req.url === "/v1/responses") {
+      expect(input.tools).toEqual([{ type: "web_search" }]);
+      expect(input.tool_choice).toEqual({ type: "web_search" });
+    } else expect(input.tools).toBeUndefined();
     if (mockTestReply !== null) {
       const text = mockTestReply;
       if (replyDelay)
         await new Promise((resolve) => setTimeout(resolve, replyDelay));
-      res.end(JSON.stringify({ choices: [{ message: { content: text } }] }));
+      res.end(JSON.stringify(reply(text)));
       return;
     }
-    const search = input.messages[0].content.includes("歌曲與歌詞搜尋");
+    const search = req.url === "/v1/responses";
     const payload = search
       ? {
           candidates: [
@@ -39,8 +60,9 @@ test("Brave: settings, mock search, alignment, manual import, overlay and SRT", 
               sourceId: "lrclib",
               url: "https://lrclib.net/test-song",
               fullText:
-                requests.filter((r) => r.path === "/v1/chat/completions")
-                  .length > 2
+                requests.filter((r) =>
+                  ["/v1/chat/completions", "/v1/responses"].includes(r.path),
+                ).length > 2
                   ? null
                   : "合成歌詞第一句\n合成歌詞第二句",
               syncedLyrics: null,
@@ -52,17 +74,15 @@ test("Brave: settings, mock search, alignment, manual import, overlay and SRT", 
           lines: JSON.parse(input.messages[1].content).lines.map(
             (l: any, i: number) => ({
               id: l.id,
-              cueIds: [`c${i}`],
+              cueIds: [
+                JSON.parse(input.messages[1].content).cues[i]?.id || `c${i}`,
+              ],
               status: "anchor",
               translation: `Translation ${i + 1}`,
             }),
           ),
         };
-    res.end(
-      JSON.stringify({
-        choices: [{ message: { content: JSON.stringify(payload) } }],
-      }),
-    );
+    res.end(JSON.stringify(reply(JSON.stringify(payload))));
   });
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
   const address = server.address() as { port: number };
@@ -346,7 +366,7 @@ test("Brave: settings, mock search, alignment, manual import, overlay and SRT", 
       await readFile("artifacts/unconfigured-import.srt", "utf8"),
     ).toContain("未設定也可使用");
     expect(
-      requests.filter((r) => r.path === "/v1/chat/completions"),
+      requests.filter((r) => ["/v1/chat/completions", "/v1/responses"].includes(r.path)),
     ).toHaveLength(0);
     await welcome
       .getByRole("button", { name: "關閉面板", exact: true })
@@ -502,21 +522,21 @@ test("Brave: settings, mock search, alignment, manual import, overlay and SRT", 
       .click();
     await page.getByText("已讀取 2 段字幕，可用來對齊歌詞").waitFor();
     expect(
-      requests.filter((x) => x.path === "/v1/chat/completions"),
+      requests.filter((x) => ["/v1/chat/completions", "/v1/responses"].includes(x.path)),
     ).toHaveLength(0);
     await page.getByRole("button", { name: "搜尋歌詞", exact: true }).click();
     await expect(
       page.getByRole("button", { name: "開始搜尋", exact: true }),
     ).toBeVisible();
     expect(
-      requests.filter((x) => x.path === "/v1/chat/completions"),
+      requests.filter((x) => ["/v1/chat/completions", "/v1/responses"].includes(x.path)),
     ).toHaveLength(0);
     await page
       .getByRole("button", { name: "開始搜尋", exact: true })
       .evaluate((el) => (el as HTMLElement).click());
     await page.waitForTimeout(150);
     expect(
-      requests.filter((x) => x.path === "/v1/chat/completions"),
+      requests.filter((x) => ["/v1/chat/completions", "/v1/responses"].includes(x.path)),
     ).toHaveLength(0);
     await page.getByRole("button", { name: "開始搜尋", exact: true }).click();
     await page.getByRole("button", { name: "使用這個版本" }).click();
@@ -546,7 +566,7 @@ test("Brave: settings, mock search, alignment, manual import, overlay and SRT", 
     );
     await page.screenshot({ path: "artifacts/player.png", fullPage: true });
     expect(
-      requests.filter((x) => x.path === "/v1/chat/completions"),
+      requests.filter((x) => ["/v1/chat/completions", "/v1/responses"].includes(x.path)),
     ).toHaveLength(3);
     // No secret is injected into the page or model messages.
     expect(await page.content()).not.toContain("test-only-token");
@@ -575,7 +595,7 @@ test("Brave: settings, mock search, alignment, manual import, overlay and SRT", 
     ).toHaveValue("Translation 1");
     await expect(page.getByLabel("第 1 句結束秒數")).toHaveValue("2");
     expect(
-      requests.filter((x) => x.path === "/v1/chat/completions"),
+      requests.filter((x) => ["/v1/chat/completions", "/v1/responses"].includes(x.path)),
     ).toHaveLength(4);
     const longLyrics = Array.from(
       { length: 60 },
@@ -727,7 +747,7 @@ test("Brave: settings, mock search, alignment, manual import, overlay and SRT", 
           profile,
           apiRequests: requests.length,
           chatRequests: requests.filter(
-            (x) => x.path === "/v1/chat/completions",
+            (x) => ["/v1/chat/completions", "/v1/responses"].includes(x.path),
           ).length,
           kind: "synthetic fixture and local mock AI; not real YouTube/API validation",
         },

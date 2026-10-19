@@ -49,6 +49,7 @@ it("shows the actual AI reply as compact plain text and clears it while retestin
   const firstReply =
     '<img src=x onerror="alert(1)">\nAI 回覆第二行\n第三行\n第四行';
   let reply = firstReply;
+  let verified = false;
   let hold = false;
   let release!: (value: { runId: string }) => void;
   const fallback = requestMock.getMockImplementation()!;
@@ -64,7 +65,10 @@ it("shows the actual AI reply as compact plain text and clears it while retestin
         state: { phase: "complete" },
         output: {
           text: reply,
-          evidence: { status: "unverified", citations: [] },
+          evidence: {
+            status: verified ? "verified" : "unverified",
+            citations: [],
+          },
         },
       };
     if (m.type === "cancel") return null;
@@ -83,6 +87,8 @@ it("shows the actual AI reply as compact plain text and clears it while retestin
       .getByRole("button", { name: "收合" })
       .getAttribute("aria-expanded"),
   ).toBe("true");
+  expect(screen.getByText("測試完成；未取得搜尋工具完成證據。")).toBeTruthy();
+  verified = true;
   hold = true;
   reply = "新的 AI 回覆";
   fireEvent.click(screen.getByRole("button", { name: "測試搜尋（使用額度）" }));
@@ -90,6 +96,7 @@ it("shows the actual AI reply as compact plain text and clears it while retestin
   expect(screen.queryByRole("region", { name: "AI 實際回覆" })).toBeNull();
   release({ runId: "reply-run-2" });
   await screen.findByText("新的 AI 回覆");
+  expect(screen.getByText("測試完成；已確認搜尋工具執行。")).toBeTruthy();
   expect(screen.queryByText(firstReply)).toBeNull();
 });
 async function open() {

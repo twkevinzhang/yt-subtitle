@@ -253,7 +253,10 @@ export function Options() {
               throw new Error("服務未提供可顯示的 AI 回覆，請重新測試。");
             setTestReply(output.text);
             notify("ai", {
-              status: "測試完成；搜尋能力尚未驗證。",
+              status:
+                output?.evidence?.status === "verified"
+                  ? "測試完成；已確認搜尋工具執行。"
+                  : "測試完成；未取得搜尋工具完成證據。",
             });
             return;
           }

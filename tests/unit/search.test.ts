@@ -25,6 +25,25 @@ const candidate = {
   matchReason: "matches",
 };
 const evidence = { status: "unverified" as const, citations: [] };
+it("retains tool evidence while still rejecting sources outside the enabled list", () => {
+  const verified = {
+    status: "verified" as const,
+    citations: [candidate.url],
+    toolEvidence: "web_search_call:completed",
+  };
+  const result = parseSearchReply(
+    JSON.stringify({
+      candidates: [
+        candidate,
+        { ...candidate, id: "evil", url: "https://evil.test" },
+      ],
+    }),
+    [source],
+    verified,
+  );
+  expect(result.candidates).toHaveLength(1);
+  expect(result.candidates[0].evidence).toEqual(verified);
+});
 it("preserves AI refusal text instead of discarding the reason", () => {
   const text = JSON.stringify({
     candidates: [],

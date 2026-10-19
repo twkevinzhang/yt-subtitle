@@ -176,19 +176,11 @@ export async function handleMessage(
         video.videoId,
         s.revision,
         async (tools) => {
-          if (m.type === "search-test") {
-            const text = await tools.request(() =>
-              client.completeText(messages, tools.signal),
-            );
-            return {
-              text,
-              evidence: { status: "unverified", citations: [] },
-            } satisfies SearchTestResult;
-          }
-          const text = await tools.request(() =>
-            client.completeText(messages, tools.signal),
+          const result = await tools.request(() =>
+            client.searchText(messages, tools.signal),
           );
-          return parseSearchReply(text, s.sources);
+          if (m.type === "search-test") return result satisfies SearchTestResult;
+          return parseSearchReply(result.text, s.sources, result.evidence);
         },
         "searching",
       );

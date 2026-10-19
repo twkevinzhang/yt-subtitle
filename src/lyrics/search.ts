@@ -23,15 +23,13 @@ const candidate = z.object({
 export function parseSearchReply(
   text: string,
   sources: SourceSettings[],
+  evidence: SearchEvidence = { status: "unverified", citations: [] },
 ): LyricSearchResult {
   try {
     const payload = JSON.parse(
       text.replace(/^\s*```(?:json)?\s*/, "").replace(/\s*```\s*$/, ""),
     );
-    const candidates = validateCandidates(payload, sources, {
-      status: "unverified",
-      citations: [],
-    });
+    const candidates = validateCandidates(payload, sources, evidence);
     return {
       text,
       candidates,
