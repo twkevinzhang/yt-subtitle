@@ -60,7 +60,7 @@ const msg = z.discriminatedUnion("type", [
     preferences: preferencesSchema,
   }),
   z.object({ type: z.literal("clear-credentials") }),
-  z.object({ type: z.literal("models") }),
+  z.object({ type: z.literal("models"), provider: providerSchema }),
   z.object({ type: z.literal("connection-check") }),
   z.object({ type: z.literal("open-options") }),
   z.object({ type: z.literal("inspect") }),

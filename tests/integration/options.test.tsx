@@ -65,14 +65,23 @@ it("places CF below credentials and replaces the free-text model with a load but
     token.compareDocumentPosition(cf) & Node.DOCUMENT_POSITION_FOLLOWING,
   ).toBeTruthy();
 });
-it("saves credentials without a model, loads models, and persists the selection", async () => {
+it("loads models from unsaved credentials and persists only after explicit save", async () => {
   await open();
   fillService();
-  await save();
-  expect(record.provider?.model).toBe("");
+  expect(record.provider).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "載入模型" }));
   const select = await screen.findByRole("combobox", { name: "模型清單" });
   expect((select as HTMLSelectElement).value).toBe("");
+  expect(record.provider).toBeNull();
+  expect(requestMock).toHaveBeenCalledWith({
+    type: "models",
+    provider: {
+      schemaVersion: 1,
+      baseUrl: "https://ai.test/v1",
+      apiToken: "test-only-token",
+      model: "",
+    },
+  });
   fireEvent.change(select, { target: { value: "model-b" } });
   fireEvent.click(screen.getByRole("button", { name: "儲存設定" }));
   await waitFor(() => expect(record.provider?.model).toBe("model-b"));
@@ -110,9 +119,13 @@ it("clears model choices when credentials change and never loads against stale s
   expect(
     (screen.getByRole("button", { name: "載入模型" }) as HTMLButtonElement)
       .disabled,
-  ).toBe(true);
+  ).toBe(false);
+  fireEvent.click(screen.getByRole("button", { name: "載入模型" }));
+  await screen.findByRole("combobox", { name: "模型清單" });
   const calls = requestMock.mock.calls.filter(([m]) => m.type === "models");
-  expect(calls).toHaveLength(1);
+  expect(calls).toHaveLength(2);
+  expect(calls[1][0].provider.apiToken).toBe("new-test-token");
+  expect(record.provider?.apiToken).toBe("test-only-token");
 });
 it("puts source and display validation errors in their own section", async () => {
   await open();
@@ -217,9 +230,37 @@ it("prevents editing credentials and source drafts while a model request is in f
   expect((screen.getByLabelText("來源網域") as HTMLInputElement).disabled).toBe(
     true,
   );
+  await waitFor(() => expect(finish).toBeTypeOf("function"));
   finish(["model-a"]);
   await screen.findByRole("combobox", { name: "模型清單" });
   expect(
     (screen.getByLabelText("API Token") as HTMLInputElement).disabled,
   ).toBe(false);
+});
+
+it("does not send credentials when the user denies the connection permission", async () => {
+  await open();
+  fillService();
+  vi.mocked(chrome.permissions.request).mockImplementationOnce(
+    async () => false,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "載入模型" }));
+  expect((await screen.findByRole("alert")).textContent).toContain("未授予");
+  expect(
+    requestMock.mock.calls.some(
+      ([m]) => m.type === "models" || m.type === "settings-save",
+    ),
+  ).toBe(false);
+  expect(record.provider).toBeNull();
+});
+it("validates the current draft before requesting permission or models", async () => {
+  await open();
+  fillService();
+  fireEvent.change(screen.getByLabelText("Base URL（通常包含 /v1）"), {
+    target: { value: "invalid-url" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "載入模型" }));
+  expect((await screen.findByRole("alert")).textContent).toContain("網址");
+  expect(chrome.permissions.request).not.toHaveBeenCalled();
+  expect(requestMock.mock.calls.some(([m]) => m.type === "models")).toBe(false);
 });

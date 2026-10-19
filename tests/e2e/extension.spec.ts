@@ -387,12 +387,6 @@ test("Brave: settings, mock search, alignment, manual import, overlay and SRT", 
     expect(cfBox!.y).toBeGreaterThanOrEqual(
       credentialsBox!.y + credentialsBox!.height,
     );
-    await options
-      .getByRole("button", { name: "儲存設定", exact: true })
-      .click();
-    await aiSection
-      .getByText("已儲存服務設定，請載入並選擇模型，再儲存以啟用 AI。")
-      .waitFor();
     await welcome.bringToFront();
     await expect(welcome.getByText(/^先在設定頁填入/)).toBeVisible();
     await options.bringToFront();
@@ -404,6 +398,13 @@ test("Brave: settings, mock search, alignment, manual import, overlay and SRT", 
     await expect(
       options.getByRole("combobox", { name: "模型清單" }),
     ).toHaveCount(0);
+    expect(
+      await worker.evaluate(
+        async () =>
+          (await chrome.storage.local.get("settings")).settings?.provider ??
+          null,
+      ),
+    ).toBeNull();
     await options.screenshot({
       path: "artifacts/options-model-error.png",
       fullPage: true,
@@ -416,6 +417,17 @@ test("Brave: settings, mock search, alignment, manual import, overlay and SRT", 
     await options
       .getByRole("combobox", { name: "模型清單", exact: true })
       .selectOption("test-model");
+    expect(
+      await worker.evaluate(
+        async () =>
+          (await chrome.storage.local.get("settings")).settings?.provider ??
+          null,
+      ),
+    ).toBeNull();
+    await options.screenshot({
+      path: "artifacts/options-unsaved-models.png",
+      fullPage: true,
+    });
     await options
       .getByRole("button", { name: "儲存設定", exact: true })
       .click();

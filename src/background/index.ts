@@ -6,6 +6,7 @@ import {
   saveSettings,
   clearCredentials,
   protectStorage,
+  normalizeProvider,
 } from "./settings";
 import { createAiClient } from "./ai-client";
 import { RunManager, type RunRecord } from "./runs";
@@ -72,12 +73,12 @@ export async function handleMessage(
       runs.cancelAll();
       return clearCredentials();
     case "models": {
-      const s = await getSettings();
-      if (!s.provider) throw new Error("請先儲存服務設定");
+      // A trusted options-page draft is used only for this request, never saved.
+      const provider = normalizeProvider(m.provider);
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 8000);
       try {
-        return await createAiClient(s.provider).listModels(controller.signal);
+        return await createAiClient(provider).listModels(controller.signal);
       } finally {
         clearTimeout(timeout);
       }

@@ -117,13 +117,23 @@ export function Options() {
         onChange={(e) => {
           setProvider({ ...provider, [key]: e.target.value, model: "" });
           setModels([]);
-          notify("ai", { status: "服務資料已變更，請先儲存，再載入模型。" });
+          notify("ai", { status: "服務資料已變更，請重新載入模型。" });
         }}
       />
     </label>
   );
   const updateSource = (id: string, patch: Partial<SourceSettings>) =>
     setSources(sources.map((s) => (s.id === id ? { ...s, ...patch } : s)));
+  const currentProvider = () => {
+    const parsed = providerSchema.safeParse(provider);
+    if (!parsed.success)
+      throw new Error(
+        parsed.error.issues[0].path[0] === "apiToken"
+          ? "請填入 API Token。"
+          : "請填入有效的 AI 服務網址。",
+      );
+    return normalizeProvider(parsed.data);
+  };
   const save = (section: SectionId = "ai") => {
     let normalized: ProviderSettings | undefined;
     let normalizedSources: SourceSettings[] | undefined;
@@ -134,22 +144,11 @@ export function Options() {
       sources: {},
       preferences: {},
     }));
-    const parsed = providerSchema.safeParse(provider);
-    if (!parsed.success) {
-      notify("ai", {
-        error:
-          parsed.error.issues[0].path[0] === "apiToken"
-            ? "請填入 API Token。"
-            : "請填入有效的 AI 服務網址。",
-      });
+    try {
+      normalized = currentProvider();
+    } catch (e) {
+      notify("ai", { error: (e as Error).message });
       valid = false;
-    } else {
-      try {
-        normalized = normalizeProvider(parsed.data);
-      } catch (e) {
-        notify("ai", { error: (e as Error).message });
-        valid = false;
-      }
     }
     try {
       normalizedSources = normalizeSources(sources);
@@ -195,9 +194,12 @@ export function Options() {
   };
   const loadModels = () =>
     attempt("ai", async () => {
-      if (!savedProvider || serviceChanged)
-        throw new Error("請先儲存目前的服務設定，再載入模型。");
-      const list = await request<string[]>({ type: "models" });
+      const draft = currentProvider();
+      const granted = await chrome.permissions.request({
+        origins: [new URL(draft.baseUrl).origin + "/*"],
+      });
+      if (!granted) throw new Error("未授予 AI 服務連線權限。");
+      const list = await request<string[]>({ type: "models", provider: draft });
       const choices = [
         ...new Set(
           list
@@ -269,7 +271,7 @@ export function Options() {
         <h2>AI 服務</h2>
         <p>
           使用支援網頁搜尋的 OpenAI
-          相容服務。先儲存服務設定，再載入及選擇模型；僅能列出模型不代表支援搜尋。
+          相容服務。填入服務資料即可載入模型，選擇後再儲存；僅能列出模型不代表支援搜尋。
         </p>
         <div className="grid">
           {field("baseUrl", "Base URL（通常包含 /v1）")}
@@ -283,7 +285,7 @@ export function Options() {
           </div>
         </details>
         <div className="model-field">
-          <p id="model-label">從已儲存服務載入的模型</p>
+          <p id="model-label">從目前服務載入的模型</p>
           <div className="row">
             {modelChoices.length > 0 && (
               <select
@@ -304,10 +306,7 @@ export function Options() {
                 ))}
               </select>
             )}
-            <button
-              disabled={!!busy || !savedProvider || serviceChanged}
-              onClick={loadModels}
-            >
+            <button disabled={!!busy} onClick={loadModels}>
               載入模型
             </button>
           </div>
