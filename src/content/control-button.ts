@@ -13,6 +13,8 @@ export function createControlButton(controls: Element) {
   svg.setAttribute("height", "100%");
   svg.setAttribute("aria-hidden", "true");
   svg.style.display = "block";
+  // YouTube adds padding to SVGs. Include it inside the button-sized icon box.
+  svg.style.boxSizing = "border-box";
   const text = document.createElementNS(svg.namespaceURI, "text");
   text.setAttribute("x", "18");
   text.setAttribute("y", "18");
@@ -20,7 +22,7 @@ export function createControlButton(controls: Element) {
   text.setAttribute("dominant-baseline", "central");
   text.setAttribute("fill", "currentColor");
   text.setAttribute("font-family", "Arial, sans-serif");
-  text.setAttribute("font-size", "13");
+  text.setAttribute("font-size", "18");
   text.setAttribute("font-weight", "700");
   text.textContent = "AI";
   svg.append(text);

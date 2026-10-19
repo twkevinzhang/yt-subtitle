@@ -120,6 +120,10 @@ test("Brave: settings, mock search, alignment, manual import, overlay and SRT", 
       if (firstWatch) {
         firstWatch = false;
         body = body.replace(
+          "</style>",
+          ".ytp-button{width:48px;height:40px;padding:0}.ytp-button svg{padding:8px 12px}</style>",
+        );
+        body = body.replace(
           'id="secondary-inner"',
           'id="pending-secondary-inner"',
         );
@@ -151,6 +155,12 @@ test("Brave: settings, mock search, alignment, manual import, overlay and SRT", 
     expect(Math.abs(aiBox!.height - nativeBox!.height)).toBeLessThanOrEqual(1);
     expect(Math.abs(aiBox!.y - nativeBox!.y)).toBeLessThanOrEqual(1);
     const iconBox = await aiButton.locator("svg").boundingBox();
+    expect(Math.abs(iconBox!.width - aiBox!.width)).toBeLessThanOrEqual(1);
+    expect(Math.abs(iconBox!.height - aiBox!.height)).toBeLessThanOrEqual(1);
+    const textBox = await aiButton.locator("text").boundingBox();
+    expect(
+      Math.abs(textBox!.y + textBox!.height / 2 - aiBox!.y - aiBox!.height / 2),
+    ).toBeLessThanOrEqual(1);
     expect(
       Math.abs(iconBox!.x + iconBox!.width / 2 - aiBox!.x - aiBox!.width / 2),
     ).toBeLessThanOrEqual(1);
