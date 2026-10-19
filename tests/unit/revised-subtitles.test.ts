@@ -50,6 +50,14 @@ it("asks for a revised complete subtitle list instead of fixed input IDs", () =>
   expect(text).toContain("既有時間軸為基礎");
   expect(text).toContain("能沿用或合併");
 });
+it("requires sentence cues even when one YouTube cue contains several sung lines", () => {
+  const text = revisedSubtitleRequest("m", [], []).messages[0].content;
+  expect(text).toContain("每個 lines 項目只包含一句唱詞");
+  expect(text).toContain("不得把數句唱詞合併成一項");
+  expect(text).toContain("不得將同一段起迄複製給數句依序演唱的歌詞");
+  expect(text).toContain("各句時間無法可靠細分時，仍逐句回傳");
+  expect(text).not.toContain("可保留為合適的一個新 cue");
+});
 it("sends only incomplete AI rows to WASM and preserves every supplied timestamp on merge", () => {
   const rows = parseRevisedSubtitles(
     {
