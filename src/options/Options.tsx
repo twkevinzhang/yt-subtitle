@@ -532,7 +532,7 @@ export function Options() {
             移除憑證
           </button>
         </div>
-        <p className="muted">
+        <p className="muted credential-note">
           憑證保存在擴充功能本機儲存，不是加密保險箱；請使用可撤銷的獨立
           Token。第一版不處理音訊、不自動產生背景付費工作。
         </p>

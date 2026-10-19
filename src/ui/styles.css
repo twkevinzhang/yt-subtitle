@@ -386,10 +386,20 @@ summary {
 .muted {
   color: var(--muted);
 }
+html.options-page {
+  background: var(--surface);
+  min-height: 100%;
+}
+html.options-page body {
+  min-height: 100vh;
+}
 .options {
   max-width: 900px;
-  margin: 40px auto;
-  padding: 0 24px 48px;
+  margin: 0 auto;
+  padding: 40px 24px 88px;
+}
+.options .credential-note {
+  margin-top: 16px;
 }
 .options h1 {
   font-size: 30px;
@@ -469,7 +479,8 @@ summary {
 }
 @media (max-width: 650px) {
   .options {
-    margin: 20px auto;
+    padding-top: 20px;
+    padding-bottom: 68px;
   }
   .options .grid {
     grid-template-columns: 1fr;
