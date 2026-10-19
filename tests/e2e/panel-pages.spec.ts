@@ -111,9 +111,46 @@ test("Brave: independent pages, whole-song request, editable retry and explicit 
         }),
       }),
     );
+    await mkdir("artifacts", { recursive: true });
+    const options = await context.newPage();
+    await options.goto(
+      `chrome-extension://${new URL(worker.url()).host}/options.html`,
+    );
+    await options.emulateMedia({ colorScheme: "dark" });
+    await expect(options.locator("body")).toHaveCSS(
+      "background-color",
+      "rgb(15, 15, 15)",
+    );
+    await options.screenshot({
+      path: "artifacts/options-unified-dark.png",
+      fullPage: true,
+    });
+    await options.emulateMedia({ colorScheme: "light" });
+    await expect(options.locator("body")).toHaveCSS(
+      "background-color",
+      "rgb(255, 255, 255)",
+    );
+    await options.screenshot({
+      path: "artifacts/options-unified-light.png",
+      fullPage: true,
+    });
     const page = await context.newPage();
     await page.goto("https://www.youtube.com/watch?v=12345678901");
     await page.getByRole("button", { name: "AI 歌詞", exact: true }).click();
+    await page.evaluate(() =>
+      document.documentElement.setAttribute("dark", ""),
+    );
+    await expect(page.locator(".panel")).toHaveCSS(
+      "background-color",
+      "rgb(15, 15, 15)",
+    );
+    await page.emulateMedia({ colorScheme: "dark" });
+    await page.evaluate(() => document.documentElement.removeAttribute("dark"));
+    await expect(page.locator(".panel header")).toHaveCSS(
+      "background-color",
+      "rgb(255, 255, 255)",
+    );
+
     await page
       .getByRole("button", { name: "AI 尋找歌詞", exact: true })
       .click();
