@@ -30,6 +30,7 @@ export class RunJournal {
     if (
       new TextEncoder().encode(JSON.stringify(snapshot)).byteLength > 262144
     ) {
+      delete snapshot.responseText;
       delete snapshot.output;
       delete snapshot.partial;
       if (snapshot.state.phase === "complete") {

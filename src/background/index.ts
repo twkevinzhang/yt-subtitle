@@ -22,12 +22,12 @@ import {
 import { inspectVideo, readTrack, readTranscript } from "../youtube/context";
 import { searchMessages, parseSearchReply } from "../lyrics/search";
 import {
-  alignmentMessages,
   validateAlignment,
   enforceAlignmentOrder,
   type AlignmentDecision,
 } from "../lyrics/alignment";
-import { makeBatches, prepareAlignmentRetry } from "../lyrics/batches";
+import { prepareAlignmentRetry } from "../lyrics/batches";
+import { alignmentRequest } from "../lyrics/alignment-request";
 import type { ConsentReceipt, AlignedLine } from "../shared/types";
 const journal = new RunJournal({
   get: () => chrome.storage.session.get(null),
@@ -206,71 +206,60 @@ export async function handleMessage(
           cues: input.cues,
           targetLanguage: input.targetLanguage,
           translate: input.translate,
+          ...(input.body ? { body: input.body } : {}),
         },
         s.revision,
       );
       const retryLines = prepareAlignmentRetry(input.lines);
-      const batches = makeBatches(retryLines, input.cues);
-      if (
-        batches.length > 20 ||
-        batches.some((b) => JSON.stringify(b).length > 120000)
-      )
-        throw new Error("內容超過本次處理上限，請減少歌詞或使用手動校時");
+      const body =
+        input.body ??
+        alignmentRequest(s.provider.model, retryLines, input.cues);
+      if (JSON.stringify(body).length > 120000)
+        throw new Error("內容超過單次請求 120000 字元上限，請縮短內容");
       const client = createAiClient(s.provider);
       return runs.start(
         tabId,
         input.video.videoId,
         s.revision,
         async (tools) => {
-          let completed: AlignedLine[] = [];
           const decisions: AlignmentDecision[] = [];
-          let batchIndex = 0;
-          for (const batch of batches) {
-            const raw = await tools.request(() =>
-              client.completeText(
-                alignmentMessages(batch, input.targetLanguage, input.translate),
-                tools.signal,
-              ),
+          const raw = await tools.request(() =>
+            client.completeText([], tools.signal, body),
+          );
+          await tools.response(raw);
+          await tools.trace(
+            `整首 AI 原始回覆：\n${raw.slice(0, 16000)}${raw.length > 16000 ? "\n［診斷摘要已截斷，完整內容見 AI 原始 response］" : ""}`,
+          );
+          let payload: unknown;
+          try {
+            payload = JSON.parse(
+              raw.replace(/^\s*```(?:json)?\s*/, "").replace(/\s*```\s*$/, ""),
             );
-            await tools.trace(
-              `第 ${++batchIndex} 批 AI 原始回覆：\n${raw.slice(0, 16000)}${raw.length > 16000 ? "\n［本批原文已截斷］" : ""}`,
-            );
-            let payload: unknown;
-            try {
-              payload = JSON.parse(
-                raw
-                  .replace(/^\s*```(?:json)?\s*/, "")
-                  .replace(/\s*```\s*$/, ""),
-              );
-            } catch {
-              throw new Error("AI 校時回覆不是有效 JSON；原文已保留於診斷");
-            }
-            let lines: AlignedLine[];
-            try {
-              lines = validateAlignment(
-                payload,
-                batch.lines,
-                batch.cues,
-                input.video.durationMs,
-                decisions,
-                false,
-              );
-            } catch (error) {
-              await tools.trace(
-                `本批校驗失敗：${error instanceof Error ? error.message : "格式錯誤"}`,
-                true,
-              );
-              throw error;
-            }
-            if (input.translate && lines.some((l) => !l.translation?.trim()))
-              throw new Error("部分譯文缺漏，已保留完成段落");
-            completed = [...completed, ...lines];
-            await tools.progress(
-              lines.map((l) => l.id),
-              enforceAlignmentOrder(completed),
-            );
+          } catch {
+            throw new Error("AI 校時回覆不是有效 JSON；原文已保留於結果頁");
           }
-          const ordered = enforceAlignmentOrder(completed, decisions);
+          let validated: AlignedLine[];
+          try {
+            validated = validateAlignment(
+              payload,
+              retryLines,
+              input.cues,
+              input.video.durationMs,
+              decisions,
+              false,
+            );
+          } catch (error) {
+            await tools.trace(
+              `全曲校驗失敗：${error instanceof Error ? error.message : "格式錯誤"}`,
+              true,
+            );
+            throw error;
+          }
+          const ordered = enforceAlignmentOrder(validated, decisions);
+          await tools.progress(
+            ordered.map((line) => line.id),
+            ordered,
+          );
           const accepted = ordered.filter(
             (line) => !line.excluded && line.startMs !== undefined,
           ).length;
@@ -278,7 +267,7 @@ export async function handleMessage(
             `全曲校驗：保留 ${accepted} 句；未對齊 ${ordered.filter((line) => !line.excluded && line.startMs === undefined).length} 句。\n逐句判定：\n${JSON.stringify(decisions, null, 2)}`,
             true,
           );
-          return ordered;
+          return { lines: ordered, response: raw };
         },
       );
     }

@@ -1,0 +1,197 @@
+import React from "react";
+import { afterEach, expect, it, vi } from "vitest";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
+import { Panel } from "../../src/ui/Panel";
+const { mockRequest } = vi.hoisted(() => ({ mockRequest: vi.fn() }));
+vi.mock("../../src/shared/messages", () => ({ request: mockRequest }));
+vi.mock("../../src/ui/user-action", () => ({ isUserAction: () => true }));
+afterEach(cleanup);
+function setup() {
+  const settings = {
+    configured: true,
+    model: "m",
+    baseUrl: "https://test/v1",
+    settingsRevision: 1,
+    sources: [{ enabled: true, name: "來源", domain: "example.com" }],
+    preferences: {
+      mode: "original",
+      targetLanguage: "ja",
+      fontSize: 28,
+      position: "bottom",
+    },
+  };
+  const aligned = [
+    {
+      id: "l0",
+      original: "歌詞",
+      status: "anchor",
+      cueIds: ["c0"],
+      startMs: 1000,
+      endMs: 2000,
+      excluded: false,
+    },
+  ];
+  mockRequest.mockReset();
+  mockRequest.mockImplementation(async (m: any) => {
+    if (m.type === "settings-public") return settings;
+    if (m.type === "results-list") return [];
+    if (m.type === "inspect")
+      return {
+        video: {
+          schemaVersion: 1,
+          videoId: "12345678901",
+          title: "song",
+          channel: "",
+          description: "",
+          durationMs: 10000,
+        },
+        tracks: [],
+      };
+    if (m.type === "read-transcript")
+      return [{ id: "c0", text: "歌詞", startMs: 1000, endMs: 2000 }];
+    if (m.type === "generate") return { runId: "r" };
+    if (m.type === "run")
+      return {
+        state: { phase: "complete", completedLineIds: ["l0"], requestCount: 1 },
+        output: { lines: aligned, response: '{"lines":[]}' },
+      };
+  });
+  const overlay = { setResult: vi.fn(), stop: vi.fn(), destroy: vi.fn() };
+  render(
+    <Panel
+      binding={{
+        video: document.createElement("video"),
+        container: document.createElement("div"),
+        videoId: "12345678901",
+        isAd: () => false,
+      }}
+      overlay={overlay}
+      onClose={() => {}}
+    />,
+  );
+  return overlay;
+}
+it("separates search, paste and import entry pages", async () => {
+  setup();
+  fireEvent.click(await screen.findByRole("button", { name: "AI 尋找歌詞" }));
+  expect(screen.getByRole("button", { name: "開始搜尋" })).toBeTruthy();
+  expect(screen.queryByRole("textbox", { name: "歌詞全文" })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "← 返回歌詞" }));
+  fireEvent.click(screen.getByRole("button", { name: "貼上歌詞" }));
+  expect(screen.getByRole("textbox", { name: "歌詞全文" })).toBeTruthy();
+  expect(screen.queryByLabelText("匯入 LRC／SRT")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "← 返回歌詞" }));
+  fireEvent.click(screen.getByRole("button", { name: "匯入 LRC／SRT" }));
+  expect(screen.getByLabelText("匯入 LRC／SRT")).toBeTruthy();
+  expect(screen.queryByRole("textbox", { name: "歌詞全文" })).toBeNull();
+});
+it("aligns paste immediately, edits the real request, and applies only on explicit save", async () => {
+  const overlay = setup();
+  fireEvent.click(await screen.findByRole("button", { name: "貼上歌詞" }));
+  fireEvent.change(screen.getByLabelText("歌詞全文"), {
+    target: { value: "歌詞" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "使用貼上歌詞" }));
+  const body = await screen.findByRole("textbox", { name: "Request body" });
+  await waitFor(() =>
+    expect(
+      mockRequest.mock.calls.filter(([m]) => m.type === "generate"),
+    ).toHaveLength(1),
+  );
+  await screen.findByText("AI 對齊完成，請檢查後套用並保存。");
+  expect(overlay.setResult).not.toHaveBeenCalled();
+  expect(mockRequest.mock.calls.some(([m]) => m.type === "results-save")).toBe(
+    false,
+  );
+  expect((body as HTMLTextAreaElement).value).toContain('\n  "model"');
+  fireEvent.change(body, { target: { value: "{bad" } });
+  fireEvent.click(screen.getByRole("button", { name: "重新請求" }));
+  await screen.findByRole("alert");
+  expect(
+    mockRequest.mock.calls.filter(([m]) => m.type === "generate"),
+  ).toHaveLength(1);
+  const edited = {
+    model: "custom-model",
+    messages: [{ role: "user", content: "校時" }],
+    stream: false,
+  };
+  fireEvent.change(body, { target: { value: JSON.stringify(edited) } });
+  fireEvent.click(screen.getByRole("button", { name: "重新請求" }));
+  await waitFor(() =>
+    expect(
+      mockRequest.mock.calls.filter(([m]) => m.type === "generate"),
+    ).toHaveLength(2),
+  );
+  expect(
+    mockRequest.mock.calls.filter(([m]) => m.type === "generate").at(-1)![0]
+      .input.body,
+  ).toEqual(edited);
+  await waitFor(() =>
+    expect(
+      screen
+        .getByRole("button", { name: "套用並保存" })
+        .hasAttribute("disabled"),
+    ).toBe(false),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "套用並保存" }));
+  await waitFor(() => expect(overlay.setResult).toHaveBeenCalledTimes(1));
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "製作／編輯" })).toBeTruthy(),
+  );
+});
+it("previews imported timestamps before sending and keeps local timed import usable without AI", async () => {
+  const overlay = setup();
+  fireEvent.click(await screen.findByRole("button", { name: "匯入 LRC／SRT" }));
+  const file = {
+    name: "song.srt",
+    size: 60,
+    arrayBuffer: async () =>
+      new TextEncoder().encode("1\n00:00:01,000 --> 00:00:02,000\n歌詞").buffer,
+  };
+  fireEvent.change(screen.getByLabelText("匯入 LRC／SRT"), {
+    target: { files: [file] },
+  });
+  await screen.findByText("song.srt · 1 句");
+  expect(mockRequest.mock.calls.some(([m]) => m.type === "generate")).toBe(
+    false,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "確認並開始對齊" }));
+  await screen.findByText("AI 對齊完成，請檢查後套用並保存。");
+  expect(
+    mockRequest.mock.calls.filter(([m]) => m.type === "generate"),
+  ).toHaveLength(1);
+  expect(overlay.setResult).not.toHaveBeenCalled();
+});
+it("keeps the previous result and edited body after a retry fails", async () => {
+  setup();
+  fireEvent.click(await screen.findByRole("button", { name: "貼上歌詞" }));
+  fireEvent.change(screen.getByLabelText("歌詞全文"), {
+    target: { value: "歌詞" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "使用貼上歌詞" }));
+  await screen.findByText("AI 對齊完成，請檢查後套用並保存。");
+  const old = mockRequest.getMockImplementation()!;
+  mockRequest.mockImplementation((m: any) =>
+    m.type === "generate"
+      ? Promise.reject(new Error("AI 服務回應 HTTP 503"))
+      : old(m),
+  );
+  const body = screen.getByLabelText("Request body") as HTMLTextAreaElement;
+  const edited = body.value.replace('"model": "m"', '"model": "retry"');
+  fireEvent.change(body, { target: { value: edited } });
+  fireEvent.click(screen.getByRole("button", { name: "重新請求" }));
+  await screen.findByText("AI 服務回應 HTTP 503");
+  expect(body.value).toBe(edited);
+  expect(screen.getByLabelText("逐句時間戳").textContent).toContain(
+    "1.000 → 2.000",
+  );
+  expect(
+    screen.getByRole("button", { name: "套用並保存" }).hasAttribute("disabled"),
+  ).toBe(false);
+});

@@ -71,6 +71,24 @@ export const searchTestBodySchema = z
     (body) => JSON.stringify(body).length <= 120000,
     "Request body 超過 120000 字元",
   );
+export const alignmentBodySchema = z
+  .object({
+    model: z.string().trim().min(1),
+    messages: z
+      .array(
+        z.object({
+          role: z.enum(["system", "user", "assistant"]),
+          content: z.string(),
+        }),
+      )
+      .min(1),
+    stream: z.literal(false),
+  })
+  .passthrough()
+  .refine(
+    (body) => JSON.stringify(body).length <= 120000,
+    "Request body 超過 120000 字元",
+  );
 const msg = z.discriminatedUnion("type", [
   z.object({ type: z.literal("settings-public") }),
   z.object({ type: z.literal("settings-edit") }),
@@ -105,6 +123,7 @@ const msg = z.discriminatedUnion("type", [
       cues: z.array(cueSchema).max(20000),
       targetLanguage: z.enum(["ja", "zh-Hant", "en"]),
       translate: z.boolean(),
+      body: alignmentBodySchema.optional(),
       consent: consentSchema,
     }),
   }),

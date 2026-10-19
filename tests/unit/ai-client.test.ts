@@ -6,6 +6,28 @@ const p = {
   apiToken: "private-token",
   model: "m",
 };
+it("sends edited alignment body verbatim in one request, keeping credentials in headers", async () => {
+  const fetcher = vi.fn(async (_url: RequestInfo | URL, _init?: RequestInit) =>
+    Response.json({ choices: [{ message: { content: '{"lines":[]}' } }] }),
+  );
+  const body = {
+    model: "edited",
+    messages: [{ role: "user", content: "whole song" }],
+    stream: false,
+    temperature: 0.1,
+  };
+  await createAiClient(p, fetcher).completeText(
+    [],
+    new AbortController().signal,
+    body,
+  );
+  expect(fetcher).toHaveBeenCalledTimes(1);
+  expect(JSON.parse(fetcher.mock.calls[0][1]!.body as string)).toEqual(body);
+  expect(fetcher.mock.calls[0][1]!.headers).toMatchObject({
+    Authorization: "Bearer private-token",
+  });
+  expect(JSON.stringify(body)).not.toContain("private-token");
+});
 it("returns full diagnostic JSON and HTTP errors without altering the edited request body", async () => {
   const body = {
     model: "edited-model",

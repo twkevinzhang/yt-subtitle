@@ -12,6 +12,7 @@ import { Editor } from "../../src/ui/Editor";
 import { Panel } from "../../src/ui/Panel";
 const { mockRequest } = vi.hoisted(() => ({ mockRequest: vi.fn() }));
 vi.mock("../../src/shared/messages", () => ({ request: mockRequest }));
+vi.mock("../../src/ui/user-action", () => ({ isUserAction: () => true }));
 afterEach(cleanup);
 it("loads video independently of cache and keeps local paste available while captions are pending", async () => {
   mockRequest.mockClear();
@@ -71,9 +72,9 @@ it("loads video independently of cache and keeps local paste available while cap
     ],
   });
   await screen.findByText("延遲字幕測試");
-  expect(screen.getByRole("button", { name: "貼上／匯入" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "貼上歌詞" })).toBeTruthy();
   expect(screen.queryByRole("textbox", { name: "歌詞全文" })).toBeNull();
-  fireEvent.click(screen.getByRole("button", { name: "貼上／匯入" }));
+  fireEvent.click(screen.getByRole("button", { name: "貼上歌詞" }));
   fireEvent.change(screen.getByLabelText("歌詞全文"), {
     target: { value: "本機歌詞" },
   });
@@ -82,8 +83,11 @@ it("loads video independently of cache and keeps local paste available while cap
   fireEvent.click(screen.getByRole("button", { name: "← 返回歌詞" }));
   const preview = screen.getByRole("region", { name: "字幕編輯與預覽" });
   preview.scrollTop = 120;
-  fireEvent.click(screen.getByRole("button", { name: "製作／編輯" }));
-  expect(screen.getByLabelText("歌詞全文")).toHaveProperty("value", "本機歌詞");
+  fireEvent.click(screen.getByRole("button", { name: "繼續編輯草稿" }));
+  expect(screen.getByRole("textbox", { name: "原文" })).toHaveProperty(
+    "value",
+    "本機歌詞",
+  );
   fireEvent.click(screen.getByRole("button", { name: "← 返回歌詞" }));
   expect(preview.scrollTop).toBe(120);
   expect(mockRequest).toHaveBeenCalledWith({
@@ -229,28 +233,19 @@ it("refreshes settings when returning from the options tab", async () => {
   );
   await screen.findByText(/先在設定頁填入/);
   expect(screen.queryByRole("button", { name: /^搜尋歌詞$/ })).toBeNull();
-  fireEvent.click(screen.getByRole("button", { name: "貼上／匯入" }));
+  fireEvent.click(screen.getByRole("button", { name: "貼上歌詞" }));
   expect(
     screen
       .getByRole("button", { name: "使用貼上歌詞" })
       .hasAttribute("disabled"),
   ).toBe(false);
-  expect(screen.getByLabelText("匯入 LRC／SRT").hasAttribute("disabled")).toBe(
-    false,
-  );
+  expect(screen.queryByLabelText("匯入 LRC／SRT")).toBeNull();
   fireEvent.change(screen.getByLabelText("歌詞全文"), {
     target: { value: "本機歌詞" },
   });
   fireEvent.click(screen.getByRole("button", { name: "使用貼上歌詞" }));
   await screen.findByRole("heading", { name: "逐句預覽與校時" });
-  expect(
-    screen
-      .getByRole("button", { name: "對齊／生成譯文" })
-      .hasAttribute("disabled"),
-  ).toBe(true);
-  expect(
-    screen.getByRole("checkbox", { name: /生成譯文/ }).hasAttribute("disabled"),
-  ).toBe(true);
+  expect(screen.queryByRole("checkbox", { name: /生成譯文/ })).toBeNull();
   fireEvent.change(screen.getByLabelText("第 1 句開始秒數"), {
     target: { value: "1" },
   });

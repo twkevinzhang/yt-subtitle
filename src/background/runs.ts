@@ -4,11 +4,13 @@ export interface RunRecord {
   output?: unknown;
   partial?: unknown;
   alignmentReport?: string;
+  responseText?: string;
 }
 export interface RunTools {
   signal: AbortSignal;
   request<T>(fn: () => Promise<T>): Promise<T>;
   progress(ids: string[], partial?: unknown): Promise<void>;
+  response(text: string): Promise<void>;
   trace(text: string, verdict?: boolean): Promise<void>;
 }
 export class RunManager {
@@ -61,6 +63,11 @@ export class RunManager {
         await this.persist(record);
         const output = await job({
           signal: controller.signal,
+          response: async (text) => {
+            check();
+            record.responseText = text;
+            await this.persist(record);
+          },
           trace: async (text, verdict = false) => {
             check();
             if (verdict)

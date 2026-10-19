@@ -1,5 +1,6 @@
 import React from "react";
 import type { LyricCandidate } from "../shared/types";
+import { isUserAction } from "./user-action";
 export function Candidates({
   candidates,
   onSelect,
@@ -33,7 +34,13 @@ export function Candidates({
             {c.evidence.status === "verified" ? "已驗證" : "尚未驗證"}
           </small>
           <div className="row">
-            <button onClick={() => onSelect(c)}>使用這個版本</button>
+            <button
+              onClick={(event) => {
+                if (isUserAction(event)) onSelect(c);
+              }}
+            >
+              使用這個版本
+            </button>
           </div>
         </article>
       ))}

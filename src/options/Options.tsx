@@ -375,41 +375,6 @@ export function Options() {
         <h2>字幕顯示</h2>
         <div className="grid">
           <label>
-            <span>預設模式</span>
-            <select
-              disabled={!!busy}
-              value={preferences.mode}
-              onChange={(e) =>
-                setPreferences({
-                  ...preferences,
-                  mode: e.target.value as Preferences["mode"],
-                })
-              }
-            >
-              <option value="original">原文</option>
-              <option value="bilingual">原文＋譯文</option>
-              <option value="translation">僅譯文</option>
-            </select>
-          </label>
-          <label>
-            <span>翻譯目標</span>
-            <select
-              disabled={!!busy}
-              value={preferences.targetLanguage}
-              onChange={(e) =>
-                setPreferences({
-                  ...preferences,
-                  targetLanguage: e.target
-                    .value as Preferences["targetLanguage"],
-                })
-              }
-            >
-              <option value="zh-Hant">繁體中文</option>
-              <option value="ja">日文</option>
-              <option value="en">英文</option>
-            </select>
-          </label>
-          <label>
             <span>字級（14–64 px）</span>
             <input
               disabled={!!busy}

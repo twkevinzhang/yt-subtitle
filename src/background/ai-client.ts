@@ -104,13 +104,18 @@ export function createAiClient(
   async function completeText(
     messages: ChatMessage[],
     signal: AbortSignal,
+    body?: Record<string, unknown>,
   ): Promise<string> {
     if (!provider.model.trim()) throw new Error("請先載入、選擇模型並儲存設定");
-    const data = await call("chat/completions", signal, {
-      model: provider.model,
-      messages,
-      stream: false,
-    });
+    const data = await call(
+      "chat/completions",
+      signal,
+      body ?? {
+        model: provider.model,
+        messages,
+        stream: false,
+      },
+    );
     const text = data.choices?.[0]?.message?.content;
     if (typeof text !== "string" || !text.trim())
       throw new Error("AI 未提供文字結果");
