@@ -12,6 +12,65 @@ const { mockRequest } = vi.hoisted(() => ({ mockRequest: vi.fn() }));
 vi.mock("../../src/shared/messages", () => ({ request: mockRequest }));
 vi.mock("../../src/ui/user-action", () => ({ isUserAction: () => true }));
 afterEach(cleanup);
+it("locates pending lyrics and keeps apply unavailable until they are resolved", async () => {
+  setup();
+  const original = mockRequest.getMockImplementation()!;
+  mockRequest.mockImplementation((m: any) =>
+    m.type === "run"
+      ? Promise.resolve({
+          state: {
+            phase: "complete",
+            completedLineIds: ["l0", "l1"],
+            requestCount: 1,
+          },
+          output: {
+            lines: [
+              {
+                id: "l0",
+                original: "已對齊",
+                startMs: 1000,
+                endMs: 2000,
+                status: "anchor",
+                cueIds: ["c0"],
+                excluded: false,
+              },
+              {
+                id: "l1",
+                original: "待處理歌詞",
+                status: "unaligned",
+                cueIds: [],
+                excluded: false,
+              },
+            ],
+            response: "{}",
+          },
+        })
+      : original(m),
+  );
+  fireEvent.click(await screen.findByRole("button", { name: "貼上歌詞" }));
+  fireEvent.change(screen.getByLabelText("歌詞全文"), {
+    target: { value: "已對齊\n待處理歌詞" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "使用貼上歌詞" }));
+  await screen.findByText("AI 對齊完成，請檢查後套用並保存。");
+  expect(
+    screen.getByRole("tab", { name: "歌詞結果" }).getAttribute("aria-selected"),
+  ).toBe("true");
+  expect(
+    screen.getByRole("button", { name: "套用並保存" }).hasAttribute("disabled"),
+  ).toBe(true);
+  fireEvent.click(screen.getByRole("button", { name: "檢查問題" }));
+  expect(screen.getByLabelText("逐句時間戳").textContent).not.toContain(
+    "已對齊",
+  );
+  expect(screen.getByLabelText("逐句時間戳").textContent).toContain(
+    "待處理歌詞",
+  );
+  fireEvent.click(screen.getByRole("checkbox", { name: "排除這句" }));
+  expect(
+    screen.getByRole("button", { name: "套用並保存" }).hasAttribute("disabled"),
+  ).toBe(false);
+});
 function setup() {
   const settings = {
     configured: true,
@@ -98,6 +157,7 @@ it("aligns paste immediately, edits the real request, and applies only on explic
     target: { value: "歌詞" },
   });
   fireEvent.click(screen.getByRole("button", { name: "使用貼上歌詞" }));
+  fireEvent.click(await screen.findByRole("tab", { name: "請求內容" }));
   const body = await screen.findByRole("textbox", { name: "Request body" });
   await waitFor(() =>
     expect(
@@ -182,6 +242,7 @@ it("keeps the previous result and edited body after a retry fails", async () => 
       ? Promise.reject(new Error("AI 服務回應 HTTP 503"))
       : old(m),
   );
+  fireEvent.click(screen.getByRole("tab", { name: "請求內容" }));
   const body = screen.getByLabelText("Request body") as HTMLTextAreaElement;
   const edited = body.value.replace('"model": "m"', '"model": "retry"');
   fireEvent.change(body, { target: { value: edited } });
@@ -189,7 +250,7 @@ it("keeps the previous result and edited body after a retry fails", async () => 
   await screen.findByText("AI 服務回應 HTTP 503");
   expect(body.value).toBe(edited);
   expect(screen.getByLabelText("逐句時間戳").textContent).toContain(
-    "1.000 → 2.000",
+    "00:01–00:02",
   );
   expect(
     screen.getByRole("button", { name: "套用並保存" }).hasAttribute("disabled"),

@@ -144,6 +144,8 @@ test("Brave: independent pages, whole-song request, editable retry and explicit 
     ).toBeVisible();
     expect(requests).toHaveLength(1);
     expect(JSON.parse(requests[0].messages[1].content).lines).toHaveLength(81);
+    await expect(page.getByLabel("Request body", { exact: true })).toBeHidden();
+    await page.getByRole("tab", { name: "請求內容", exact: true }).click();
     const body = page.getByLabel("Request body", { exact: true });
     const initial = await body.inputValue();
     expect(initial).toContain('\n  "model"');
@@ -158,10 +160,25 @@ test("Brave: independent pages, whole-song request, editable retry and explicit 
     await expect(
       page.getByRole("button", { name: "重新請求", exact: true }),
     ).toBeEnabled();
-    await page.locator(".operations").evaluate((el) => {
+    await page.getByRole("tab", { name: "歌詞結果", exact: true }).click();
+    await page.locator(".review-content").evaluate((el) => {
       el.scrollTop = 0;
     });
     await page.screenshot({ path: "artifacts/panel-request-result.png" });
+    await page.evaluate(() =>
+      document.documentElement.setAttribute("dark", ""),
+    );
+    await expect(page.locator(".review-panel")).toHaveCSS(
+      "background-color",
+      "rgb(15, 15, 15)",
+    );
+    await page.screenshot({ path: "artifacts/panel-review-dark.png" });
+    const footerBefore = await page.locator(".review-footer").boundingBox();
+    await page.locator(".review-content").evaluate((el) => {
+      el.scrollTop = el.scrollHeight;
+    });
+    const footerAfter = await page.locator(".review-footer").boundingBox();
+    expect(Math.abs(footerBefore!.y - footerAfter!.y)).toBeLessThanOrEqual(1);
     await page.getByRole("button", { name: "套用並保存", exact: true }).click();
     await expect(
       page.getByRole("button", { name: "製作／編輯", exact: true }),

@@ -641,3 +641,227 @@ html.options-page body {
     top: -12px;
   }
 }
+.review-panel {
+  --surface: #fff;
+  --header: #fff;
+  --field: #f6f6f6;
+  --text: #0f0f0f;
+  --muted: #606060;
+  --border: #dedede;
+  --link: #065fd4;
+  --pending: #8a5200;
+  --button: #f2f2f2;
+  --hover: #e8e8e8;
+  font-family: "Segoe UI", "Noto Sans TC", sans-serif;
+  color: var(--text);
+  background: var(--surface);
+  border-color: var(--border);
+  box-shadow: none;
+}
+:host([data-theme="dark"]) .review-panel {
+  --surface: #0f0f0f;
+  --header: #0f0f0f;
+  --field: #212121;
+  --text: #f1f1f1;
+  --muted: #aaa;
+  --border: #363636;
+  --link: #3ea6ff;
+  --pending: #f2b85b;
+  --button: #272727;
+  --hover: #333;
+}
+.panel .review-page {
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  padding: 0;
+  overflow: hidden;
+  background: var(--surface);
+  gap: 0;
+}
+.review-page > * + * {
+  margin-top: 0;
+}
+.review-heading {
+  padding: 12px 16px 8px;
+}
+.review-back {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.review-back button {
+  border: 0;
+  padding: 4px 0;
+  background: transparent;
+  color: var(--muted);
+}
+.review-title {
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.5;
+  margin: 10px 0 6px;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+.review-count {
+  font-size: 12px;
+  color: var(--muted);
+  margin: 0;
+  display: flex;
+  gap: 16px;
+}
+.review-count span,
+.review-pending {
+  color: var(--pending);
+}
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.review-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--border);
+  padding: 0 16px;
+}
+.review-tabs button {
+  flex: 1;
+  border: 0;
+  border-radius: 0;
+  border-bottom: 2px solid transparent;
+  padding: 12px 0 10px;
+  background: transparent;
+  color: var(--muted);
+}
+.review-tabs button[aria-selected="true"] {
+  color: var(--text);
+  border-bottom-color: var(--link);
+  font-weight: 600;
+}
+.review-content {
+  overflow: auto;
+  overscroll-behavior: contain;
+  min-height: 0;
+  padding: 12px 16px;
+}
+.review-content [hidden] {
+  display: none;
+}
+.review-filter {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--muted);
+  padding-bottom: 8px;
+}
+.review-filter button,
+.review-pending button {
+  border: 0;
+  color: var(--link);
+  background: transparent;
+  font-size: 12px;
+  padding: 6px;
+}
+.review-line {
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border);
+}
+.review-line summary {
+  cursor: pointer;
+  list-style: none;
+}
+.review-line summary::-webkit-details-marker {
+  display: none;
+}
+.review-line summary small {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  margin-bottom: 4px;
+}
+.review-line summary span {
+  display: block;
+  font-size: 16px;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+}
+.review-line.pending summary small {
+  color: var(--pending);
+}
+.review-line.excluded summary {
+  opacity: 0.5;
+}
+.review-line[open] > summary {
+  margin-bottom: 12px;
+}
+.review-line .editor-row {
+  border-bottom: 0;
+}
+.review-request label {
+  display: block;
+  font-size: 12px;
+  color: var(--muted);
+}
+.review-request textarea {
+  margin: 8px 0 12px;
+  min-height: 240px;
+  font:
+    12px/1.6 Consolas,
+    monospace;
+  background: var(--field);
+  border-color: var(--border);
+}
+.review-content pre {
+  max-height: none;
+  overflow: visible;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  line-height: 1.65;
+}
+.review-error {
+  border-left: 3px solid var(--pending);
+  padding: 8px 12px;
+  color: var(--pending);
+  font-size: 13px;
+}
+.review-offset {
+  margin-top: 20px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.review-footer {
+  border-top: 1px solid var(--border);
+  padding: 12px 16px;
+  background: var(--surface);
+  display: grid;
+  gap: 8px;
+}
+.review-footer > .muted,
+.review-pending {
+  font-size: 12px;
+}
+.review-pending {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.review-footer .primary {
+  width: 100%;
+  border-radius: 6px;
+  background: var(--link);
+  border-color: var(--link);
+  color: #fff;
+  padding: 10px;
+}
+:host([data-theme="dark"]) .review-footer .primary {
+  color: #0f0f0f;
+}

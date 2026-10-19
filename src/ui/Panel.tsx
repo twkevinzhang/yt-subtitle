@@ -50,6 +50,10 @@ export function Panel({
   const [view, setView] = useState<
     "lyrics" | "search" | "paste" | "import" | "edit" | "saved"
   >("lyrics");
+  const [reviewTab, setReviewTab] = useState<"result" | "request" | "response">(
+    "result",
+  );
+  const [onlyPending, setOnlyPending] = useState(false);
   const editPage = useRef<HTMLElement>(null);
   const lyricsPage = useRef<HTMLElement>(null);
   const previousView = useRef(view);
@@ -83,6 +87,24 @@ export function Panel({
   const [appliedOffset, setAppliedOffset] = useState(0);
   const [appliedLines, setAppliedLines] = useState<AlignedLine[]>([]);
   const alignmentInput = useRef<AlignedLine[]>([]);
+  const invalidIds = new Set(
+    video
+      ? validateTiming(lines, video.durationMs, offset)
+          .filter((issue) => issue.severity === "error")
+          .map((issue) => issue.lineId)
+      : [],
+  );
+  const pending = lines.filter(
+    (line) =>
+      !line.excluded &&
+      (invalidIds.has(line.id) ||
+        line.startMs === undefined ||
+        line.endMs === undefined),
+  );
+  const stamp = (ms: number | undefined) =>
+    ms === undefined
+      ? "待校時"
+      : `${String(Math.floor(ms / 60000)).padStart(2, "0")}:${String(Math.floor(ms / 1000) % 60).padStart(2, "0")}`;
   const live = useRef(true),
     activeRun = useRef<string | undefined>(undefined);
   const provenance = useRef<DraftProvenance | undefined>(undefined);
@@ -382,6 +404,8 @@ export function Panel({
   ) => {
     if (!draft.length) throw new Error("請先提供歌詞");
     const clean = draft.map(({ translation, ...line }) => line);
+    setReviewTab("result");
+    setOnlyPending(false);
     setLines(clean);
     alignmentInput.current = clean;
     setOffset(0);
@@ -462,7 +486,11 @@ export function Panel({
       setTimeout(() => URL.revokeObjectURL(url), 1000);
     });
   return (
-    <div className="panel" role="region" aria-label="AI 歌詞工作面板">
+    <div
+      className={`panel ${view === "edit" ? "review-panel" : ""}`}
+      role="region"
+      aria-label="AI 歌詞工作面板"
+    >
       <header>
         <h2>AI 歌詞</h2>
         <div className="row">
@@ -478,39 +506,43 @@ export function Panel({
         <aside
           ref={editPage}
           hidden={view === "lyrics"}
-          className="panel-body operations stack"
+          className={`panel-body operations stack ${view === "edit" ? "review-page" : ""}`}
           aria-label="歌詞操作與設定"
           tabIndex={0}
         >
-          <button
-            className="back-button"
-            disabled={busy}
-            onClick={() => setView("lyrics")}
-          >
-            ← 返回歌詞
-          </button>
-          {view !== "lyrics" && <h3>{video?.title || "目前影片"}</h3>}
-          <p className="muted" role="status">
-            {message}
-          </p>
-          {error && (
-            <p role="alert" className="notice error">
-              {error}
-            </p>
-          )}
-          {busy && (
-            <div className="notice">
-              <p>處理中…{progress}</p>
+          {view !== "edit" && (
+            <>
               <button
-                disabled={!activeRun.current}
-                onClick={() =>
-                  activeRun.current &&
-                  void request({ type: "cancel", runId: activeRun.current })
-                }
+                className="back-button"
+                disabled={busy}
+                onClick={() => setView("lyrics")}
               >
-                取消工作
+                ← 返回歌詞
               </button>
-            </div>
+              {view !== "lyrics" && <h3>{video?.title || "目前影片"}</h3>}
+              <p className="muted" role="status">
+                {message}
+              </p>
+              {error && (
+                <p role="alert" className="notice error">
+                  {error}
+                </p>
+              )}
+              {busy && (
+                <div className="notice">
+                  <p>處理中…{progress}</p>
+                  <button
+                    disabled={!activeRun.current}
+                    onClick={() =>
+                      activeRun.current &&
+                      void request({ type: "cancel", runId: activeRun.current })
+                    }
+                  >
+                    取消工作
+                  </button>
+                </div>
+              )}
+            </>
           )}
           {view === "search" && (
             <section className="section">
@@ -675,113 +707,281 @@ export function Panel({
           )}
           {view === "edit" && (
             <>
-              {!settings?.configured && (
-                <p className="notice">
-                  先在設定頁填入你的 AI 服務；貼上、匯入與預覽仍可使用。
-                  <button
-                    onClick={() => void request({ type: "open-options" })}
-                  >
-                    前往設定
+              <div className="review-heading">
+                <div className="review-back">
+                  <button disabled={busy} onClick={() => setView("lyrics")}>
+                    ← 返回歌詞
                   </button>
+                  <strong>對齊結果</strong>
+                </div>
+                <p className="review-title" title={video?.title}>
+                  {video?.title || "目前影片"}
                 </p>
-              )}
-              <h3>對齊結果</h3>
-              <pre aria-label="逐句時間戳">
-                {lines
-                  .map(
-                    (l) =>
-                      `${l.startMs === undefined ? "待校時" : (l.startMs / 1000).toFixed(3)} → ${l.endMs === undefined ? "待校時" : (l.endMs / 1000).toFixed(3)}  ${l.original}`,
-                  )
-                  .join("\n")}
-              </pre>
-              <label>
-                Request body
-                <textarea
-                  aria-label="Request body"
-                  spellCheck={false}
-                  rows={16}
-                  value={requestBody}
-                  disabled={busy}
-                  onChange={(e) => setRequestBody(e.target.value)}
-                />
-              </label>
-              <button
-                disabled={busy || !settings?.configured || !lines.length}
-                onClick={(event) =>
-                  isUserAction(event) &&
-                  startGenerate(
-                    alignmentInput.current.length
-                      ? alignmentInput.current
-                      : lines,
-                    requestBody || undefined,
-                  )
-                }
-              >
-                重新請求
-              </button>
-              {responseText && (
-                <details>
-                  <summary>AI 原始 response</summary>
-                  <pre>{responseText}</pre>
-                </details>
-              )}
-              {alignmentReport && (
-                <details className="alignment-diagnostics">
-                  <summary>AI 校時診斷（原始回覆與判定）</summary>
-                  <pre>{alignmentReport}</pre>
-                </details>
-              )}
-              <details className="manual-timing">
-                <summary>進階：逐句檢查／手動校時（選用）</summary>
-                <Editor
-                  lines={lines}
-                  onChange={setLines}
-                  currentMs={() => Math.round(binding.video.currentTime * 1000)}
-                  seek={(ms) => {
-                    binding.video.currentTime = ms / 1000;
-                  }}
-                />
-              </details>
-              <label>
-                整體偏移（秒，正數為延後）
-                <input
-                  type="number"
-                  step="0.1"
-                  value={offset / 1000}
-                  onChange={(e) =>
-                    setOffset(Math.round(Number(e.target.value) * 1000))
+                <p className="review-count" role="status">
+                  {busy
+                    ? `處理中…${progress}`
+                    : `已對齊 ${lines.filter((l) => !l.excluded).length - pending.length} 句`}
+                  {!busy && pending.length > 0 && (
+                    <span>{pending.length} 句待處理</span>
+                  )}
+                </p>
+                <span className="visually-hidden">{message}</span>
+                {busy && (
+                  <button
+                    disabled={!activeRun.current}
+                    onClick={() =>
+                      activeRun.current &&
+                      void request({
+                        type: "cancel",
+                        runId: activeRun.current,
+                      }).catch(() => {})
+                    }
+                  >
+                    取消工作
+                  </button>
+                )}
+              </div>
+              <div
+                className="review-tabs"
+                role="tablist"
+                aria-label="對齊工作區"
+                onKeyDown={(e) => {
+                  const tabs = ["result", "request", "response"] as const;
+                  const next =
+                    e.key === "ArrowRight"
+                      ? (tabs.indexOf(reviewTab) + 1) % 3
+                      : e.key === "ArrowLeft"
+                        ? (tabs.indexOf(reviewTab) + 2) % 3
+                        : -1;
+                  if (next >= 0) {
+                    e.preventDefault();
+                    setReviewTab(tabs[next]);
+                    (e.currentTarget.children[next] as HTMLElement).focus();
                   }
-                />
-              </label>
-              <button
-                className="primary"
-                disabled={busy || !lines.length}
-                onClick={() =>
-                  attempt(async () => {
-                    const r = await result();
-                    await request({ type: "results-save", result: r });
-                    if (!live.current) return;
-                    overlay.setResult(r, "original", settings?.preferences);
-                    setAppliedLines(r.lines);
-                    setAppliedOffset(r.offsetMs);
-                    setSaved((previous) => [
-                      r,
-                      ...previous.filter(
-                        (item) => item.key.inputHash !== r.key.inputHash,
-                      ),
-                    ]);
-                    setMessage(
-                      "已套用並保存在本機。如與原生字幕重疊，請關閉 YouTube CC。",
-                    );
-                    setView("lyrics");
-                  })
-                }
+                }}
               >
-                套用並保存
-              </button>
-              <button disabled={busy} onClick={download}>
-                下載 SRT
-              </button>
+                {(
+                  [
+                    ["result", "歌詞結果"],
+                    ["request", "請求內容"],
+                    ["response", "原始回覆"],
+                  ] as const
+                ).map(([id, label]) => (
+                  <button
+                    key={id}
+                    id={`review-tab-${id}`}
+                    role="tab"
+                    aria-selected={reviewTab === id}
+                    aria-controls={`review-${id}`}
+                    tabIndex={reviewTab === id ? 0 : -1}
+                    onClick={() => setReviewTab(id)}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              <div className="review-content">
+                {error && (
+                  <p role="alert" className="review-error">
+                    {error}
+                  </p>
+                )}
+                {!settings?.configured && (
+                  <p className="notice">
+                    先在設定頁填入你的 AI 服務；貼上、匯入與預覽仍可使用。
+                    <button
+                      onClick={() => void request({ type: "open-options" })}
+                    >
+                      前往設定
+                    </button>
+                  </p>
+                )}
+                <div
+                  role="tabpanel"
+                  id="review-result"
+                  aria-labelledby="review-tab-result"
+                  hidden={reviewTab !== "result"}
+                >
+                  <div className="review-filter">
+                    <span>{onlyPending ? "待處理歌詞" : "全部歌詞"}</span>
+                    <button
+                      aria-pressed={onlyPending}
+                      onClick={() => setOnlyPending((v) => !v)}
+                    >
+                      {onlyPending
+                        ? "顯示全部"
+                        : `只看待處理 ${pending.length}`}
+                    </button>
+                  </div>
+                  <div aria-label="逐句時間戳" className="review-lines">
+                    {lines
+                      .filter(
+                        (l) =>
+                          !onlyPending || pending.some((p) => p.id === l.id),
+                      )
+                      .map((l) => (
+                        <details
+                          key={l.id}
+                          className={`review-line ${pending.some((p) => p.id === l.id) ? "pending" : ""} ${l.excluded ? "excluded" : ""}`}
+                        >
+                          <summary>
+                            <small>
+                              {l.excluded
+                                ? "已排除"
+                                : `${stamp(l.startMs)}–${stamp(l.endMs)}`}
+                            </small>
+                            <span>{l.original}</span>
+                          </summary>
+                          {l.startMs !== undefined && (
+                            <button
+                              onClick={() => {
+                                binding.video.currentTime =
+                                  Math.max(0, l.startMs! + offset) / 1000;
+                                void binding.video.play().catch(() => {});
+                              }}
+                            >
+                              播放這句
+                            </button>
+                          )}
+                          <Editor
+                            lines={[l]}
+                            lineOffset={lines.indexOf(l)}
+                            onChange={(edited) =>
+                              setLines((previous) =>
+                                previous.map((item) =>
+                                  item.id === l.id ? edited[0] : item,
+                                ),
+                              )
+                            }
+                            currentMs={() =>
+                              Math.round(binding.video.currentTime * 1000)
+                            }
+                            seek={(ms) => {
+                              binding.video.currentTime = ms / 1000;
+                            }}
+                          />
+                        </details>
+                      ))}
+                    {onlyPending && !pending.length && (
+                      <p>所有歌詞都已有時間。</p>
+                    )}
+                  </div>
+                </div>
+                <div
+                  role="tabpanel"
+                  id="review-request"
+                  aria-labelledby="review-tab-request"
+                  hidden={reviewTab !== "request"}
+                  className="review-request"
+                >
+                  <label>
+                    Request body
+                    <textarea
+                      aria-label="Request body"
+                      spellCheck={false}
+                      rows={16}
+                      value={requestBody}
+                      disabled={busy}
+                      onChange={(e) => setRequestBody(e.target.value)}
+                    />
+                  </label>
+                  <button
+                    disabled={busy || !settings?.configured || !lines.length}
+                    onClick={(event) =>
+                      isUserAction(event) &&
+                      startGenerate(
+                        alignmentInput.current.length
+                          ? alignmentInput.current
+                          : lines,
+                        requestBody || undefined,
+                      )
+                    }
+                  >
+                    重新請求
+                  </button>
+                </div>
+                <div
+                  role="tabpanel"
+                  id="review-response"
+                  aria-labelledby="review-tab-response"
+                  hidden={reviewTab !== "response"}
+                >
+                  <pre className="review-response">
+                    {responseText || "尚未收到 AI 回覆。"}
+                  </pre>
+                  {alignmentReport && (
+                    <details className="alignment-diagnostics">
+                      <summary>AI 校時診斷（原始回覆與判定）</summary>
+                      <pre>{alignmentReport}</pre>
+                    </details>
+                  )}
+                </div>
+                <details
+                  className="review-offset"
+                  hidden={reviewTab !== "result"}
+                >
+                  <summary>整體時間偏移與匯出</summary>
+                  <label>
+                    整體偏移（秒，正數為延後）
+                    <input
+                      type="number"
+                      step="0.1"
+                      value={offset / 1000}
+                      onChange={(e) =>
+                        setOffset(Math.round(Number(e.target.value) * 1000))
+                      }
+                    />
+                  </label>
+                  <button disabled={busy} onClick={download}>
+                    下載 SRT
+                  </button>
+                </details>
+              </div>
+              <div className="review-footer">
+                {pending.length > 0 ? (
+                  <div className="review-pending">
+                    <span>尚有 {pending.length} 句待處理</span>
+                    <button
+                      onClick={() => {
+                        setReviewTab("result");
+                        setOnlyPending(true);
+                      }}
+                    >
+                      檢查問題
+                    </button>
+                  </div>
+                ) : (
+                  <span className="muted">
+                    {busy ? "正在處理歌詞" : "確認後才會套用到影片"}
+                  </span>
+                )}
+                <button
+                  className="primary"
+                  disabled={busy || !lines.length || pending.length > 0}
+                  onClick={() =>
+                    attempt(async () => {
+                      const r = await result();
+                      await request({ type: "results-save", result: r });
+                      if (!live.current) return;
+                      overlay.setResult(r, "original", settings?.preferences);
+                      setAppliedLines(r.lines);
+                      setAppliedOffset(r.offsetMs);
+                      setSaved((previous) => [
+                        r,
+                        ...previous.filter(
+                          (item) => item.key.inputHash !== r.key.inputHash,
+                        ),
+                      ]);
+                      setMessage(
+                        "已套用並保存在本機。如與原生字幕重疊，請關閉 YouTube CC。",
+                      );
+                      setView("lyrics");
+                    })
+                  }
+                >
+                  套用並保存
+                </button>
+              </div>
             </>
           )}
         </aside>

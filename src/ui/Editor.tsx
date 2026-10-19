@@ -5,7 +5,9 @@ export function Editor({
   onChange,
   currentMs,
   seek,
+  lineOffset = 0,
 }: {
+  lineOffset?: number;
   lines: AlignedLine[];
   onChange: (value: AlignedLine[]) => void;
   currentMs: () => number;
@@ -22,7 +24,7 @@ export function Editor({
       {lines.map((l, i) => (
         <article key={l.id} className="editor-row">
           <div className="row">
-            <strong>第 {i + 1} 句</strong>
+            <strong>第 {i + 1 + lineOffset} 句</strong>
             <small>
               {
                 {
@@ -62,7 +64,7 @@ export function Editor({
             <label>
               開始{" "}
               <input
-                aria-label={`第 ${i + 1} 句開始秒數`}
+                aria-label={`第 ${i + 1 + lineOffset} 句開始秒數`}
                 type="number"
                 min="0"
                 step="0.001"
@@ -81,7 +83,7 @@ export function Editor({
             <label>
               結束{" "}
               <input
-                aria-label={`第 ${i + 1} 句結束秒數`}
+                aria-label={`第 ${i + 1 + lineOffset} 句結束秒數`}
                 type="number"
                 min="0"
                 step="0.001"
