@@ -86,12 +86,3 @@ export function assertSegmentLines(segment: Segment, lineIds: string[]) {
   )
     throw new Error("片段含未知歌詞 ID");
 }
-
-// Release gate: fixture inference does not establish YouTube audio acquisition.
-export const YOUTUBE_ACOUSTIC_ENABLED = false;
-export function acousticEnabled(url: string) {
-  return (
-    YOUTUBE_ACOUSTIC_ENABLED ||
-    new URL(url).searchParams.get("ai-lyrics-validate") === "1"
-  );
-}

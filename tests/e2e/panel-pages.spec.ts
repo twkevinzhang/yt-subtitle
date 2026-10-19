@@ -7,6 +7,7 @@ import path from "node:path";
 test("Brave: independent pages, whole-song request, editable retry and explicit apply", async () => {
   const requests: any[] = [];
   let holdReplies = false;
+  let audioHelperRequests = 0;
   const server = createServer(async (req, res) => {
     let raw = "";
     for await (const chunk of req) raw += chunk;
@@ -26,11 +27,15 @@ test("Brave: independent pages, whole-song request, editable retry and explicit 
           {
             message: {
               content: JSON.stringify({
-                lines: input.lines.map((l: any) => ({
-                  id: l.id,
-                  cueIds: [input.cues[0].id],
-                  status: "anchor",
-                })),
+                lines: [
+                  {
+                    text: "AI 合併後的新版\n保留換行",
+                    startMs: 1000,
+                    endMs: 1500,
+                  },
+                  { text: "AI 新增第二句", startMs: 1700, endMs: 2200 },
+                  { text: "AI 最後一句", startMs: 2400, endMs: 2900 },
+                ],
               }),
             },
           },
@@ -97,12 +102,14 @@ test("Brave: independent pages, whole-song request, editable retry and explicit 
         },
       });
     }, `http://127.0.0.1:${port}/v1`);
-    await context.route("https://www.youtube.com/watch*", async (route) =>
-      route.fulfill({
+    await context.route("https://www.youtube.com/watch*", async (route) => {
+      if (new URL(route.request().url()).searchParams.has("ai-lyrics-audio"))
+        audioHelperRequests++;
+      return route.fulfill({
         contentType: "text/html",
         body: await readFile("tests/fixtures/watch.html", "utf8"),
-      }),
-    );
+      });
+    });
     await context.route("https://www.youtube.com/api/timedtext*", (route) =>
       route.fulfill({
         contentType: "application/json",
@@ -182,7 +189,7 @@ test("Brave: independent pages, whole-song request, editable retry and explicit 
       page.getByText("AI 對齊完成，請檢查後套用並保存。", { exact: true }),
     ).toBeVisible();
     expect(requests).toHaveLength(1);
-    expect(JSON.parse(requests[0].messages[1].content).lines).toHaveLength(81);
+    expect(JSON.parse(requests[0].messages[1].content).lyrics).toHaveLength(81);
     await expect(page.getByLabel("Request body", { exact: true })).toBeHidden();
     await page.getByRole("tab", { name: "請求內容", exact: true }).click();
     const body = page.getByLabel("Request body", { exact: true });
@@ -222,7 +229,8 @@ test("Brave: independent pages, whole-song request, editable retry and explicit 
     await expect(
       page.getByRole("button", { name: "製作／編輯", exact: true }),
     ).toBeVisible();
-    await expect(page.locator(".lyrics-preview .lyric-line")).toHaveCount(81);
+    await expect(page.locator(".lyrics-preview .lyric-line")).toHaveCount(3);
+    expect(audioHelperRequests).toBe(0);
     await page.screenshot({ path: "artifacts/panel-applied.png" });
     holdReplies = true;
     for (const [trigger, confirm] of [

@@ -22,12 +22,9 @@ import {
 import { inspectVideo, readTrack, readTranscript } from "../youtube/context";
 import { searchMessages, parseSearchReply } from "../lyrics/search";
 import {
-  validateAlignment,
-  enforceAlignmentOrder,
-  type AlignmentDecision,
-} from "../lyrics/alignment";
-import { prepareAlignmentRetry } from "../lyrics/batches";
-import { alignmentRequest } from "../lyrics/alignment-request";
+  parseRevisedSubtitles,
+  revisedSubtitleRequest,
+} from "../lyrics/revised-subtitles";
 import { authorizeAcousticHost, callAcousticHost } from "./acoustic-host";
 import type { ConsentReceipt, AlignedLine } from "../shared/types";
 import { AudioUploads, AudioStaging } from "./audio-uploads";
@@ -38,9 +35,10 @@ import {
 } from "../acoustic/audio-store";
 import { prepareAcousticAudio } from "./acoustic-host";
 import {
-  runAcousticAlignment,
   followAcousticJob,
   recoveryOwner,
+  fillMissingTimings,
+  followMissingTimingJob,
 } from "./acoustic-jobs";
 const uploads = new AudioUploads();
 const staged = new AudioStaging(deleteJobAudio);
@@ -100,9 +98,18 @@ async function init() {
       );
       if (record) {
         record.acoustic =
-          status.phase === "preparing" ? undefined : status.snapshot;
+          status.phase === "preparing" || record.timingSource
+            ? undefined
+            : status.snapshot;
         runs.adopt(record, async (tools) => ({
-          lines: await followAcousticJob(key, tools, callAcousticHost),
+          lines: record.timingSource
+            ? await followMissingTimingJob(
+                key,
+                record.timingSource,
+                tools,
+                callAcousticHost,
+              )
+            : await followAcousticJob(key, tools, callAcousticHost),
           response: record.responseText ?? "",
         }));
       }
@@ -314,6 +321,7 @@ export async function handleMessage(
           targetLanguage: input.targetLanguage,
           translate: input.translate,
           ...(input.body ? { body: input.body } : {}),
+          ...(input.timingOnly ? { timingOnly: true } : {}),
           ...(input.audioAssetId ? { audioAssetId: input.audioAssetId } : {}),
           ...(input.positionMs !== undefined
             ? { positionMs: input.positionMs }
@@ -321,17 +329,17 @@ export async function handleMessage(
         },
         s.revision,
       );
-      const retryLines = prepareAlignmentRetry(input.lines);
+      const retryLines = input.lines;
       const body =
         input.body ??
-        alignmentRequest(s.provider.model, retryLines, input.cues);
+        revisedSubtitleRequest(s.provider.model, retryLines, input.cues);
       if (JSON.stringify(body).length > 120000)
         throw new Error("內容超過單次請求 120000 字元上限，請縮短內容");
       const client = createAiClient(s.provider);
       if (input.audioAssetId) {
         if (runs.isBusy)
           throw new Error("已有工作正在處理，請先取消或等待完成");
-        if (!input.body) throw new Error("缺少 AI 區間定位請求");
+        if (!input.timingOnly) throw new Error("音訊只用於補齊缺少的時間");
         if (
           new TextEncoder().encode(JSON.stringify(input.lines)).length > 60000
         )
@@ -348,7 +356,9 @@ export async function handleMessage(
               input.positionMs ?? 0,
             );
             try {
-              return await runAcousticAlignment(
+              record.timingSource = retryLines;
+              await persist(record);
+              return await fillMissingTimings(
                 {
                   key: {
                     runId: tools.runId,
@@ -360,13 +370,10 @@ export async function handleMessage(
                   lines: retryLines,
                   cues: input.cues,
                   durationMs: input.video.durationMs,
-                  body,
                   positionMs: record.positionMs,
                 },
                 tools,
                 {
-                  complete: (frozen, signal) =>
-                    client.completeText([], signal, frozen),
                   host: callAcousticHost,
                 },
               );
@@ -376,12 +383,12 @@ export async function handleMessage(
           },
         );
       }
+      if (input.timingOnly) throw new Error("缺少供本機補時的音訊");
       return runs.start(
         tabId,
         input.video.videoId,
         s.revision,
         async (tools) => {
-          const decisions: AlignmentDecision[] = [];
           const raw = await tools.request(() =>
             client.completeText([], tools.signal, body),
           );
@@ -397,36 +404,17 @@ export async function handleMessage(
           } catch {
             throw new Error("AI 校時回覆不是有效 JSON；原文已保留於結果頁");
           }
-          let validated: AlignedLine[];
-          try {
-            validated = validateAlignment(
-              payload,
-              retryLines,
-              input.cues,
-              input.video.durationMs,
-              decisions,
-              false,
-            );
-          } catch (error) {
-            await tools.trace(
-              `全曲校驗失敗：${error instanceof Error ? error.message : "格式錯誤"}`,
-              true,
-            );
-            throw error;
-          }
-          const ordered = enforceAlignmentOrder(validated, decisions);
+          const revised = parseRevisedSubtitles(
+            payload,
+            input.video.durationMs,
+          );
           await tools.progress(
-            ordered.map((line) => line.id),
-            ordered,
+            revised
+              .filter((l) => l.startMs !== undefined && l.endMs !== undefined)
+              .map((l) => l.id),
+            revised,
           );
-          const accepted = ordered.filter(
-            (line) => !line.excluded && line.startMs !== undefined,
-          ).length;
-          await tools.trace(
-            `全曲校驗：保留 ${accepted} 句；未對齊 ${ordered.filter((line) => !line.excluded && line.startMs === undefined).length} 句。\n逐句判定：\n${JSON.stringify(decisions, null, 2)}`,
-            true,
-          );
-          return { lines: ordered, response: raw };
+          return { lines: revised, response: raw };
         },
       );
     }

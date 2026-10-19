@@ -14,15 +14,11 @@ const mock = vi.hoisted(() => ({
 }));
 vi.mock("../../src/shared/messages", () => ({ request: mock.request }));
 vi.mock("../../src/ui/user-action", () => ({ isUserAction: () => true }));
-vi.mock("../../src/acoustic/contracts", async (importOriginal) => ({
-  ...(await importOriginal<any>()),
-  acousticEnabled: () => true,
-}));
 vi.mock("../../src/acoustic/youtube-audio-source", () => ({
   acquireYouTubeAudio: mock.acquire,
 }));
 afterEach(cleanup);
-it("uses acquired audio and region requests, previews the first verified segment and preserves pending lines", async () => {
+it("uses AI revised rows first, acquires audio only for missing timing, then preserves complete AI timestamps", async () => {
   const video = document.createElement("video");
   Object.defineProperty(video, "duration", { value: 10 });
   const settings = {
@@ -38,21 +34,28 @@ it("uses acquired audio and region requests, previews the first verified segment
       position: "bottom",
     },
   };
-  const source = ["first", "pending"].map((original, i) => ({
-    id: "l" + i,
-    original,
-    cueIds: [],
-    excluded: false,
-    status: "unaligned",
-  }));
+  const source = ["AI revised first", "AI revised pending", "AI added row"].map(
+    (original, i) => ({
+      id: "l" + i,
+      original,
+      cueIds: [],
+      excluded: false,
+      status: "unaligned",
+    }),
+  );
   const snapshot = {
     key: { runId: "r", tabId: 1, videoId: "12345678901", draftRevision: 1 },
     sequence: 1,
-    lines: [{ ...source[0], startMs: 1000, endMs: 2000 }, source[1]],
+    lines: [
+      { ...source[0], status: "anchor", startMs: 1000, endMs: 2000 },
+      source[1],
+      { ...source[2], status: "anchor", startMs: 5000, endMs: 6000 },
+    ],
     segments: { s: "verified" },
     modelState: "ready",
   };
   let complete = false;
+  let timingOnly = false;
   mock.request.mockImplementation(async (m) => {
     if (m.type === "settings-public") return settings;
     if (m.type === "inspect")
@@ -70,7 +73,19 @@ it("uses acquired audio and region requests, previews the first verified segment
     if (m.type === "results-list") return [];
     if (m.type === "read-transcript")
       return [{ id: "c0", text: "first", startMs: 1000, endMs: 2000 }];
-    if (m.type === "generate") return { runId: "r" };
+    if (m.type === "generate") {
+      timingOnly = !!m.input.timingOnly;
+      return { runId: timingOnly ? "r" : "ai" };
+    }
+    if (m.type === "run" && !timingOnly)
+      return {
+        state: {
+          phase: "complete",
+          completedLineIds: ["l0", "l2"],
+          requestCount: 1,
+        },
+        output: { lines: snapshot.lines, response: "AI reply" },
+      };
     if (m.type === "run")
       return {
         state: {
@@ -107,8 +122,13 @@ it("uses acquired audio and region requests, previews the first verified segment
   fireEvent.click(screen.getByRole("button", { name: "使用貼上歌詞" }));
   await waitFor(() => expect(overlay.setDraftPreview).toHaveBeenCalled());
   const sent = mock.request.mock.calls.find(([m]) => m.type === "generate")![0];
-  expect(sent.input.audioAssetId).toBe("asset");
-  expect(sent.input.body.messages[0].content).toContain("companions");
+  expect(sent.input.audioAssetId).toBeUndefined();
+  const fill = mock.request.mock.calls.filter(
+    ([m]) => m.type === "generate",
+  )[1][0];
+  expect(fill.input.timingOnly).toBe(true);
+  expect(fill.input.audioAssetId).toBe("asset");
+  expect(sent.input.body.messages[0].content).toContain("新版字幕");
   expect(screen.getByLabelText("逐句時間戳").textContent).toContain("pending");
   expect(
     screen.getByRole("button", { name: "套用並保存" }).hasAttribute("disabled"),
@@ -119,7 +139,7 @@ it("uses acquired audio and region requests, previews the first verified segment
   ).toBe(true);
   complete = true;
   await screen.findByText(
-    "已校時 1 句，另有 1 句待處理；已完成片段可播放，完整保存仍需處理待校時句。",
+    "已校時 2 句，另有 1 句待處理；已完成片段可播放，完整保存仍需處理待校時句。",
   );
   fireEvent.change(screen.getAllByLabelText("原文")[0], {
     target: { value: "edited first" },

@@ -1,4 +1,4 @@
-import type { RunState } from "../shared/types";
+import type { RunState, AlignedLine } from "../shared/types";
 import type { AlignmentSnapshot } from "../acoustic/contracts";
 export interface RunRecord {
   state: RunState;
@@ -8,6 +8,7 @@ export interface RunRecord {
   responseText?: string;
   acoustic?: AlignmentSnapshot;
   positionMs?: number;
+  timingSource?: AlignedLine[];
 }
 export interface RunTools {
   runId: string;

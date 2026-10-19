@@ -15,7 +15,6 @@ import { request } from "../shared/messages";
 import { hashInput } from "../background/results";
 import { parseLyrics, validateTiming } from "../lyrics/formats";
 import { toSrt, safeFilename } from "../lyrics/export";
-import { alignmentRequest } from "../lyrics/alignment-request";
 import { alignmentBodySchema } from "../shared/schemas";
 import { Candidates } from "./Candidates";
 import { Editor } from "./Editor";
@@ -31,11 +30,12 @@ import {
 } from "../lyrics/draft";
 import { isUserAction } from "./user-action";
 import { startOwnedRun } from "./owned-run";
-import { acousticEnabled, type JobKey } from "../acoustic/contracts";
+import type { JobKey } from "../acoustic/contracts";
 import { acquireYouTubeAudio } from "../acoustic/youtube-audio-source";
-import { regionRequest } from "../lyrics/region-request";
-// YouTube may canonicalize the URL after initial loading.
-const localAcoustic = acousticEnabled(location.href);
+import {
+  revisedSubtitleRequest,
+  hasCompleteTime,
+} from "../lyrics/revised-subtitles";
 class WorkCancelled extends Error {}
 type PendingWork = {
   cancelled: boolean;
@@ -328,7 +328,7 @@ export function Panel({
         if (record.responseText !== undefined)
           setResponseText(record.responseText);
         if (record.alignmentReport) setAlignmentReport(record.alignmentReport);
-        if (localAcoustic)
+        if (record.acoustic)
           void request({
             type: "acoustic-position",
             runId: state.runId,
@@ -351,7 +351,9 @@ export function Panel({
         setProgress(
           record.acoustic
             ? `本機聲學校時：已完成 ${record.state.completedLineIds.length} 句；模型 ${record.acoustic.modelState}。已完成片段可播放。`
-            : `AI 區間定位中；已送出 ${record.state.requestCount} 次請求`,
+            : record.timingSource
+              ? "本機補時準備中，不會再送出 AI 請求"
+              : `AI 正在產生新版字幕；已送出 ${record.state.requestCount} 次請求`,
         );
         if (record.state.phase === "complete") return record.output;
         if (
@@ -359,15 +361,7 @@ export function Panel({
         ) {
           if (Array.isArray(record.partial)) {
             const partial = record.partial as AlignedLine[];
-            setLines((previous) =>
-              previous.map(
-                (l) =>
-                  partial.find((p) => p.id === l.id) ?? {
-                    ...l,
-                    translation: undefined,
-                  },
-              ),
-            );
+            setLines(partial);
             if (settings)
               provenance.current = {
                 source: provenance.current?.source || { kind: "user" },
@@ -463,37 +457,28 @@ export function Panel({
       workRef.current = work;
       setBusy(true);
       setMessage("正在對齊歌詞…");
+      let receivedAi = false;
       try {
         let timing = cues;
         if (!timing.length) {
           setMessage("正在讀取 YouTube 轉錄稿…");
-          timing = await request<Cue[]>({ type: "read-transcript" });
+          try {
+            timing = await request<Cue[]>({ type: "read-transcript" });
+          } catch {
+            timing = [];
+          }
           if (!live.current) return;
           await checkWork(work);
           setCues(timing);
         }
-        if (!timing.length && inputLines.some((l) => l.startMs === undefined))
-          throw new Error("未取得可用轉錄稿，歌詞已保留，請稍後重新請求。");
-        const acoustic = localAcoustic;
+        const acoustic = true;
         body ??= alignmentBodySchema.parse(
-          acoustic
-            ? regionRequest(settings.model, inputLines, timing)
-            : alignmentRequest(settings.model, inputLines, timing),
+          revisedSubtitleRequest(settings.model, inputLines, timing),
         );
         if (editedBody === undefined)
           setRequestBody(JSON.stringify(body, null, 2));
         alignmentInput.current = inputLines;
         setAlignmentReport("");
-        const audioAssetId = acoustic
-          ? await acquireYouTubeAudio(
-              binding.videoId,
-              video.durationMs,
-              work.controller!.signal,
-              (text) => {
-                if (live.current) setProgress(text);
-              },
-            )
-          : undefined;
         await checkWork(work);
         const payload = {
           video,
@@ -502,10 +487,6 @@ export function Panel({
           targetLanguage: settings.preferences.targetLanguage,
           translate: false,
           body,
-          ...(audioAssetId ? { audioAssetId } : {}),
-          ...(audioAssetId
-            ? { positionMs: Math.max(0, binding.video.currentTime * 1000) }
-            : {}),
         };
         const receipt = {
           purpose: "generate" as const,
@@ -525,12 +506,85 @@ export function Panel({
             await request({ type: "cancel", runId: id });
           },
         );
-        const output = (await poll(state, work)) as {
+        let output = (await poll(state, work)) as {
           lines: AlignedLine[];
           response: string;
         };
         if (!live.current) return;
-        setLines(output.lines.map(({ translation, ...line }) => line));
+        setLines(output.lines);
+        const aiResponse = output.response;
+        receivedAi = true;
+        setResponseText(aiResponse);
+        const aiKey = {
+          runId: state.runId,
+          tabId: 0,
+          videoId: binding.videoId,
+          draftRevision: settings.settingsRevision,
+        };
+        overlay.stop();
+        overlay.beginDraft(aiKey);
+        previewKey.current = aiKey;
+        overlay.setDraftPreview(
+          {
+            key: aiKey,
+            sequence: 1,
+            lines: output.lines,
+            segments: {},
+            modelState: "unloaded",
+          },
+          "original",
+          settings.preferences,
+        );
+        setAppliedLines(output.lines);
+        setAppliedOffset(0);
+        if (output.lines.some((l) => !l.excluded && !hasCompleteTime(l))) {
+          setBusy(true);
+          setMessage("AI 新版字幕已取得；正在補齊缺少的時間…");
+          const audioAssetId = await acquireYouTubeAudio(
+            binding.videoId,
+            video.durationMs,
+            work.controller!.signal,
+            (text) => {
+              if (live.current) setProgress(text);
+            },
+          );
+          await checkWork(work);
+          const fillPayload = {
+            video,
+            lines: output.lines,
+            cues: timing,
+            targetLanguage: settings.preferences.targetLanguage,
+            translate: false,
+            timingOnly: true,
+            audioAssetId,
+            positionMs: Math.max(0, binding.video.currentTime * 1000),
+          };
+          const fillConsent = {
+            purpose: "generate" as const,
+            inputHash: await hashInput(fillPayload),
+            settingsRevision: settings.settingsRevision,
+            confirmedAt: Date.now(),
+          };
+          await checkWork(work);
+          const fillState = await startOwnedRun(
+            () =>
+              request<RunState>({
+                type: "generate",
+                input: { ...fillPayload, consent: fillConsent },
+              }),
+            () => live.current && !work.cancelled,
+            async (id) => {
+              await request({ type: "cancel", runId: id });
+            },
+          );
+          const filled = (await poll(fillState, work)) as {
+            lines: AlignedLine[];
+            response: string;
+          };
+          output = { lines: filled.lines, response: aiResponse };
+          if (!live.current) return;
+          setLines(output.lines);
+        }
         setResponseText(output.response);
         provenance.current = {
           source: provenance.current?.source || { kind: "user" },
@@ -548,6 +602,7 @@ export function Panel({
         );
       } catch (error) {
         if (work.cancelled) throw new WorkCancelled();
+        setMessage(receivedAi ? "AI 新版字幕已保留；缺時句尚待處理。" : "");
         throw error;
       } finally {
         void request({ type: "audio-clear" }).catch(() => {});
@@ -559,7 +614,7 @@ export function Panel({
     source?: DraftProvenance["source"],
   ) => {
     if (!draft.length) throw new Error("請先提供歌詞");
-    const clean = draft.map(({ translation, ...line }) => line);
+    const clean = draft;
     setReviewTab("result");
     setOnlyPending(false);
     setLines(clean);
@@ -1272,7 +1327,7 @@ export function Panel({
           >
             <h3 id="stop-title">要取消目前的工作嗎？</h3>
             <p id="stop-description">
-              AI 回覆仍在等待中。取消後會保留歌詞、請求內容與已有結果。
+              字幕工作仍在處理中。取消後會保留歌詞、請求內容與已有結果。
             </p>
             {stopError && (
               <p role="alert" className="error notice">

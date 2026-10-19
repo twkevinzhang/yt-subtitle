@@ -75,6 +75,7 @@ export async function locateMissing(
   recognizer: { transcribe(input: RecognitionInput): Promise<string> },
   signal: AbortSignal,
   diagnostic: (message: string) => void = () => {},
+  bounds?: Record<string, { startMs: number; endMs: number }>,
 ): Promise<Segment[]> {
   const owner = new Map(
     segments.flatMap((s) => s.lineIds.map((id) => [id, s] as const)),
@@ -89,7 +90,10 @@ export async function locateMissing(
       i + 1 < lines.length &&
       !owner.has(lines[i + 1].id) &&
       !lines[i + 1].excluded &&
-      lines[i + 1].status !== "manual"
+      lines[i + 1].status !== "manual" &&
+      (!bounds ||
+        (bounds[lines[i + 1].id]?.startMs === bounds[line.id]?.startMs &&
+          bounds[lines[i + 1].id]?.endMs === bounds[line.id]?.endMs))
     )
       group.push(lines[++i]);
     groups.push(group);
@@ -119,17 +123,40 @@ export async function locateMissing(
       .reverse()
       .find((l) => owner.has(l.id));
     const after = lines.slice(last + 1).find((l) => owner.has(l.id));
-    const lower = before ? owner.get(before.id)!.endMs : 0;
-    const upper = after
-      ? owner.get(after.id)!.startMs
-      : (audio.availableRanges().at(-1)?.endMs ?? 0);
+    const lower = Math.max(
+      before ? owner.get(before.id)!.endMs : 0,
+      bounds?.[group[0].id]?.startMs ?? 0,
+    );
+    const upper = Math.min(
+      bounds?.[group[0].id]?.endMs ?? Infinity,
+      after
+        ? owner.get(after.id)!.startMs
+        : (audio.availableRanges().at(-1)?.endMs ?? 0),
+    );
+    if (upper <= lower) continue;
     const text = group.map((l) => l.alignmentText ?? l.original).join(" ");
     const latin = text.match(/[a-z]/giu)?.length ?? 0,
       cjk = text.match(/[ぁ-ヿ\p{Script=Han}]/gu)?.length ?? 0;
     const language = latin > cjk ? "en" : /[ぁ-ヿ]/u.test(text) ? "ja" : "zh";
     // A short gap bounded by actual neighboring owners is also searchable.
     // Garbled ASR text is not evidence that the supplied lyric was absent.
-    const candidates = [...music];
+    const candidates = music.filter(
+      (g) =>
+        g.startMs >= lower && g.endMs <= upper && g.endMs - g.startMs >= 4000,
+    );
+    if (!candidates.length) {
+      for (
+        let startMs = lower;
+        startMs < upper && candidates.length < 8;
+        startMs += 24000
+      ) {
+        candidates.push({
+          startMs,
+          endMs: Math.min(upper, startMs + 26000),
+          cueIds: [],
+        });
+      }
+    }
     if (upper > lower && upper - lower <= 30000) {
       const cueIds = cues
         .filter((c) => c.endMs >= lower && c.startMs <= upper)

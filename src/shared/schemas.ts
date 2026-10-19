@@ -143,6 +143,7 @@ const msg = z.discriminatedUnion("type", [
       targetLanguage: z.enum(["ja", "zh-Hant", "en"]),
       translate: z.boolean(),
       body: alignmentBodySchema.optional(),
+      timingOnly: z.boolean().optional(),
       audioAssetId: z.string().optional(),
       positionMs: time.optional(),
       consent: consentSchema,

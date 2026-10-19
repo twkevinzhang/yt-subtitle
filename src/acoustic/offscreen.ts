@@ -29,6 +29,14 @@ const startSchema = z
     encoding: z.enum(["pcm", "compressed"]).default("pcm"),
     durationMs: z.number().finite().positive().optional(),
     cues: z.array(cueSchema).max(20000).default([]),
+    bounds: z
+      .record(
+        z.object({
+          startMs: z.number().finite().nonnegative(),
+          endMs: z.number().finite().nonnegative(),
+        }),
+      )
+      .optional(),
   })
   .strict();
 let snapshot: AlignmentSnapshot | undefined,
@@ -212,6 +220,7 @@ async function start(raw: unknown) {
             if (owner === token && locationDiagnostics.length < 8)
               locationDiagnostics.push(message);
           },
+          input.bounds,
         );
         if (abort.signal.aborted || owner !== token) return {};
         input.segments.push(...intro);
@@ -231,8 +240,7 @@ async function start(raw: unknown) {
       return work.run(abort.signal);
     })()
       .then(async (states) => {
-        if (abort.signal.aborted || owner !== token || !input.cues.length)
-          return states;
+        if (abort.signal.aborted || owner !== token) return states;
         const located = await locateMissing(
           input.lines,
           input.segments,
@@ -244,6 +252,7 @@ async function start(raw: unknown) {
             if (owner === token && locationDiagnostics.length < 8)
               locationDiagnostics.push(message);
           },
+          input.bounds,
         );
         if (!located.length || abort.signal.aborted || owner !== token)
           return states;

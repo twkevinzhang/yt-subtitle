@@ -43,7 +43,7 @@ beforeEach(() => {
   });
 });
 afterEach(() => vi.unstubAllGlobals());
-it("aligns all 81 lines with exactly one API call and keeps the full response", async () => {
+it("accepts a different AI subtitle count with new text and timestamps in exactly one request", async () => {
   const lines = Array.from({ length: 81 }, (_, i) => ({
     id: `l${i}`,
     original: `歌${i}`,
@@ -58,8 +58,10 @@ it("aligns all 81 lines with exactly one API call and keeps the full response", 
     text: l.original,
   }));
   const raw = JSON.stringify({
-    lines: lines.map((l, i) => ({
-      id: l.id,
+    lines: lines.slice(0, 3).map((l, i) => ({
+      text: `新版${i}`,
+      startMs: i * 1000 + 100,
+      endMs: i * 1000 + 900,
       cueIds: [`c${i}`],
       status: "anchor",
     })),
@@ -106,8 +108,8 @@ it("aligns all 81 lines with exactly one API call and keeps the full response", 
     )) as any;
     expect(record.state.phase).toBe("complete");
     expect(record.state.requestCount).toBe(1);
-    expect(record.output.lines).toHaveLength(81);
-    expect(record.output.lines.at(-1).startMs).toBe(80000);
+    expect(record.output.lines).toHaveLength(3);
+    expect(record.output.lines.at(-1).startMs).toBe(2100);
     expect(record.output.response).toBe(raw);
   });
   expect(completeText).toHaveBeenCalledTimes(1);

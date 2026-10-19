@@ -145,3 +145,57 @@ it("recognizes a short unowned intro even when captions contain garbled text rat
   expect(found[0]?.startMs).toBe(0);
   expect(found[0]?.endMs).toBe(19500);
 });
+it("tries bounded local recognition when no YouTube transcript exists", async () => {
+  const found = await locateMissing(
+    [
+      {
+        id: "l",
+        original: "actual spoken words",
+        cueIds: [],
+        status: "unaligned",
+        excluded: false,
+      },
+    ],
+    [],
+    [],
+    {
+      availableRanges: () => [{ startMs: 0, endMs: 10000 }],
+      read: async () => ({ pcm: new Float32Array(16), sampleRate: 16000 }),
+      dispose() {},
+    },
+    { transcribe: async () => "actual spoken words" },
+    new AbortController().signal,
+  );
+  expect(found).toHaveLength(1);
+  expect(found[0].evidenceCueIds).toEqual([]);
+});
+it("never searches a repeated missing tail before the last complete AI anchor", async () => {
+  const starts: number[] = [];
+  const found = await locateMissing(
+    [
+      {
+        id: "tail",
+        original: "repeat chorus",
+        cueIds: [],
+        status: "unaligned",
+        excluded: false,
+      },
+    ],
+    [],
+    [{ id: "early", text: "[music]", startMs: 0, endMs: 10000 }],
+    {
+      availableRanges: () => [{ startMs: 0, endMs: 300000 }],
+      read: async (start) => {
+        starts.push(start);
+        return { pcm: new Float32Array(16), sampleRate: 16000 };
+      },
+      dispose() {},
+    },
+    { transcribe: async () => "repeat chorus" },
+    new AbortController().signal,
+    () => {},
+    { tail: { startMs: 250000, endMs: 300000 } },
+  );
+  expect(starts[0]).toBe(250000);
+  expect(found[0].startMs).toBe(250000);
+});

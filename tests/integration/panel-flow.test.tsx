@@ -12,6 +12,9 @@ import { Panel } from "../../src/ui/Panel";
 const { mockRequest } = vi.hoisted(() => ({ mockRequest: vi.fn() }));
 vi.mock("../../src/shared/messages", () => ({ request: mockRequest }));
 vi.mock("../../src/ui/user-action", () => ({ isUserAction: () => true }));
+vi.mock("../../src/acoustic/youtube-audio-source", () => ({
+  acquireYouTubeAudio: vi.fn(async () => "asset"),
+}));
 afterEach(cleanup);
 it("locates pending lyrics and keeps apply unavailable until they are resolved", async () => {
   setup();
@@ -53,7 +56,9 @@ it("locates pending lyrics and keeps apply unavailable until they are resolved",
     target: { value: "已對齊\n待處理歌詞" },
   });
   fireEvent.click(screen.getByRole("button", { name: "使用貼上歌詞" }));
-  await screen.findByText("AI 對齊完成，請檢查後套用並保存。");
+  await screen.findByText(
+    "已校時 1 句，另有 1 句待處理；已完成片段可播放，完整保存仍需處理待校時句。",
+  );
   expect(
     screen.getByRole("tab", { name: "歌詞結果" }).getAttribute("aria-selected"),
   ).toBe("true");

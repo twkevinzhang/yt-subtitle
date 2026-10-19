@@ -36,6 +36,7 @@ export class RunJournal {
       delete snapshot.partial;
       delete snapshot.acoustic;
       delete snapshot.alignmentReport;
+      delete snapshot.timingSource;
       if (["complete", "aligning"].includes(snapshot.state.phase)) {
         snapshot.state.phase = "interrupted";
         snapshot.state.errorCode = "結果超過背景暫存上限，請重新處理並及時保存";

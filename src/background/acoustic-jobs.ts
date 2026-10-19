@@ -6,7 +6,71 @@ import {
   type JobKey,
 } from "../acoustic/contracts";
 import { parseRegionPlan } from "../lyrics/region-request";
+import {
+  missingTimingPlan,
+  mergeMissingTimes,
+} from "../lyrics/revised-subtitles";
 type Host = (command: string, args?: Record<string, unknown>) => Promise<any>;
+export async function followMissingTimingJob(
+  key: JobKey,
+  source: AlignedLine[],
+  tools: RunTools,
+  host: Host,
+  wait?: () => Promise<void>,
+) {
+  const output = await followAcousticJob(
+    key,
+    {
+      ...tools,
+      acoustic: (snapshot) =>
+        tools.acoustic({
+          ...snapshot,
+          lines: mergeMissingTimes(source, snapshot.lines),
+        }),
+    },
+    host,
+    wait,
+  );
+  return mergeMissingTimes(source, output);
+}
+export async function fillMissingTimings(
+  input: {
+    key: JobKey;
+    assetId: string;
+    lines: AlignedLine[];
+    cues: Cue[];
+    durationMs: number;
+    positionMs: number;
+  },
+  tools: RunTools,
+  deps: { host: Host; wait?: () => Promise<void> },
+) {
+  const plan = missingTimingPlan(input.lines, input.cues, input.durationMs);
+  if (!plan.lines.length) return { lines: input.lines, response: "" };
+  await tools.trace(
+    `AI 新版字幕保留；僅為 ${plan.lines.length} 句補齊缺少的時間，不重送 AI 請求。`,
+  );
+  if (tools.signal.aborted) throw new Error("工作已取消");
+  await deps.host("start", {
+    input: {
+      ...input,
+      lines: plan.lines,
+      segments: plan.segments,
+      bounds: plan.bounds,
+      encoding: "compressed",
+    },
+  });
+  return {
+    lines: await followMissingTimingJob(
+      input.key,
+      input.lines,
+      tools,
+      deps.host,
+      deps.wait,
+    ),
+    response: "",
+  };
+}
 
 export async function followAcousticJob(
   key: JobKey,
