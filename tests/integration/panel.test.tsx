@@ -46,7 +46,13 @@ it("loads video independently of cache and keeps local paste available while cap
         videoId: "12345678901",
         isAd: () => false,
       }}
-      overlay={{ setResult: vi.fn(), stop: vi.fn(), destroy: vi.fn() }}
+      overlay={{
+        beginDraft: vi.fn(),
+        setDraftPreview: vi.fn(),
+        setResult: vi.fn(),
+        stop: vi.fn(),
+        destroy: vi.fn(),
+      }}
       onClose={() => {}}
     />,
   );
@@ -164,7 +170,13 @@ it("resaving a loaded result retains its real source, translation language and m
         videoId: "12345678901",
         isAd: () => false,
       }}
-      overlay={{ setResult: vi.fn(), stop: vi.fn(), destroy: vi.fn() }}
+      overlay={{
+        beginDraft: vi.fn(),
+        setDraftPreview: vi.fn(),
+        setResult: vi.fn(),
+        stop: vi.fn(),
+        destroy: vi.fn(),
+      }}
       onClose={() => {}}
     />,
   );
@@ -227,7 +239,13 @@ it("refreshes settings when returning from the options tab", async () => {
         videoId: "12345678901",
         isAd: () => false,
       }}
-      overlay={{ setResult: vi.fn(), stop: vi.fn(), destroy: vi.fn() }}
+      overlay={{
+        beginDraft: vi.fn(),
+        setDraftPreview: vi.fn(),
+        setResult: vi.fn(),
+        stop: vi.fn(),
+        destroy: vi.fn(),
+      }}
       onClose={() => {}}
     />,
   );

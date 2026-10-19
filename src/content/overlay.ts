@@ -6,6 +6,11 @@ import type {
   Preferences,
 } from "../shared/types";
 import { validateTiming } from "../lyrics/formats";
+import {
+  assertJobKey,
+  type AlignmentSnapshot,
+  type JobKey,
+} from "../acoustic/contracts";
 export function activeLines(
   lines: AlignedLine[],
   timeMs: number,
@@ -34,14 +39,17 @@ export function createOverlay(binding: PlayerBinding) {
   let result: SavedResult | undefined,
     mode: DisplayMode = "original",
     frame = 0;
+  let draftKey: JobKey | undefined,
+    preview: AlignedLine[] | undefined,
+    previewSequence = -1;
   const render = () => {
     if (!host.isConnected || !binding.video.isConnected) return;
     const lines =
-      result && !binding.isAd()
+      (preview || result) && !binding.isAd()
         ? activeLines(
-            result.lines,
+            preview ?? result!.lines,
             binding.video.currentTime * 1000,
-            result.offsetMs,
+            preview ? 0 : result!.offsetMs,
           )
         : [];
     display.textContent = lines
@@ -57,6 +65,46 @@ export function createOverlay(binding: PlayerBinding) {
   };
   frame = requestAnimationFrame(render);
   return {
+    beginDraft(key: JobKey) {
+      if (key.videoId !== binding.videoId) throw new Error("影片已切換");
+      draftKey = { ...key };
+      preview = undefined;
+      previewSequence = -1;
+    },
+    setDraftPreview(
+      snapshot: AlignmentSnapshot,
+      newMode: DisplayMode,
+      preferences?: Preferences,
+    ) {
+      if (!draftKey) throw new Error("尚未開始草稿預覽");
+      assertJobKey(draftKey, snapshot.key);
+      if (
+        !Number.isSafeInteger(snapshot.sequence) ||
+        snapshot.sequence <= previewSequence
+      )
+        return;
+      const timed = snapshot.lines.filter(
+        (l) => !l.excluded && l.startMs !== undefined && l.endMs !== undefined,
+      );
+      if (!timed.length) return;
+      if (
+        new Set(timed.map((l) => l.id)).size !== timed.length ||
+        validateTiming(timed, binding.video.duration * 1000, 0).some(
+          (i) => i.severity === "error",
+        )
+      )
+        throw new Error("草稿時間無效");
+      preview = structuredClone(
+        timed.filter((l) => newMode === "original" || !!l.translation),
+      );
+      previewSequence = snapshot.sequence;
+      mode = newMode;
+      if (preferences) {
+        display.style.fontSize = preferences.fontSize + "px";
+        display.style.top = preferences.position === "top" ? "10%" : "";
+        display.style.bottom = preferences.position === "bottom" ? "12%" : "";
+      }
+    },
     setResult(
       value: SavedResult,
       newMode: DisplayMode,
@@ -74,6 +122,9 @@ export function createOverlay(binding: PlayerBinding) {
       )
         throw new Error("譯文尚未完整");
       result = value;
+      draftKey = undefined;
+      preview = undefined;
+      previewSequence = -1;
       mode = newMode;
       if (preferences) {
         display.style.fontSize = preferences.fontSize + "px";
@@ -83,6 +134,9 @@ export function createOverlay(binding: PlayerBinding) {
     },
     stop() {
       result = undefined;
+      draftKey = undefined;
+      preview = undefined;
+      previewSequence = -1;
       display.textContent = "";
     },
     destroy() {

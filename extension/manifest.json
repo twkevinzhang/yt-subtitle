@@ -3,8 +3,8 @@
   "name": "AI 歌詞字幕",
   "version": "0.1.0",
   "description": "使用自己的 AI 服務，尋找、對齊與顯示 YouTube 歌詞。",
-  "minimum_chrome_version": "102",
-  "permissions": ["storage", "scripting"],
+  "minimum_chrome_version": "116",
+  "permissions": ["storage", "scripting", "offscreen"],
   "host_permissions": ["https://www.youtube.com/*"],
   "optional_host_permissions": [
     "https://*/*",
@@ -22,6 +22,6 @@
   "options_page": "options.html",
   "action": { "default_title": "AI 歌詞設定" },
   "content_security_policy": {
-    "extension_pages": "script-src 'self'; object-src 'none'"
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; worker-src 'self'; object-src 'none'"
   }
 }

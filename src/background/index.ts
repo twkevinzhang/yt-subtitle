@@ -28,6 +28,7 @@ import {
 } from "../lyrics/alignment";
 import { prepareAlignmentRetry } from "../lyrics/batches";
 import { alignmentRequest } from "../lyrics/alignment-request";
+import { authorizeAcousticHost, callAcousticHost } from "./acoustic-host";
 import type { ConsentReceipt, AlignedLine } from "../shared/types";
 const journal = new RunJournal({
   get: () => chrome.storage.session.get(null),
@@ -275,6 +276,26 @@ export async function handleMessage(
 }
 if (typeof chrome !== "undefined" && chrome.runtime?.id) {
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    if (message?.target === "acoustic-host") return false;
+    if (message?.target === "acoustic-background") {
+      void (async () => {
+        authorizeAcousticHost(sender);
+        if (message.type === "idle") {
+          const status = await callAcousticHost("query");
+          if (
+            !["running", "preparing"].includes(status.phase) &&
+            status.modelState === "unloaded"
+          )
+            await chrome.offscreen.closeDocument();
+        }
+        // No YouTube default-mode route until acquisition/location gates pass.
+        return null;
+      })().then(
+        (data) => sendResponse({ ok: true, data }),
+        (error) => sendResponse({ ok: false, error: String(error.message) }),
+      );
+      return true;
+    }
     void handleMessage(message, sender).then(
       (data) => sendResponse({ ok: true, data }),
       (error) =>

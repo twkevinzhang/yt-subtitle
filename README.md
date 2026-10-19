@@ -6,6 +6,8 @@
 
 ## 安裝
 
+最低支援 Chromium 116（Chrome／Brave）。本輪新增的 WASM＋Web Worker 聲學核心已用正式 MV3 封裝驗證模型重用，但 YouTube 完整音訊取得與自動段落定位尚未通過關卡，因此**一般使用者流程尚未切換到新聲學模式**。目前 UI 保持既有行為；實作進度與驗收範圍見 [聲學驗證紀錄](docs/validation-2026-10-20-acoustic-runtime.md)。
+
 1. 使用專案根目錄的 `dist/`；或將 `artifacts/ai-lyrics-extension.zip` 解壓縮到固定位置。
 2. Chrome 開啟 `chrome://extensions`；Brave 開啟 `brave://extensions`。
 3. 開啟「開發人員模式」，選「載入未封裝項目」，選擇含 `manifest.json` 的目錄。

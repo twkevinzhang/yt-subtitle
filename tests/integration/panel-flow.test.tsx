@@ -122,7 +122,13 @@ function setup(onClose = vi.fn()) {
         output: { lines: aligned, response: '{"lines":[]}' },
       };
   });
-  const overlay = { setResult: vi.fn(), stop: vi.fn(), destroy: vi.fn() };
+  const overlay = {
+    beginDraft: vi.fn(),
+    setDraftPreview: vi.fn(),
+    setResult: vi.fn(),
+    stop: vi.fn(),
+    destroy: vi.fn(),
+  };
   render(
     <Panel
       binding={{
