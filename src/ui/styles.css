@@ -196,6 +196,10 @@ summary {
 }
 :host([data-dock="sidebar"]) .panel {
   margin-top: 0;
+  height: var(--watch-panel-height, auto);
+}
+:host([data-dock="sidebar"]) .workspace {
+  flex: 1;
 }
 .panel header h2 {
   margin: 0;

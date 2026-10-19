@@ -199,6 +199,22 @@ test("Brave: settings, mock search, alignment, manual import, overlay and SRT", 
     const panelBox = await welcomePanel.boundingBox();
     expect(panelBox!.x).toBeGreaterThanOrEqual(playerBox!.x + playerBox!.width);
     expect(Math.abs(panelBox!.y - playerBox!.y)).toBeLessThanOrEqual(1);
+    expect(Math.abs(panelBox!.height - playerBox!.height)).toBeLessThanOrEqual(
+      1,
+    );
+    await welcome.locator("#movie_player").evaluate((el) => {
+      el.style.height = "540px";
+    });
+    await expect
+      .poll(async () => {
+        const p = await welcome.locator("#movie_player").boundingBox();
+        const panel = await welcomePanel.boundingBox();
+        return Math.abs(panel!.y + panel!.height - p!.y - p!.height);
+      })
+      .toBeLessThanOrEqual(1);
+    await welcome.locator("#movie_player").evaluate((el) => {
+      el.style.height = "";
+    });
     await expect(
       welcome.locator("#secondary-inner > [data-ai-lyrics-panel]"),
     ).toHaveCount(1);

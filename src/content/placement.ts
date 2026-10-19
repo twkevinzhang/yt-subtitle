@@ -7,6 +7,18 @@ export function mountWatchPanel(player: HTMLElement, host: HTMLElement) {
   let sample: { width: number; x: number; y: number } | undefined;
   host.style.display = "none";
   host.dataset.dock = "sidebar";
+  const syncHeight = () => {
+    if (!sidebar || !player.isConnected) return;
+    const video = player.getBoundingClientRect();
+    const column = sidebar.getBoundingClientRect();
+    if (
+      video.height > 0 &&
+      column.x >= video.x + video.width - 1 &&
+      column.y < video.y + video.height - 1
+    )
+      host.style.setProperty("--watch-panel-height", `${video.height}px`);
+    else host.style.removeProperty("--watch-panel-height");
+  };
   const schedule = () => {
     if (!stopped && !frame && !published && sidebar)
       frame = requestAnimationFrame(checkGeometry);
@@ -16,6 +28,7 @@ export function mountWatchPanel(player: HTMLElement, host: HTMLElement) {
     if (stopped || !sidebar?.isConnected || !player.isConnected) return;
     const rect = sidebar.getBoundingClientRect();
     const video = player.getBoundingClientRect();
+    syncHeight();
     const beside = rect.x >= video.x + video.width - 1;
     const belowRight =
       rect.y >= video.y + video.height - 1 &&
@@ -41,7 +54,11 @@ export function mountWatchPanel(player: HTMLElement, host: HTMLElement) {
   const resize =
     typeof ResizeObserver === "undefined"
       ? undefined
-      : new ResizeObserver(schedule);
+      : new ResizeObserver(() => {
+          syncHeight();
+          schedule();
+        });
+  resize?.observe(player);
   const place = () => {
     if (stopped) return;
     const next = player.isConnected
@@ -58,6 +75,7 @@ export function mountWatchPanel(player: HTMLElement, host: HTMLElement) {
       if (sidebar) resize?.observe(sidebar);
     }
     if (!sidebar) return;
+    syncHeight();
     if (host.parentElement !== sidebar || sidebar.firstElementChild !== host)
       sidebar.prepend(host);
     schedule();

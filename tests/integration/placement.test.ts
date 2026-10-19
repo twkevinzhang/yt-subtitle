@@ -37,6 +37,29 @@ function fixture() {
     ({ width: 400, x: 900, y: 50 }) as DOMRect;
   return { player, sidebar, host: document.createElement("div") };
 }
+it("matches the player height and updates after player resize", () => {
+  const callbacks: ResizeObserverCallback[] = [];
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      constructor(callback: ResizeObserverCallback) {
+        callbacks.push(callback);
+      }
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
+  );
+  const { player, host } = fixture();
+  mount(player, host);
+  frame();
+  frame();
+  expect(host.style.getPropertyValue("--watch-panel-height")).toBe("480px");
+  player.getBoundingClientRect = () =>
+    ({ width: 850, height: 560, x: 20, y: 50 }) as DOMRect;
+  callbacks.forEach((callback) => callback([], {} as ResizeObserver));
+  expect(host.style.getPropertyValue("--watch-panel-height")).toBe("560px");
+});
 it("does not mount below the video while the final sidebar is missing", () => {
   document.body.innerHTML =
     '<div id="primary-inner"><div id="movie_player"></div><div id="below"></div></div><div id="secondary"></div>';
