@@ -6,6 +6,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { Panel } from "../../src/ui/Panel";
 const { mockRequest } = vi.hoisted(() => ({ mockRequest: vi.fn() }));
@@ -71,7 +72,7 @@ it("locates pending lyrics and keeps apply unavailable until they are resolved",
     screen.getByRole("button", { name: "套用並保存" }).hasAttribute("disabled"),
   ).toBe(false);
 });
-function setup() {
+function setup(onClose = vi.fn()) {
   const settings = {
     configured: true,
     model: "m",
@@ -131,7 +132,7 @@ function setup() {
         isAd: () => false,
       }}
       overlay={overlay}
-      onClose={() => {}}
+      onClose={onClose}
     />,
   );
   return overlay;
@@ -255,4 +256,138 @@ it("keeps the previous result and edited body after a retry fails", async () => 
   expect(
     screen.getByRole("button", { name: "套用並保存" }).hasAttribute("disabled"),
   ).toBe(false);
+});
+
+it.each([
+  ["← 返回歌詞", "取消工作並返回"],
+  ["取消工作", "取消工作"],
+  ["關閉面板", "取消工作並關閉"],
+])(
+  "confirms %s while waiting and ignores a late response",
+  async (trigger, confirmLabel) => {
+    const close = vi.fn();
+    setup(close);
+    let finish!: (value: any) => void;
+    const old = mockRequest.getMockImplementation()!;
+    mockRequest.mockImplementation((m: any) =>
+      m.type === "run"
+        ? new Promise((resolve) => {
+            finish = resolve;
+          })
+        : old(m),
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "貼上歌詞" }));
+    fireEvent.change(screen.getByLabelText("歌詞全文"), {
+      target: { value: "歌詞" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "使用貼上歌詞" }));
+    await waitFor(() => expect(finish).toBeTypeOf("function"));
+    fireEvent.click(screen.getByRole("button", { name: trigger }));
+    const dialog = screen.getByRole("alertdialog");
+    expect(dialog).toBeTruthy();
+    expect(document.activeElement?.textContent).toBe("繼續等待");
+    expect(mockRequest.mock.calls.some(([m]) => m.type === "cancel")).toBe(
+      false,
+    );
+    fireEvent.click(within(dialog).getByRole("button", { name: confirmLabel }));
+    await waitFor(() =>
+      expect(mockRequest).toHaveBeenCalledWith({ type: "cancel", runId: "r" }),
+    );
+    finish({
+      state: { phase: "complete", completedLineIds: ["l0"], requestCount: 1 },
+      output: {
+        lines: [
+          {
+            id: "l0",
+            original: "不應出現的晚到結果",
+            startMs: 1000,
+            endMs: 2000,
+            status: "anchor",
+            cueIds: [],
+            excluded: false,
+          },
+        ],
+        response: "late",
+      },
+    });
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    expect(screen.queryByText("不應出現的晚到結果")).toBeNull();
+    expect(close).toHaveBeenCalledTimes(trigger === "關閉面板" ? 1 : 0);
+    if (trigger === "← 返回歌詞")
+      expect(screen.getByRole("button", { name: "繼續編輯草稿" })).toBeTruthy();
+  },
+);
+it("continues waiting when cancellation is dismissed", async () => {
+  setup();
+  const old = mockRequest.getMockImplementation()!;
+  mockRequest.mockImplementation((m: any) =>
+    m.type === "run" ? new Promise(() => {}) : old(m),
+  );
+  fireEvent.click(await screen.findByRole("button", { name: "貼上歌詞" }));
+  fireEvent.change(screen.getByLabelText("歌詞全文"), {
+    target: { value: "歌詞" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "使用貼上歌詞" }));
+  await waitFor(() =>
+    expect(mockRequest.mock.calls.some(([m]) => m.type === "run")).toBe(true),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "← 返回歌詞" }));
+  fireEvent.click(screen.getByRole("button", { name: "繼續等待" }));
+  expect(screen.queryByRole("alertdialog")).toBeNull();
+  expect(mockRequest.mock.calls.some(([m]) => m.type === "cancel")).toBe(false);
+  expect(screen.getByRole("tab", { name: "歌詞結果" })).toBeTruthy();
+});
+
+it("does not leave when cancellation fails and permits retry", async () => {
+  setup();
+  const old = mockRequest.getMockImplementation()!;
+  let rejectCancel = true;
+  mockRequest.mockImplementation((m: any) =>
+    m.type === "run"
+      ? new Promise(() => {})
+      : m.type === "cancel" && rejectCancel
+        ? Promise.reject(new Error("offline"))
+        : old(m),
+  );
+  fireEvent.click(await screen.findByRole("button", { name: "貼上歌詞" }));
+  fireEvent.change(screen.getByLabelText("歌詞全文"), {
+    target: { value: "歌詞" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "使用貼上歌詞" }));
+  await waitFor(() =>
+    expect(mockRequest.mock.calls.some(([m]) => m.type === "run")).toBe(true),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "← 返回歌詞" }));
+  fireEvent.click(screen.getByRole("button", { name: "取消工作並返回" }));
+  await screen.findByText(/無法確認取消/);
+  expect(screen.getByRole("alertdialog")).toBeTruthy();
+  rejectCancel = false;
+  fireEvent.click(screen.getByRole("button", { name: "取消工作並返回" }));
+  await screen.findByRole("button", { name: "繼續編輯草稿" });
+});
+it("cancels while loading captions without dispatching a later AI request", async () => {
+  setup();
+  const old = mockRequest.getMockImplementation()!;
+  let finishCaptions!: (value: any) => void;
+  mockRequest.mockImplementation((m: any) =>
+    m.type === "read-transcript"
+      ? new Promise((resolve) => {
+          finishCaptions = resolve;
+        })
+      : old(m),
+  );
+  fireEvent.click(await screen.findByRole("button", { name: "貼上歌詞" }));
+  fireEvent.change(screen.getByLabelText("歌詞全文"), {
+    target: { value: "歌詞" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "使用貼上歌詞" }));
+  await waitFor(() => expect(finishCaptions).toBeTypeOf("function"));
+  fireEvent.click(screen.getByRole("button", { name: "← 返回歌詞" }));
+  fireEvent.click(screen.getByRole("button", { name: "取消工作並返回" }));
+  await screen.findByRole("button", { name: "繼續編輯草稿" });
+  finishCaptions([{ id: "c0", startMs: 1000, endMs: 2000, text: "歌詞" }]);
+  await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+  expect(mockRequest.mock.calls.some(([m]) => m.type === "generate")).toBe(
+    false,
+  );
 });

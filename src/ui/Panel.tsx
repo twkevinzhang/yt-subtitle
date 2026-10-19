@@ -31,6 +31,9 @@ import {
 } from "../lyrics/draft";
 import { isUserAction } from "./user-action";
 import { startOwnedRun } from "./owned-run";
+class WorkCancelled extends Error {}
+type PendingWork = { cancelled: boolean; cancellation?: Promise<void> };
+type LeaveAction = "return" | "stop" | "close";
 export function Panel({
   binding,
   overlay,
@@ -54,6 +57,11 @@ export function Panel({
     "result",
   );
   const [onlyPending, setOnlyPending] = useState(false);
+  const [leaveAction, setLeaveAction] = useState<LeaveAction | null>(null);
+  const [stopping, setStopping] = useState(false);
+  const [stopError, setStopError] = useState("");
+  const workRef = useRef<PendingWork | undefined>(undefined);
+  const leaveTrigger = useRef<HTMLElement | null>(null);
   const editPage = useRef<HTMLElement>(null);
   const lyricsPage = useRef<HTMLElement>(null);
   const previousView = useRef(view);
@@ -218,14 +226,78 @@ export function Panel({
     try {
       await fn();
     } catch (e) {
-      if (live.current) setError((e as Error).message);
+      if (live.current && !(e instanceof WorkCancelled))
+        setError((e as Error).message);
     }
   };
-  const poll = async (state: RunState): Promise<unknown> => {
+  useEffect(() => {
+    if (!leaveAction && leaveTrigger.current) {
+      leaveTrigger.current.focus();
+      leaveTrigger.current = null;
+    }
+  }, [leaveAction]);
+  const checkWork = async (work: PendingWork) => {
+    // Wait for cancellation acknowledgement before accepting a concurrent response.
+    await work.cancellation?.catch(() => {});
+    if (work.cancelled) throw new WorkCancelled();
+  };
+  const leave = (action: LeaveAction) => {
+    if (action === "return") setView("lyrics");
+    else if (action === "close") onClose();
+  };
+  const requestLeave = (action: LeaveAction) => {
+    if (!busy) {
+      leave(action);
+      return;
+    }
+    const root = editPage.current?.getRootNode() as
+      Document | ShadowRoot | undefined;
+    leaveTrigger.current = (root?.activeElement ||
+      document.activeElement) as HTMLElement;
+    setStopError("");
+    setLeaveAction(action);
+  };
+  const continueWaiting = () => {
+    setLeaveAction(null);
+  };
+  const confirmStop = async () => {
+    if (!leaveAction || stopping) return;
+    const action = leaveAction,
+      work = workRef.current;
+    setStopping(true);
+    setStopError("");
+    try {
+      if (work) {
+        const runId = activeRun.current;
+        work.cancellation = (async () => {
+          if (runId) await request({ type: "cancel", runId });
+          work.cancelled = true;
+        })();
+        await work.cancellation;
+        if (workRef.current === work) activeRun.current = undefined;
+      }
+      if (!live.current) return;
+      setBusy(false);
+      setProgress("");
+      setMessage("工作已取消，歌詞與已有結果已保留。");
+      leaveTrigger.current = null;
+      setLeaveAction(null);
+      leave(action);
+    } catch (error) {
+      if (live.current)
+        setStopError(
+          `無法確認取消：${(error as Error).message}。請重試或繼續等待。`,
+        );
+    } finally {
+      if (live.current) setStopping(false);
+    }
+  };
+  const poll = async (state: RunState, work: PendingWork): Promise<unknown> => {
     if (!live.current) {
       await request({ type: "cancel", runId: state.runId });
       throw new Error("已離開影片，工作已取消");
     }
+    await checkWork(work);
     activeRun.current = state.runId;
     setBusy(true);
     try {
@@ -238,6 +310,7 @@ export function Panel({
           await request({ type: "cancel", runId: state.runId });
           throw new Error("已離開影片，工作已取消");
         }
+        await checkWork(work);
         if (!record) throw new Error("工作已中斷，請重新開始");
         if (record.responseText !== undefined)
           setResponseText(record.responseText);
@@ -273,8 +346,8 @@ export function Panel({
       }
       throw new Error("已離開影片");
     } finally {
-      activeRun.current = undefined;
-      if (live.current) {
+      if (workRef.current === work) activeRun.current = undefined;
+      if (live.current && workRef.current === work) {
         setBusy(false);
         setProgress("");
       }
@@ -287,31 +360,42 @@ export function Panel({
   const startSearch = () =>
     attempt(async () => {
       if (!settings || !searchPayload || busy) return;
-      setSearchReply(null);
-      setCandidates(null);
-      const receipt = {
-        purpose: "search" as const,
-        inputHash: await hashInput(searchPayload),
-        settingsRevision: settings.settingsRevision,
-        confirmedAt: Date.now(),
-      };
-      const state = await startOwnedRun(
-        () =>
-          request<RunState>({
-            type: "search",
-            video: searchPayload.video,
-            consent: receipt,
-          }),
-        () => live.current,
-        async (id) => {
-          await request({ type: "cancel", runId: id });
-        },
-      );
-      const result = (await poll(state)) as LyricSearchResult;
-      if (live.current) {
-        setSearchReply(result.text);
-        setCandidates(result.error ? null : result.candidates);
-        setError(result.error || "");
+      const work: PendingWork = { cancelled: false };
+      workRef.current = work;
+      setBusy(true);
+      try {
+        setSearchReply(null);
+        setCandidates(null);
+        const receipt = {
+          purpose: "search" as const,
+          inputHash: await hashInput(searchPayload),
+          settingsRevision: settings.settingsRevision,
+          confirmedAt: Date.now(),
+        };
+        await checkWork(work);
+        const state = await startOwnedRun(
+          () =>
+            request<RunState>({
+              type: "search",
+              video: searchPayload.video,
+              consent: receipt,
+            }),
+          () => live.current && !work.cancelled,
+          async (id) => {
+            await request({ type: "cancel", runId: id });
+          },
+        );
+        const result = (await poll(state, work)) as LyricSearchResult;
+        if (live.current) {
+          setSearchReply(result.text);
+          setCandidates(result.error ? null : result.candidates);
+          setError(result.error || "");
+        }
+      } catch (error) {
+        if (work.cancelled) throw new WorkCancelled();
+        throw error;
+      } finally {
+        if (live.current && workRef.current === work) setBusy(false);
       }
     });
   const startGenerate = (
@@ -337,6 +421,8 @@ export function Panel({
           );
         }
       }
+      const work: PendingWork = { cancelled: false };
+      workRef.current = work;
       setBusy(true);
       setMessage("正在對齊歌詞…");
       try {
@@ -345,6 +431,7 @@ export function Panel({
           setMessage("正在讀取 YouTube 轉錄稿…");
           timing = await request<Cue[]>({ type: "read-transcript" });
           if (!live.current) return;
+          await checkWork(work);
           setCues(timing);
         }
         if (!timing.length && inputLines.some((l) => l.startMs === undefined))
@@ -370,18 +457,19 @@ export function Panel({
           settingsRevision: settings.settingsRevision,
           confirmedAt: Date.now(),
         };
+        await checkWork(work);
         const state = await startOwnedRun(
           () =>
             request<RunState>({
               type: "generate",
               input: { ...payload, consent: receipt },
             }),
-          () => live.current,
+          () => live.current && !work.cancelled,
           async (id) => {
             await request({ type: "cancel", runId: id });
           },
         );
-        const output = (await poll(state)) as {
+        const output = (await poll(state, work)) as {
           lines: AlignedLine[];
           response: string;
         };
@@ -394,8 +482,11 @@ export function Panel({
           model: String(body.model),
         };
         setMessage("AI 對齊完成，請檢查後套用並保存。");
+      } catch (error) {
+        if (work.cancelled) throw new WorkCancelled();
+        throw error;
       } finally {
-        if (live.current) setBusy(false);
+        if (live.current && workRef.current === work) setBusy(false);
       }
     });
   const submitLyrics = async (
@@ -491,18 +582,18 @@ export function Panel({
       role="region"
       aria-label="AI 歌詞工作面板"
     >
-      <header>
+      <header inert={!!leaveAction}>
         <h2>AI 歌詞</h2>
         <div className="row">
           <button onClick={() => void request({ type: "open-options" })}>
             設定
           </button>
-          <button aria-label="關閉面板" onClick={onClose}>
+          <button aria-label="關閉面板" onClick={() => requestLeave("close")}>
             ×
           </button>
         </div>
       </header>
-      <div className="workspace">
+      <div className="workspace" inert={!!leaveAction}>
         <aside
           ref={editPage}
           hidden={view === "lyrics"}
@@ -514,8 +605,7 @@ export function Panel({
             <>
               <button
                 className="back-button"
-                disabled={busy}
-                onClick={() => setView("lyrics")}
+                onClick={() => requestLeave("return")}
               >
                 ← 返回歌詞
               </button>
@@ -531,15 +621,7 @@ export function Panel({
               {busy && (
                 <div className="notice">
                   <p>處理中…{progress}</p>
-                  <button
-                    disabled={!activeRun.current}
-                    onClick={() =>
-                      activeRun.current &&
-                      void request({ type: "cancel", runId: activeRun.current })
-                    }
-                  >
-                    取消工作
-                  </button>
+                  <button onClick={() => requestLeave("stop")}>取消工作</button>
                 </div>
               )}
             </>
@@ -709,7 +791,7 @@ export function Panel({
             <>
               <div className="review-heading">
                 <div className="review-back">
-                  <button disabled={busy} onClick={() => setView("lyrics")}>
+                  <button onClick={() => requestLeave("return")}>
                     ← 返回歌詞
                   </button>
                   <strong>對齊結果</strong>
@@ -727,18 +809,7 @@ export function Panel({
                 </p>
                 <span className="visually-hidden">{message}</span>
                 {busy && (
-                  <button
-                    disabled={!activeRun.current}
-                    onClick={() =>
-                      activeRun.current &&
-                      void request({
-                        type: "cancel",
-                        runId: activeRun.current,
-                      }).catch(() => {})
-                    }
-                  >
-                    取消工作
-                  </button>
+                  <button onClick={() => requestLeave("stop")}>取消工作</button>
                 )}
               </div>
               <div
@@ -1088,6 +1159,63 @@ export function Panel({
           )}
         </section>
       </div>
+      {leaveAction && (
+        <div className="stop-backdrop">
+          <section
+            className="stop-dialog"
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="stop-title"
+            aria-describedby="stop-description"
+            onKeyDown={(event) => {
+              if (event.key === "Escape" && !stopping) {
+                event.preventDefault();
+                continueWaiting();
+              }
+              if (event.key === "Tab") {
+                const buttons = Array.from(
+                  event.currentTarget.querySelectorAll<HTMLButtonElement>(
+                    "button:not(:disabled)",
+                  ),
+                );
+                const first = buttons[0],
+                  last = buttons.at(-1);
+                if (event.shiftKey && event.target === first) {
+                  event.preventDefault();
+                  last?.focus();
+                } else if (!event.shiftKey && event.target === last) {
+                  event.preventDefault();
+                  first?.focus();
+                }
+              }
+            }}
+          >
+            <h3 id="stop-title">要取消目前的工作嗎？</h3>
+            <p id="stop-description">
+              AI 回覆仍在等待中。取消後會保留歌詞、請求內容與已有結果。
+            </p>
+            {stopError && (
+              <p role="alert" className="error notice">
+                {stopError}
+              </p>
+            )}
+            <div className="stop-actions">
+              <button autoFocus disabled={stopping} onClick={continueWaiting}>
+                繼續等待
+              </button>
+              <button disabled={stopping} onClick={() => void confirmStop()}>
+                {stopping
+                  ? "正在取消…"
+                  : leaveAction === "return"
+                    ? "取消工作並返回"
+                    : leaveAction === "close"
+                      ? "取消工作並關閉"
+                      : "取消工作"}
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
     </div>
   );
 }

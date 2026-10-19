@@ -6,6 +6,7 @@ import path from "node:path";
 
 test("Brave: independent pages, whole-song request, editable retry and explicit apply", async () => {
   const requests: any[] = [];
+  let holdReplies = false;
   const server = createServer(async (req, res) => {
     let raw = "";
     for await (const chunk of req) raw += chunk;
@@ -16,6 +17,7 @@ test("Brave: independent pages, whole-song request, editable retry and explicit 
     }
     const body = JSON.parse(raw);
     requests.push(body);
+    if (holdReplies) return;
     const input = JSON.parse(body.messages[1].content);
     res.setHeader("Content-Type", "application/json");
     res.end(
@@ -222,6 +224,50 @@ test("Brave: independent pages, whole-song request, editable retry and explicit 
     ).toBeVisible();
     await expect(page.locator(".lyrics-preview .lyric-line")).toHaveCount(81);
     await page.screenshot({ path: "artifacts/panel-applied.png" });
+    holdReplies = true;
+    for (const [trigger, confirm] of [
+      ["← 返回歌詞", "取消工作並返回"],
+      ["取消工作", "取消工作"],
+      ["關閉面板", "取消工作並關閉"],
+    ]) {
+      if (
+        await page
+          .getByRole("button", { name: "製作／編輯", exact: true })
+          .isVisible()
+      )
+        await page
+          .getByRole("button", { name: "製作／編輯", exact: true })
+          .click();
+      await page.getByRole("tab", { name: "請求內容", exact: true }).click();
+      const count = requests.length;
+      await page.getByRole("button", { name: "重新請求", exact: true }).click();
+      await expect.poll(() => requests.length).toBe(count + 1);
+      await page.getByRole("button", { name: trigger, exact: true }).click();
+      const dialog = page.getByRole("alertdialog");
+      await expect(
+        dialog.getByRole("button", { name: "繼續等待", exact: true }),
+      ).toBeFocused();
+      await dialog
+        .getByRole("button", { name: "繼續等待", exact: true })
+        .click();
+      await expect(
+        page.getByRole("button", { name: trigger, exact: true }),
+      ).toBeFocused();
+      await page.getByRole("button", { name: trigger, exact: true }).click();
+      await page.screenshot({ path: "artifacts/cancel-confirmation.png" });
+      await dialog.getByRole("button", { name: confirm, exact: true }).click();
+      await expect(dialog).toHaveCount(0);
+      if (trigger === "← 返回歌詞")
+        await expect(
+          page.getByRole("button", { name: "製作／編輯", exact: true }),
+        ).toBeVisible();
+      else if (trigger === "關閉面板")
+        await expect(page.locator(".panel")).toBeHidden();
+      else
+        await expect(
+          page.getByRole("button", { name: "重新請求", exact: true }),
+        ).toBeEnabled();
+    }
   } finally {
     await context?.close();
     await new Promise<void>((resolve, reject) =>
