@@ -161,6 +161,11 @@ export function SearchTest({
         >
           {busy ? "搜尋中…" : sent ? "再次搜尋" : "搜尋"}
         </button>
+        {busy && (
+          <span role="status" className="http-status http-status-3xx">
+            正在等待 AI 服務回應…
+          </span>
+        )}
         {response && (
           <span
             role="status"
@@ -172,13 +177,12 @@ export function SearchTest({
               : `HTTP ${response.status}`}
           </span>
         )}
+        {error && (
+          <span className="http-status http-status-5xx" role="alert">
+            {error}
+          </span>
+        )}
       </div>
-      {busy && <p role="status">正在等待 AI 服務回應…</p>}
-      {error && (
-        <p className="notice error" role="alert">
-          {error}
-        </p>
-      )}
       {response && (
         <div
           role="region"
