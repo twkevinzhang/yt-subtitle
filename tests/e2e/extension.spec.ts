@@ -6,6 +6,8 @@ import os from "node:os";
 test("Brave: settings, mock search, alignment, manual import, overlay and SRT", async () => {
   const requests: { path: string; body: any }[] = [];
   let failModels = false;
+  let mockTestReply: string | null = null;
+  let replyDelay = 0;
   const server = createServer(async (req, res) => {
     let body = "";
     for await (const c of req) body += c;
@@ -17,6 +19,13 @@ test("Brave: settings, mock search, alignment, manual import, overlay and SRT", 
       return;
     }
     const input = JSON.parse(body);
+    if (mockTestReply !== null) {
+      const text = mockTestReply;
+      if (replyDelay)
+        await new Promise((resolve) => setTimeout(resolve, replyDelay));
+      res.end(JSON.stringify({ choices: [{ message: { content: text } }] }));
+      return;
+    }
     const search = input.messages[0].content.includes("歌曲與歌詞搜尋");
     const payload = search
       ? {
@@ -615,6 +624,55 @@ test("Brave: settings, mock search, alignment, manual import, overlay and SRT", 
       path: "artifacts/below-player-lyrics-dark.png",
       fullPage: true,
     });
+    mockTestReply = Array.from(
+      { length: 20 },
+      (_, i) => `AI 原文回覆第 ${i + 1} 行；這是非 JSON 的搜尋測試回答。`,
+    ).join("\n");
+    await options.bringToFront();
+    options.on("dialog", (dialog) => dialog.accept());
+    await options
+      .getByRole("button", { name: "測試搜尋（使用額度）", exact: true })
+      .click();
+    const replyRegion = options.getByRole("region", {
+      name: "AI 實際回覆",
+      exact: true,
+    });
+    await expect(replyRegion).toBeVisible();
+    const replyText = replyRegion.locator("pre");
+    expect(await replyText.textContent()).toBe(mockTestReply);
+    const compactHeight = (await replyText.boundingBox())!.height;
+    expect(compactHeight).toBeLessThanOrEqual(80);
+    expect(
+      await replyText.evaluate((el) => el.scrollHeight > el.clientHeight),
+    ).toBe(true);
+    await replyRegion
+      .getByRole("button", { name: "展開", exact: true })
+      .click();
+    expect((await replyText.boundingBox())!.height).toBeGreaterThan(
+      compactHeight,
+    );
+    await replyRegion
+      .getByRole("button", { name: "收合", exact: true })
+      .click();
+    expect((await replyText.boundingBox())!.height).toBeLessThanOrEqual(80);
+    await options.screenshot({
+      path: "artifacts/options-ai-reply.png",
+      fullPage: true,
+    });
+    await options.emulateMedia({ colorScheme: "light" });
+    await options.screenshot({
+      path: "artifacts/options-ai-reply-light.png",
+      fullPage: true,
+    });
+    mockTestReply = "第二次測試的 AI 回覆";
+    replyDelay = 1500;
+    await options
+      .getByRole("button", { name: "測試搜尋（使用額度）", exact: true })
+      .click();
+    await expect(replyRegion).toHaveCount(0);
+    await expect(
+      options.getByText("第二次測試的 AI 回覆", { exact: true }),
+    ).toBeVisible();
     await writeFile(
       "artifacts/browser-verification.json",
       JSON.stringify(

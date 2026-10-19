@@ -12,9 +12,11 @@ import type {
   Preferences,
   SavedResult,
   RunState,
+  SearchTestResult,
 } from "../shared/types";
 import { hashInput } from "../background/results";
 import type { RunRecord } from "../background/runs";
+import { AiReply } from "./AiReply";
 const emptyProvider: ProviderSettings = {
   schemaVersion: 1,
   baseUrl: "",
@@ -43,6 +45,7 @@ export function Options() {
     }),
     [models, setModels] = useState<string[]>([]),
     [records, setRecords] = useState<SavedResult[]>([]),
+    [testReply, setTestReply] = useState<string | null>(null),
     [feedback, setFeedback] = useState<Partial<Record<SectionId, Notice>>>({
       ai: { status: "正在載入…" },
     }),
@@ -117,6 +120,7 @@ export function Options() {
         onChange={(e) => {
           setProvider({ ...provider, [key]: e.target.value, model: "" });
           setModels([]);
+          setTestReply(null);
           notify("ai", { status: "服務資料已變更，請重新載入模型。" });
         }}
       />
@@ -230,6 +234,7 @@ export function Options() {
         )
       )
         return;
+      setTestReply(null);
       const s = await request<SettingsRecord>({ type: "settings-edit" });
       const consent = {
         purpose: "search-test" as const,
@@ -243,9 +248,12 @@ export function Options() {
         while (Date.now() < deadline) {
           const r = await request<RunRecord>({ type: "run", runId: run.runId });
           if (r.state.phase === "complete") {
+            const output = r.output as Partial<SearchTestResult> | undefined;
+            if (typeof output?.text !== "string")
+              throw new Error("服務未提供可顯示的 AI 回覆，請重新測試。");
+            setTestReply(output.text);
             notify("ai", {
-              status:
-                "服務已回覆。通用文字介面無法核實搜尋工具證據，搜尋能力仍標示尚未驗證。",
+              status: "測試完成；搜尋能力尚未驗證。",
             });
             return;
           }
@@ -295,6 +303,7 @@ export function Options() {
                 value={provider.model}
                 onChange={(e) => {
                   setProvider({ ...provider, model: e.target.value });
+                  setTestReply(null);
                   notify("ai", { status: "模型選擇已變更，請儲存設定。" });
                 }}
               >
@@ -324,6 +333,7 @@ export function Options() {
           </button>
         </div>
         {sectionNotice("ai")}
+        {testReply !== null && <AiReply text={testReply} />}
       </section>
       <section aria-label="歌詞來源">
         <h2>歌詞來源</h2>

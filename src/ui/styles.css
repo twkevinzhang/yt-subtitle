@@ -434,6 +434,30 @@ summary {
   min-width: 0;
   width: auto;
 }
+.options .ai-reply {
+  margin-top: 8px;
+}
+.options .ai-reply .row {
+  margin: 0 0 4px;
+  justify-content: space-between;
+}
+.options .ai-reply button {
+  padding: 2px 8px;
+  font-size: 12px;
+}
+.options .ai-reply pre {
+  margin: 0;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--field);
+  font: 13px/1.5 monospace;
+  max-height: calc(4.5em + 16px);
+  overflow: auto;
+}
+.options .ai-reply pre.expanded {
+  max-height: 240px;
+}
 .options .summary {
   max-width: 65ch;
 }

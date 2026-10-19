@@ -23,7 +23,11 @@ import { inspectVideo, readTrack } from "../youtube/context";
 import { searchMessages, validateCandidates } from "../lyrics/search";
 import { alignmentMessages, validateAlignment } from "../lyrics/alignment";
 import { makeBatches } from "../lyrics/batches";
-import type { ConsentReceipt, AlignedLine } from "../shared/types";
+import type {
+  ConsentReceipt,
+  AlignedLine,
+  SearchTestResult,
+} from "../shared/types";
 const journal = new RunJournal({
   get: () => chrome.storage.session.get(null),
   set: (v) => chrome.storage.session.set(v),
@@ -172,16 +176,23 @@ export async function handleMessage(
         video.videoId,
         s.revision,
         async (tools) => {
+          if (m.type === "search-test") {
+            const text = await tools.request(() =>
+              client.completeText(messages, tools.signal),
+            );
+            return {
+              text,
+              evidence: { status: "unverified", citations: [] },
+            } satisfies SearchTestResult;
+          }
           const response = await tools.request(() =>
             client.completeJson(messages, tools.signal),
           );
-          return m.type === "search-test"
-            ? response.evidence
-            : validateCandidates(
-                response.payload,
-                s.sources,
-                response.evidence,
-              );
+          return validateCandidates(
+            response.payload,
+            s.sources,
+            response.evidence,
+          );
         },
         "searching",
       );

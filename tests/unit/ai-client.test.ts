@@ -6,6 +6,23 @@ const p = {
   apiToken: "private-token",
   model: "m",
 };
+it("preserves the exact assistant text for search tests even when it is not JSON", async () => {
+  const text = "目前無法搜尋網路。\n請提供歌詞來源。";
+  const fetcher = vi.fn(
+    async () =>
+      new Response(
+        JSON.stringify({ choices: [{ message: { content: text } }] }),
+        { headers: { "Content-Type": "application/json" } },
+      ),
+  );
+  const client = createAiClient(p, fetcher);
+  expect(await client.completeText([], new AbortController().signal)).toBe(
+    text,
+  );
+  await expect(
+    client.completeJson([], new AbortController().signal),
+  ).rejects.toThrow("不是有效 JSON");
+});
 it("lists models before selection but never sends a completion with an empty model", async () => {
   const fetcher = vi.fn().mockResolvedValue(
     new Response(JSON.stringify({ data: [{ id: "available-model" }] }), {

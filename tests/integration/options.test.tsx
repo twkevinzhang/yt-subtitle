@@ -36,7 +36,61 @@ beforeEach(() => {
 });
 afterEach(() => {
   cleanup();
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
+});
+it("shows the actual AI reply as compact plain text and clears it while retesting", async () => {
+  record.provider = {
+    schemaVersion: 1,
+    baseUrl: "https://ai.test/v1",
+    apiToken: "test-only-token",
+    model: "model-a",
+  };
+  const firstReply =
+    '<img src=x onerror="alert(1)">\nAI 回覆第二行\n第三行\n第四行';
+  let reply = firstReply;
+  let hold = false;
+  let release!: (value: { runId: string }) => void;
+  const fallback = requestMock.getMockImplementation()!;
+  requestMock.mockImplementation(async (m) => {
+    if (m.type === "search-test")
+      return hold
+        ? new Promise((resolve) => {
+            release = resolve;
+          })
+        : { runId: "reply-run" };
+    if (m.type === "run")
+      return {
+        state: { phase: "complete" },
+        output: {
+          text: reply,
+          evidence: { status: "unverified", citations: [] },
+        },
+      };
+    if (m.type === "cancel") return null;
+    return fallback(m);
+  });
+  vi.spyOn(window, "confirm").mockReturnValue(true);
+  await open();
+  fireEvent.click(screen.getByRole("button", { name: "測試搜尋（使用額度）" }));
+  const panel = await screen.findByRole("region", { name: "AI 實際回覆" });
+  expect(panel.querySelector("pre")?.textContent).toBe(firstReply);
+  expect(panel.querySelector("img")).toBeNull();
+  expect(panel.closest("section")?.getAttribute("aria-label")).toBe("AI 服務");
+  fireEvent.click(within(panel).getByRole("button", { name: "展開" }));
+  expect(
+    within(panel)
+      .getByRole("button", { name: "收合" })
+      .getAttribute("aria-expanded"),
+  ).toBe("true");
+  hold = true;
+  reply = "新的 AI 回覆";
+  fireEvent.click(screen.getByRole("button", { name: "測試搜尋（使用額度）" }));
+  await waitFor(() => expect(release).toBeTypeOf("function"));
+  expect(screen.queryByRole("region", { name: "AI 實際回覆" })).toBeNull();
+  release({ runId: "reply-run-2" });
+  await screen.findByText("新的 AI 回覆");
+  expect(screen.queryByText(firstReply)).toBeNull();
 });
 async function open() {
   render(<Options />);

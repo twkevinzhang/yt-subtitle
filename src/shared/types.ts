@@ -73,6 +73,10 @@ export interface CompletionEnvelope {
   payload: unknown;
   evidence: SearchEvidence;
 }
+export interface SearchTestResult {
+  text: string;
+  evidence: SearchEvidence;
+}
 export interface ChatMessage {
   role: "system" | "user";
   content: string;

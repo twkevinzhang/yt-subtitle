@@ -73,7 +73,23 @@ export function createAiClient(
       signal.removeEventListener("abort", abort);
     }
   }
+  async function completeText(
+    messages: ChatMessage[],
+    signal: AbortSignal,
+  ): Promise<string> {
+    if (!provider.model.trim()) throw new Error("請先載入、選擇模型並儲存設定");
+    const data = await call("chat/completions", signal, {
+      model: provider.model,
+      messages,
+      stream: false,
+    });
+    const text = data.choices?.[0]?.message?.content;
+    if (typeof text !== "string" || !text.trim())
+      throw new Error("AI 未提供文字結果");
+    return text;
+  }
   return {
+    completeText,
     async listModels(signal: AbortSignal): Promise<string[]> {
       const data = await call("models", signal);
       if (!Array.isArray(data.data)) throw new Error("AI 模型清單格式錯誤");
@@ -85,15 +101,7 @@ export function createAiClient(
       messages: ChatMessage[],
       signal: AbortSignal,
     ): Promise<CompletionEnvelope> {
-      if (!provider.model.trim())
-        throw new Error("請先載入、選擇模型並儲存設定");
-      const data = await call("chat/completions", signal, {
-        model: provider.model,
-        messages,
-        stream: false,
-      });
-      const text = data.choices?.[0]?.message?.content;
-      if (typeof text !== "string") throw new Error("AI 未提供文字結果");
+      const text = await completeText(messages, signal);
       try {
         return {
           payload: JSON.parse(
