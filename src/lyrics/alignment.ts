@@ -76,7 +76,7 @@ export function validateAlignment(
           result = {
             ...result,
             cueIds: row.cueIds,
-            status: "anchor",
+            status: refs.some((c) => c.endEstimated) ? "estimated" : "anchor",
             startMs: start,
             endMs: end,
           };

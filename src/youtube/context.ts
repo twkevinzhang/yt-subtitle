@@ -1,7 +1,20 @@
-import { inspectPage, readCaptionPage } from "./bridge";
+import { inspectPage, readCaptionPage, readTranscriptPage } from "./bridge";
 import { videoSchema } from "../shared/schemas";
 import { parseYouTubeCaptions } from "./captions";
 import type { CaptionTrack, Cue, VideoContext } from "../shared/types";
+export async function readTranscript(
+  tabId: number,
+  videoId: string,
+): Promise<Cue[]> {
+  const [result] = await chrome.scripting.executeScript({
+    target: { tabId },
+    world: "MAIN",
+    func: readTranscriptPage,
+    args: [videoId],
+  });
+  if (!result?.result?.length) throw new Error("未取得 YouTube 轉錄稿");
+  return result.result;
+}
 export function validateCaptionUrl(value: string) {
   const u = new URL(value);
   if (
@@ -50,12 +63,16 @@ export async function readTrack(
   trackId: string,
   videoId: string,
 ): Promise<Cue[]> {
-  const [r] = await chrome.scripting.executeScript({
-    target: { tabId },
-    world: "MAIN",
-    func: readCaptionPage,
-    args: [trackId, videoId],
-  });
-  if (!r?.result) throw new Error("字幕讀取失敗，請啟用原生字幕後重試");
-  return parseYouTubeCaptions(r.result.raw, r.result.format);
+  try {
+    const [r] = await chrome.scripting.executeScript({
+      target: { tabId },
+      world: "MAIN",
+      func: readCaptionPage,
+      args: [trackId, videoId],
+    });
+    if (!r?.result) throw new Error("字幕讀取失敗，請啟用原生字幕後重試");
+    return parseYouTubeCaptions(r.result.raw, r.result.format);
+  } catch {
+    return readTranscript(tabId, videoId);
+  }
 }

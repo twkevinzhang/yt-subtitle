@@ -2,6 +2,7 @@ export type Language = "ja" | "zh" | "en";
 export type TargetLanguage = "ja" | "zh-Hant" | "en";
 export type DisplayMode = "original" | "bilingual" | "translation";
 export interface Cue {
+  endEstimated?: boolean;
   id: string;
   startMs: number;
   endMs: number;

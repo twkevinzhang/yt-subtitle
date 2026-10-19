@@ -1,4 +1,82 @@
 // Serialized by chrome.scripting: keep these functions self-contained, no secrets or imports.
+export async function readTranscriptPage(expectedId: string) {
+  const check = () => {
+    if (new URL(location.href).searchParams.get("v") !== expectedId)
+      throw new Error("影片已切換");
+  };
+  check();
+  const selector =
+    'ytd-engagement-panel-section-list-renderer[visibility="ENGAGEMENT_PANEL_VISIBILITY_EXPANDED"]';
+  const rows = () =>
+    document.querySelectorAll(
+      `${selector} transcript-segment-view-model, ${selector} ytd-transcript-segment-renderer`,
+    );
+  const deadline = Date.now() + 10000;
+  if (!rows().length) {
+    document
+      .querySelector<HTMLElement>("#description-inline-expander #expand")
+      ?.click();
+    const findButton = () =>
+      Array.from(
+        document.querySelectorAll<HTMLButtonElement>("button[aria-label]"),
+      ).find((b) =>
+        /^(顯示轉錄稿|显示转录文稿|Show transcript|文字起こしを表示)$/i.test(
+          b.getAttribute("aria-label") || "",
+        ),
+      );
+    let button = findButton();
+    while (!button && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      check();
+      button = findButton();
+    }
+    if (!button)
+      throw new Error(
+        "找不到 YouTube 轉錄稿入口，請先開啟影片的「顯示轉錄稿」再重試",
+      );
+    button.click();
+  }
+  while (!rows().length && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    check();
+  }
+  check();
+  const duration = Math.round(
+    (document.querySelector("video")?.duration || 0) * 1000,
+  );
+  const segments = Array.from(rows())
+    .slice(0, 20000)
+    .map((row) => {
+      const stamp =
+        row
+          .querySelector(
+            ".ytwTranscriptSegmentViewModelTimestamp, .segment-start-offset",
+          )
+          ?.textContent?.trim() || "";
+      const parts = stamp.split(":").map(Number);
+      const text =
+        row
+          .querySelector('[role="text"], .segment-text')
+          ?.textContent?.trim() || "";
+      return {
+        startMs: parts.reduce((sum, n) => sum * 60 + n, 0) * 1000,
+        text,
+        valid: /^\d+:\d{2}(?::\d{2})?$/.test(stamp),
+      };
+    })
+    .filter((row) => row.valid && row.text && row.startMs < duration);
+  if (!segments.length || !Number.isFinite(duration))
+    throw new Error("YouTube 轉錄稿尚未載入，請開啟轉錄稿後重試");
+  return segments.map((row, index) => ({
+    id: `t${index}`,
+    startMs: row.startMs,
+    endMs:
+      segments.slice(index + 1).find((next) => next.startMs > row.startMs)
+        ?.startMs ?? duration,
+    text: row.text,
+    endEstimated: true,
+  }));
+}
 export function inspectPage() {
   const id = new URL(location.href).searchParams.get("v");
   if (!id || location.pathname !== "/watch")

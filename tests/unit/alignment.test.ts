@@ -11,6 +11,16 @@ const lines = [
   },
 ];
 const cues = [{ id: "c0", startMs: 1000, endMs: 2000, text: "歌" }];
+it("does not label transcript boundary estimates as exact anchors", () => {
+  expect(
+    validateAlignment(
+      { lines: [{ id: "l0", cueIds: ["c0"], status: "anchor" }] },
+      lines,
+      [{ ...cues[0], endEstimated: true }],
+      5000,
+    )[0].status,
+  ).toBe("estimated");
+});
 it("derives anchor time from actual cue IDs not invented model times", () => {
   const out = validateAlignment(
     {

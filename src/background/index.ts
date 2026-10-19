@@ -19,7 +19,7 @@ import {
   clearResults,
   resultSchema,
 } from "./results";
-import { inspectVideo, readTrack } from "../youtube/context";
+import { inspectVideo, readTrack, readTranscript } from "../youtube/context";
 import { searchMessages, parseSearchReply } from "../lyrics/search";
 import { alignmentMessages, validateAlignment } from "../lyrics/alignment";
 import { makeBatches } from "../lyrics/batches";
@@ -105,6 +105,10 @@ export async function handleMessage(
       return chrome.runtime.openOptionsPage();
     case "inspect":
       return inspectVideo(tabId);
+    case "read-transcript": {
+      const ctx = await inspectVideo(tabId);
+      return readTranscript(tabId, ctx.video.videoId);
+    }
     case "read-track": {
       const ctx = await inspectVideo(tabId);
       if (!ctx.tracks.some((t) => t.id === m.trackId))

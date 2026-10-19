@@ -1,7 +1,13 @@
 import { z } from "zod";
 const time = z.number().finite().nonnegative();
 export const cueSchema = z
-  .object({ id: z.string(), startMs: time, endMs: time, text: z.string() })
+  .object({
+    id: z.string(),
+    startMs: time,
+    endMs: time,
+    text: z.string(),
+    endEstimated: z.boolean().optional(),
+  })
   .refine((c) => c.endMs > c.startMs, "結束必須晚於開始");
 export const lineSchema = z.object({
   id: z.string(),
@@ -65,6 +71,7 @@ const msg = z.discriminatedUnion("type", [
   z.object({ type: z.literal("open-options") }),
   z.object({ type: z.literal("inspect") }),
   z.object({ type: z.literal("read-track"), trackId: z.string() }),
+  z.object({ type: z.literal("read-transcript") }),
   z.object({
     type: z.literal("search"),
     video: videoSchema,

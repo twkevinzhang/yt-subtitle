@@ -154,7 +154,7 @@ export function Panel({
         setMessage(
           track
             ? "已發現字幕軌，正在讀取內容…"
-            : "這支影片未提供可讀取的字幕；可匯入或手動校時",
+            : "尚未發現字幕軌，可嘗試讀取 YouTube 轉錄稿取得對齊時間。",
         );
         if (track) {
           setTrackId(track.id);
@@ -166,11 +166,17 @@ export function Panel({
             });
             if (live.current) {
               setCues(c);
-              setMessage(`已讀取 ${c.length} 段字幕，可用來對齊歌詞`);
+              if (c.some((cue) => cue.endEstimated))
+                setTrackId("native-transcript");
+              setMessage(
+                `已讀取 ${c.length} 段${c.some((cue) => cue.endEstimated) ? "YouTube 轉錄稿（句尾為估算）" : "字幕"}，可用來對齊歌詞`,
+              );
             }
           } catch {
             if (live.current)
-              setMessage("字幕內容讀取失敗，請啟用原生字幕後按「重新讀取」");
+              setMessage(
+                "自動字幕與轉錄稿讀取未完成。請按「讀取 YouTube 轉錄稿」恢復 AI 對齊，不需要逐句輸入時間。",
+              );
           } finally {
             if (live.current) setCaptionsLoading(false);
           }
@@ -328,9 +334,9 @@ export function Panel({
           await request({ type: "cancel", runId: id });
         },
       );
-      const result = await poll(state);
+      const aligned = (await poll(state)) as AlignedLine[];
       if (live.current) {
-        setLines(result as AlignedLine[]);
+        setLines(aligned);
         provenance.current = {
           source: provenance.current?.source || { kind: "user" },
           targetLanguage: translate
@@ -339,6 +345,33 @@ export function Panel({
               generatePayload.targetLanguage,
           model: settings.model,
         };
+        if (
+          video &&
+          !validateTiming(aligned, video.durationMs, offset).some(
+            (i) => i.severity === "error",
+          ) &&
+          aligned.some((line) => !line.excluded)
+        ) {
+          const completed = await result(aligned);
+          if (!live.current) return;
+          overlay.setResult(completed, mode, settings.preferences);
+          await request({ type: "results-save", result: completed });
+          if (live.current) {
+            setSaved((previous) => [
+              completed,
+              ...previous.filter(
+                (item) => item.key.inputHash !== completed.key.inputHash,
+              ),
+            ]);
+            setMessage(
+              "AI 對齊完成，已套用字幕並保存；估算句尾可選擇在進階區檢查。",
+            );
+          }
+        } else {
+          setMessage(
+            "AI 已處理；部分句子缺乏對應依據，尚未套用。請檢查未對齊句子。",
+          );
+        }
       }
     });
   const useCandidate = (c: LyricCandidate) => {
@@ -374,14 +407,15 @@ export function Panel({
       });
     setCandidates(null);
   };
-  const result = async (): Promise<SavedResult> => {
+  const result = async (resultLines = lines): Promise<SavedResult> => {
     if (!video || !settings) throw new Error("播放器尚未就緒");
-    const errors = validateTiming(lines, video.durationMs, offset).filter(
+    const errors = validateTiming(resultLines, video.durationMs, offset).filter(
       (x) => x.severity === "error",
     );
     if (errors.length)
       throw new Error(`有 ${errors.length} 句未完成校時，請修正或排除`);
-    if (!lines.some((l) => !l.excluded)) throw new Error("請至少保留一句歌詞");
+    if (!resultLines.some((l) => !l.excluded))
+      throw new Error("請至少保留一句歌詞");
     const actual = provenance.current || {
       source: { kind: "user" as const },
       targetLanguage: settings.preferences.targetLanguage,
@@ -393,7 +427,7 @@ export function Panel({
         schemaVersion: 1,
         videoId: video.videoId,
         inputHash: await hashInput({
-          lines,
+          lines: resultLines,
           targetLanguage: actual.targetLanguage,
           source: actual.source,
           model: actual.model,
@@ -402,7 +436,7 @@ export function Panel({
       },
       videoDurationMs: video.durationMs,
       source: actual.source,
-      lines,
+      lines: resultLines,
       offsetMs: offset,
       model: actual.model,
       createdAt: Date.now(),
@@ -421,6 +455,20 @@ export function Panel({
       a.download = safeFilename(video!.title) + ".srt";
       a.click();
       setTimeout(() => URL.revokeObjectURL(url), 1000);
+    });
+  const recoverTranscript = () =>
+    attempt(async () => {
+      setCaptionsLoading(true);
+      try {
+        const loaded = await request<Cue[]>({ type: "read-transcript" });
+        setCues(loaded);
+        setTrackId("native-transcript");
+        setMessage(
+          `已取得 ${loaded.length} 段 YouTube 轉錄稿；句尾為估算，可交由 AI 對齊。`,
+        );
+      } finally {
+        setCaptionsLoading(false);
+      }
     });
   return (
     <div className="panel" role="region" aria-label="AI 歌詞工作面板">
@@ -473,6 +521,11 @@ export function Panel({
                     disabled={busy}
                     onChange={(e) => setTrackId(e.target.value)}
                   >
+                    {cues.some((cue) => cue.endEstimated) && (
+                      <option value="native-transcript">
+                        YouTube 目前顯示的轉錄稿
+                      </option>
+                    )}
                     {tracks.map((t) => (
                       <option key={t.id} value={t.id}>
                         {t.label}
@@ -485,11 +538,17 @@ export function Panel({
                     disabled={busy}
                     onClick={() =>
                       attempt(async () => {
-                        const c = await request<Cue[]>({
-                          type: "read-track",
-                          trackId,
-                        });
+                        const c = await request<Cue[]>(
+                          trackId === "native-transcript"
+                            ? { type: "read-transcript" }
+                            : {
+                                type: "read-track",
+                                trackId,
+                              },
+                        );
                         setCues(c);
+                        if (c.some((cue) => cue.endEstimated))
+                          setTrackId("native-transcript");
                         setMessage(`已讀取 ${c.length} 段字幕`);
                       })
                     }
@@ -497,6 +556,14 @@ export function Panel({
                     重新讀取
                   </button>
                 </div>
+              )}
+              {!cues.length && (
+                <button
+                  disabled={captionsLoading || busy}
+                  onClick={recoverTranscript}
+                >
+                  讀取 YouTube 轉錄稿
+                </button>
               )}
               <button onClick={() => void request({ type: "open-options" })}>
                 開啟設定
@@ -659,7 +726,11 @@ export function Panel({
                           model: "",
                         };
                         originalHash.current = await hashInput(text);
-                        setConfirm(null);
+                        setConfirm(
+                          settings?.configured && cues.length
+                            ? "generate"
+                            : null,
+                        );
                       })
                     }
                   >
@@ -716,6 +787,11 @@ export function Panel({
               {lines.length > 0 && (
                 <>
                   <section className="section">
+                    <h3>下一步：AI 自動對齊</h3>
+                    <p className="muted">
+                      AI 會對照 YouTube
+                      字幕時間與歌詞；完整對齊後自動套用，不需要逐句輸入時間。
+                    </p>
                     <label>
                       <input
                         type="checkbox"
@@ -742,13 +818,16 @@ export function Panel({
                         (!translate &&
                           lines.every((l) => l.startMs !== undefined))
                       }
+                      className="primary"
                       onClick={() => setConfirm("generate")}
                     >
                       對齊／生成譯文
                     </button>
                     {!cues.length && (
                       <p className="muted">
-                        沒有可用字幕時，請逐句手動校時或匯入帶時間的檔案。
+                        {captionsLoading
+                          ? "正在取得字幕時間，完成後即可使用 AI 對齊。"
+                          : "尚未取得字幕時間，請先讀取 YouTube 轉錄稿，再使用 AI 對齊。手動校時僅為備援。"}
                       </p>
                     )}
                   </section>
@@ -763,17 +842,20 @@ export function Panel({
                         onCancel={() => setConfirm(null)}
                       />
                     )}
-                  <Editor
-                    lines={lines}
-                    onChange={setLines}
-                    currentMs={() =>
-                      Math.round(binding.video.currentTime * 1000)
-                    }
-                    seek={(ms) => {
-                      binding.video.currentTime = ms / 1000;
-                      void binding.video.play().catch(() => {});
-                    }}
-                  />
+                  <details className="manual-timing">
+                    <summary>進階：逐句檢查／手動校時（選用）</summary>
+                    <Editor
+                      lines={lines}
+                      onChange={setLines}
+                      currentMs={() =>
+                        Math.round(binding.video.currentTime * 1000)
+                      }
+                      seek={(ms) => {
+                        binding.video.currentTime = ms / 1000;
+                        void binding.video.play().catch(() => {});
+                      }}
+                    />
+                  </details>
                   <section className="section">
                     <label>
                       <span>整體偏移（秒，正數為延後）</span>

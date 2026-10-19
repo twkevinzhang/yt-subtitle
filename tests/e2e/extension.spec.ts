@@ -348,6 +348,9 @@ test("Brave: settings, mock search, alignment, manual import, overlay and SRT", 
       mimeType: "text/plain",
       buffer: Buffer.from("1\n00:00:01,000 --> 00:00:02,000\n未設定也可使用\n"),
     });
+    await welcome
+      .getByText("進階：逐句檢查／手動校時（選用）", { exact: true })
+      .click();
     await expect(welcome.getByLabel("第 1 句開始秒數")).toHaveValue("1");
     await expect(
       welcome.getByRole("button", { name: "對齊／生成譯文", exact: true }),
@@ -366,7 +369,9 @@ test("Brave: settings, mock search, alignment, manual import, overlay and SRT", 
       await readFile("artifacts/unconfigured-import.srt", "utf8"),
     ).toContain("未設定也可使用");
     expect(
-      requests.filter((r) => ["/v1/chat/completions", "/v1/responses"].includes(r.path)),
+      requests.filter((r) =>
+        ["/v1/chat/completions", "/v1/responses"].includes(r.path),
+      ),
     ).toHaveLength(0);
     await welcome
       .getByRole("button", { name: "關閉面板", exact: true })
@@ -522,24 +527,35 @@ test("Brave: settings, mock search, alignment, manual import, overlay and SRT", 
       .click();
     await page.getByText("已讀取 2 段字幕，可用來對齊歌詞").waitFor();
     expect(
-      requests.filter((x) => ["/v1/chat/completions", "/v1/responses"].includes(x.path)),
+      requests.filter((x) =>
+        ["/v1/chat/completions", "/v1/responses"].includes(x.path),
+      ),
     ).toHaveLength(0);
     await page.getByRole("button", { name: "搜尋歌詞", exact: true }).click();
     await expect(
       page.getByRole("button", { name: "開始搜尋", exact: true }),
     ).toBeVisible();
     expect(
-      requests.filter((x) => ["/v1/chat/completions", "/v1/responses"].includes(x.path)),
+      requests.filter((x) =>
+        ["/v1/chat/completions", "/v1/responses"].includes(x.path),
+      ),
     ).toHaveLength(0);
     await page
       .getByRole("button", { name: "開始搜尋", exact: true })
       .evaluate((el) => (el as HTMLElement).click());
     await page.waitForTimeout(150);
     expect(
-      requests.filter((x) => ["/v1/chat/completions", "/v1/responses"].includes(x.path)),
+      requests.filter((x) =>
+        ["/v1/chat/completions", "/v1/responses"].includes(x.path),
+      ),
     ).toHaveLength(0);
     await page.getByRole("button", { name: "開始搜尋", exact: true }).click();
     await page.getByRole("button", { name: "使用這個版本" }).click();
+    if ((await page.locator(".manual-timing").getAttribute("open")) === null) {
+      await page
+        .getByText("進階：逐句檢查／手動校時（選用）", { exact: true })
+        .click();
+    }
     await page.getByRole("checkbox", { name: /生成譯文/ }).check();
     await page
       .getByRole("button", { name: "對齊／生成譯文", exact: true })
@@ -554,6 +570,11 @@ test("Brave: settings, mock search, alignment, manual import, overlay and SRT", 
     await page.getByRole("button", { name: "使用這個版本" }).click();
     await expect(page.getByLabel("第 1 句開始秒數")).toHaveCount(0);
     await page.getByRole("button", { name: "返回上一份草稿" }).click();
+    if ((await page.locator(".manual-timing").getAttribute("open")) === null) {
+      await page
+        .getByText("進階：逐句檢查／手動校時（選用）", { exact: true })
+        .click();
+    }
     await expect(page.getByLabel("第 1 句開始秒數")).toHaveValue("1");
     await page.getByRole("button", { name: "套用並保存" }).click();
     await page.getByText(/已套用並保存在本機/).waitFor();
@@ -566,7 +587,9 @@ test("Brave: settings, mock search, alignment, manual import, overlay and SRT", 
     );
     await page.screenshot({ path: "artifacts/player.png", fullPage: true });
     expect(
-      requests.filter((x) => ["/v1/chat/completions", "/v1/responses"].includes(x.path)),
+      requests.filter((x) =>
+        ["/v1/chat/completions", "/v1/responses"].includes(x.path),
+      ),
     ).toHaveLength(3);
     // No secret is injected into the page or model messages.
     expect(await page.content()).not.toContain("test-only-token");
@@ -583,6 +606,7 @@ test("Brave: settings, mock search, alignment, manual import, overlay and SRT", 
       mimeType: "text/plain",
       buffer: Buffer.from(badImport),
     });
+    await expect(page.getByLabel("第 2 句開始秒數")).toHaveCount(0);
     await expect(page.getByLabel("第 1 句開始秒數")).toHaveValue("1");
     await page
       .getByRole("button", { name: "對齊／生成譯文", exact: true })
@@ -590,12 +614,17 @@ test("Brave: settings, mock search, alignment, manual import, overlay and SRT", 
     await page
       .getByRole("button", { name: "開始對齊／翻譯", exact: true })
       .click();
+    await page.getByText(/AI 對齊完成，已套用字幕並保存/).waitFor();
+    if ((await page.locator(".manual-timing").getAttribute("open")) === null)
+      await page.locator(".manual-timing summary").click();
     await expect(
       page.getByRole("textbox", { name: "譯文", exact: true }),
     ).toHaveValue("Translation 1");
     await expect(page.getByLabel("第 1 句結束秒數")).toHaveValue("2");
     expect(
-      requests.filter((x) => ["/v1/chat/completions", "/v1/responses"].includes(x.path)),
+      requests.filter((x) =>
+        ["/v1/chat/completions", "/v1/responses"].includes(x.path),
+      ),
     ).toHaveLength(4);
     const longLyrics = Array.from(
       { length: 60 },
@@ -739,6 +768,60 @@ test("Brave: settings, mock search, alignment, manual import, overlay and SRT", 
     await expect(panelReply).toBeVisible();
     expect(await panelReply.locator("pre").textContent()).toBe(mockTestReply);
     await expect(page.getByLabel("歌詞全文")).toHaveValue(longLyrics);
+    // Empty timedtext must recover through the native transcript, then align and
+    // inject pasted lyrics without touching any manual time input.
+    mockTestReply = null;
+    replyDelay = 0;
+    const fallback = await context.newPage();
+    await fallback.route("https://www.youtube.com/api/timedtext*", (route) =>
+      route.fulfill({ contentType: "application/json", body: "" }),
+    );
+    await fallback.route("https://www.youtube.com/watch*", async (route) => {
+      const body = (
+        await readFile("tests/fixtures/watch.html", "utf8")
+      ).replace(
+        "</body>",
+        `<button aria-label="顯示轉錄稿" onclick="document.querySelector('#native-transcript').setAttribute('visibility','ENGAGEMENT_PANEL_VISIBILITY_EXPANDED')">顯示轉錄稿</button><ytd-engagement-panel-section-list-renderer id="native-transcript" target-id="PAmodern_transcript_view" visibility="ENGAGEMENT_PANEL_VISIBILITY_HIDDEN"><transcript-segment-view-model><div class="ytwTranscriptSegmentViewModelTimestamp">0:01</div><span role="text">合成歌詞第一句</span></transcript-segment-view-model><transcript-segment-view-model><div class="ytwTranscriptSegmentViewModelTimestamp">0:04</div><span role="text">合成歌詞第二句</span></transcript-segment-view-model></ytd-engagement-panel-section-list-renderer></body>`,
+      );
+      await route.fulfill({ contentType: "text/html", body });
+    });
+    await fallback.goto("https://www.youtube.com/watch?v=12345678901");
+    await fallback
+      .getByRole("button", { name: "AI 歌詞", exact: true })
+      .click();
+    await fallback
+      .getByRole("button", { name: "貼上／匯入", exact: true })
+      .click();
+    await fallback.getByText(/已讀取 2 段YouTube 轉錄稿/).waitFor();
+    await fallback
+      .getByLabel("歌詞全文")
+      .fill("合成歌詞第一句\n合成歌詞第二句");
+    await fallback
+      .getByRole("button", { name: "使用貼上歌詞", exact: true })
+      .click();
+    await expect(fallback.locator(".manual-timing")).not.toHaveAttribute(
+      "open",
+      "",
+    );
+    await fallback
+      .getByRole("button", { name: "開始對齊／翻譯", exact: true })
+      .click();
+    await fallback.getByText(/AI 對齊完成，已套用字幕並保存/).waitFor();
+    await expect(fallback.getByLabel("第 1 句開始秒數")).toHaveValue("1");
+    await expect(fallback.getByLabel("第 2 句開始秒數")).toHaveValue("4");
+    await fallback.getByRole("button", { name: "← 返回歌詞" }).click();
+    await expect(fallback.locator(".lyric-line")).toHaveCount(2);
+    await fallback.locator("video").evaluate((video) => {
+      (video as HTMLVideoElement).currentTime = 1.5;
+      video.dispatchEvent(new Event("timeupdate"));
+    });
+    await expect(fallback.locator(".lyric-line[aria-current=true]")).toHaveText(
+      "合成歌詞第一句",
+    );
+    await fallback.screenshot({
+      path: "artifacts/transcript-ai-aligned.png",
+      fullPage: true,
+    });
     await writeFile(
       "artifacts/browser-verification.json",
       JSON.stringify(
@@ -746,8 +829,8 @@ test("Brave: settings, mock search, alignment, manual import, overlay and SRT", 
           browser: context.browser()?.version(),
           profile,
           apiRequests: requests.length,
-          chatRequests: requests.filter(
-            (x) => ["/v1/chat/completions", "/v1/responses"].includes(x.path),
+          chatRequests: requests.filter((x) =>
+            ["/v1/chat/completions", "/v1/responses"].includes(x.path),
           ).length,
           kind: "synthetic fixture and local mock AI; not real YouTube/API validation",
         },
