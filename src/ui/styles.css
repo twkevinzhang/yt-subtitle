@@ -423,6 +423,17 @@ summary {
 .options .row {
   margin-top: 12px;
 }
+.options .model-field {
+  margin: 20px 0;
+}
+.options .model-field > p {
+  margin-bottom: 4px;
+}
+.options .model-field select {
+  flex: 1;
+  min-width: 0;
+  width: auto;
+}
 .options .summary {
   max-width: 65ch;
 }

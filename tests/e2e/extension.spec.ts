@@ -60,7 +60,7 @@ test("Brave: settings, mock search, alignment, manual import, overlay and SRT", 
   const profile = await mkdtemp(path.join(os.tmpdir(), "ai-lyrics-e2e-"));
   let context;
   // Test-only localhost grant avoids an unautomatable native permission prompt in headless Brave.
-  const testExtension = path.resolve("artifacts/test-extension");
+  const testExtension = path.join(profile, "extension");
   await cp("dist", testExtension, { recursive: true });
   const manifest = JSON.parse(
     await readFile(path.join(testExtension, "manifest.json"), "utf8"),
@@ -335,7 +335,53 @@ test("Brave: settings, mock search, alignment, manual import, overlay and SRT", 
     await options
       .getByLabel("API Token", { exact: true })
       .fill("test-only-token");
-    await options.getByLabel("模型名稱", { exact: true }).fill("test-model");
+    await expect(options.getByLabel("模型名稱", { exact: true })).toHaveCount(
+      0,
+    );
+    const aiSection = options.getByRole("region", {
+      name: "AI 服務",
+      exact: true,
+    });
+    const credentialsBox = await options
+      .getByLabel("API Token", { exact: true })
+      .boundingBox();
+    const cfBox = await options
+      .getByText("Cloudflare Access（選填，ID 與 Secret 成對）", {
+        exact: true,
+      })
+      .boundingBox();
+    expect(cfBox!.y).toBeGreaterThanOrEqual(
+      credentialsBox!.y + credentialsBox!.height,
+    );
+    await options
+      .getByRole("button", { name: "儲存設定", exact: true })
+      .click();
+    await aiSection
+      .getByText("已儲存服務設定，請載入並選擇模型，再儲存以啟用 AI。")
+      .waitFor();
+    await welcome.bringToFront();
+    await expect(welcome.getByText(/^先在設定頁填入/)).toBeVisible();
+    await options.bringToFront();
+    failModels = true;
+    await options
+      .getByRole("button", { name: "載入模型", exact: true })
+      .click();
+    await expect(aiSection.getByRole("alert")).toContainText("503");
+    await expect(
+      options.getByRole("combobox", { name: "模型清單" }),
+    ).toHaveCount(0);
+    await options.screenshot({
+      path: "artifacts/options-model-error.png",
+      fullPage: true,
+    });
+    failModels = false;
+    await options
+      .getByRole("button", { name: "載入模型", exact: true })
+      .click();
+    await expect(aiSection.getByRole("alert")).toHaveCount(0);
+    await options
+      .getByRole("combobox", { name: "模型清單", exact: true })
+      .selectOption("test-model");
     await options
       .getByRole("button", { name: "儲存設定", exact: true })
       .click();
@@ -350,7 +396,9 @@ test("Brave: settings, mock search, alignment, manual import, overlay and SRT", 
       welcome.getByRole("textbox", { name: "原文", exact: true }),
     ).toHaveValue("未設定也可使用");
     await welcome.close();
-    await options.getByRole("button", { name: "測試連線／載入模型" }).click();
+    await options
+      .getByRole("button", { name: "載入模型", exact: true })
+      .click();
     await options
       .getByText("連線成功，取得 1 個模型。搜尋尚未驗證。")
       .waitFor();

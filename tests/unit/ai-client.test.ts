@@ -6,6 +6,21 @@ const p = {
   apiToken: "private-token",
   model: "m",
 };
+it("lists models before selection but never sends a completion with an empty model", async () => {
+  const fetcher = vi.fn().mockResolvedValue(
+    new Response(JSON.stringify({ data: [{ id: "available-model" }] }), {
+      headers: { "Content-Type": "application/json" },
+    }),
+  );
+  const client = createAiClient({ ...p, model: "" }, fetcher);
+  expect(await client.listModels(new AbortController().signal)).toEqual([
+    "available-model",
+  ]);
+  await expect(
+    client.completeJson([], new AbortController().signal),
+  ).rejects.toThrow("選擇模型");
+  expect(fetcher).toHaveBeenCalledTimes(1);
+});
 it("rejects login HTML without exposing response secrets", async () => {
   const fetcher = vi.fn().mockResolvedValue(
     new Response("<html>private-token</html>", {

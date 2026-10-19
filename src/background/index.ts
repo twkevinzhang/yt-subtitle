@@ -74,13 +74,17 @@ export async function handleMessage(
     case "models": {
       const s = await getSettings();
       if (!s.provider) throw new Error("請先儲存服務設定");
-      return createAiClient(s.provider).listModels(
-        new AbortController().signal,
-      );
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 8000);
+      try {
+        return await createAiClient(s.provider).listModels(controller.signal);
+      } finally {
+        clearTimeout(timeout);
+      }
     }
     case "connection-check": {
       const s = await getSettings();
-      if (!s.provider) return { reachable: false };
+      if (!s.provider?.model) return { reachable: false };
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 8000);
       try {
@@ -134,7 +138,7 @@ export async function handleMessage(
     case "search-test":
     case "search": {
       const s = await getSettings();
-      if (!s.provider) throw new Error("請先設定 AI 服務");
+      if (!s.provider?.model) throw new Error("請先載入、選擇模型並儲存設定");
       const video =
         m.type === "search"
           ? m.video
@@ -183,7 +187,7 @@ export async function handleMessage(
     }
     case "generate": {
       const s = await getSettings();
-      if (!s.provider) throw new Error("請先設定 AI 服務");
+      if (!s.provider?.model) throw new Error("請先載入、選擇模型並儲存設定");
       const input = m.input;
       if (input.video.videoId !== new URL(sender.url!).searchParams.get("v"))
         throw new Error("影片已切換");

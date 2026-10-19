@@ -39,7 +39,8 @@ export const providerSchema = z.object({
   schemaVersion: z.literal(1),
   baseUrl: z.string().url(),
   apiToken: z.string().trim().min(1),
-  model: z.string().trim().min(1),
+  // Credentials may be saved before fetching and selecting a model.
+  model: z.string().trim(),
   cfClientId: z.string().optional(),
   cfClientSecret: z.string().optional(),
 });

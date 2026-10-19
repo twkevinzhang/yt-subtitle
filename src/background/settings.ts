@@ -76,7 +76,7 @@ export function publicSettings(r: SettingsRecord): PublicSettings {
   return {
     baseUrl: r.provider?.baseUrl || "",
     model: r.provider?.model || "",
-    configured: !!r.provider,
+    configured: !!r.provider?.model,
     settingsRevision: r.revision,
     sources: r.sources,
     preferences: r.preferences,

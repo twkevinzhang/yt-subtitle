@@ -1,6 +1,11 @@
 import React, { useEffect, useState } from "react";
 import { request } from "../shared/messages";
-import type { SettingsRecord } from "../background/settings";
+import {
+  normalizeProvider,
+  normalizeSources,
+  type SettingsRecord,
+} from "../background/settings";
+import { preferencesSchema, providerSchema } from "../shared/schemas";
 import type {
   ProviderSettings,
   SourceSettings,
@@ -16,8 +21,19 @@ const emptyProvider: ProviderSettings = {
   apiToken: "",
   model: "",
 };
+type SectionId = "ai" | "sources" | "preferences" | "records";
+type Notice = { status?: string; error?: string };
+const serviceKey = (p: ProviderSettings | null) =>
+  p &&
+  JSON.stringify([
+    p.baseUrl,
+    p.apiToken,
+    p.cfClientId || "",
+    p.cfClientSecret || "",
+  ]);
 export function Options() {
   const [provider, setProvider] = useState(emptyProvider),
+    [savedProvider, setSavedProvider] = useState<ProviderSettings | null>(null),
     [sources, setSources] = useState<SourceSettings[]>([]),
     [preferences, setPreferences] = useState<Preferences>({
       mode: "original",
@@ -27,33 +43,66 @@ export function Options() {
     }),
     [models, setModels] = useState<string[]>([]),
     [records, setRecords] = useState<SavedResult[]>([]),
-    [status, setStatus] = useState("正在載入…"),
-    [error, setError] = useState(""),
-    [busy, setBusy] = useState(false);
-  const attempt = async (fn: () => Promise<void>) => {
-    setError("");
-    setBusy(true);
+    [feedback, setFeedback] = useState<Partial<Record<SectionId, Notice>>>({
+      ai: { status: "正在載入…" },
+    }),
+    [busy, setBusy] = useState<SectionId | null>(null);
+  const serviceChanged = serviceKey(provider) !== serviceKey(savedProvider);
+  const savedModelReady =
+    !serviceChanged &&
+    !!savedProvider?.model &&
+    savedProvider.model === provider.model;
+  const modelChoices = [
+    ...new Set([...models, ...(provider.model ? [provider.model] : [])]),
+  ];
+  const notify = (section: SectionId, notice: Notice) =>
+    setFeedback((previous) => ({ ...previous, [section]: notice }));
+  const sectionNotice = (section: SectionId) => (
+    <>
+      {feedback[section]?.error && (
+        <p className="notice error" role="alert">
+          {feedback[section]!.error}
+        </p>
+      )}
+      {(busy === section || feedback[section]?.status) && (
+        <p className="notice" role="status">
+          {busy === section ? "正在處理…" : feedback[section]?.status}
+        </p>
+      )}
+    </>
+  );
+  const attempt = async (section: SectionId, fn: () => Promise<void>) => {
+    notify(section, {});
+    setBusy(section);
     try {
       await fn();
     } catch (e) {
-      setError((e as Error).message);
+      notify(section, {
+        error: e instanceof Error ? e.message : "操作失敗，請重試。",
+      });
     } finally {
-      setBusy(false);
+      setBusy(null);
     }
   };
   const load = async () => {
     const record = await request<SettingsRecord>({ type: "settings-edit" });
     setProvider(record.provider || emptyProvider);
+    setSavedProvider(record.provider);
+    setModels([]);
     setSources(record.sources);
     setPreferences(record.preferences);
-    setRecords(await request<SavedResult[]>({ type: "results-list" }));
-    setStatus("設定保存在這台電腦，不跨裝置同步。");
+    try {
+      setRecords(await request<SavedResult[]>({ type: "results-list" }));
+    } catch {
+      notify("records", { error: "本機結果讀取失敗，請重新整理設定頁。" });
+    }
+    notify("ai", { status: "設定保存在這台電腦，不跨裝置同步。" });
   };
   useEffect(() => {
-    void attempt(load);
+    void attempt("ai", load);
   }, []);
   const field = (
-    key: keyof ProviderSettings,
+    key: "baseUrl" | "apiToken" | "cfClientId" | "cfClientSecret",
     label: string,
     password = false,
   ) => (
@@ -63,31 +112,116 @@ export function Options() {
         type={password ? "password" : "text"}
         autoComplete="off"
         spellCheck={false}
+        disabled={!!busy}
         value={String(provider[key] || "")}
-        onChange={(e) => setProvider({ ...provider, [key]: e.target.value })}
+        onChange={(e) => {
+          setProvider({ ...provider, [key]: e.target.value, model: "" });
+          setModels([]);
+          notify("ai", { status: "服務資料已變更，請先儲存，再載入模型。" });
+        }}
       />
     </label>
   );
   const updateSource = (id: string, patch: Partial<SourceSettings>) =>
     setSources(sources.map((s) => (s.id === id ? { ...s, ...patch } : s)));
-  const save = () =>
-    attempt(async () => {
-      const u = new URL(provider.baseUrl);
-      if (!(
-        u.protocol === "https:" ||
-        (u.protocol === "http:" &&
-          ["localhost", "127.0.0.1"].includes(u.hostname))
-      ))
-        throw new Error("請使用 HTTPS 服務網址");
-      const granted = await chrome.permissions.request({
-        origins: [u.origin + "/*"],
+  const save = (section: SectionId = "ai") => {
+    let normalized: ProviderSettings | undefined;
+    let normalizedSources: SourceSettings[] | undefined;
+    let valid = true;
+    setFeedback((previous) => ({
+      ...previous,
+      ai: {},
+      sources: {},
+      preferences: {},
+    }));
+    const parsed = providerSchema.safeParse(provider);
+    if (!parsed.success) {
+      notify("ai", {
+        error:
+          parsed.error.issues[0].path[0] === "apiToken"
+            ? "請填入 API Token。"
+            : "請填入有效的 AI 服務網址。",
       });
-      if (!granted) throw new Error("未授予 AI 服務連線權限");
-      await request({ type: "settings-save", provider, sources, preferences });
-      setStatus("已儲存設定。搜尋能力需另外測試。");
+      valid = false;
+    } else {
+      try {
+        normalized = normalizeProvider(parsed.data);
+      } catch (e) {
+        notify("ai", { error: (e as Error).message });
+        valid = false;
+      }
+    }
+    try {
+      normalizedSources = normalizeSources(sources);
+    } catch {
+      notify("sources", {
+        error:
+          "請檢查來源名稱與網域；來源請填網域，例如 example.com，不含網址路徑。",
+      });
+      valid = false;
+    }
+    if (!preferencesSchema.safeParse(preferences).success) {
+      notify("preferences", {
+        error: "請檢查字幕顯示欄位，字級必須介於 14–64 px。",
+      });
+      valid = false;
+    }
+    if (!valid || !normalized || !normalizedSources) return;
+    const nextProvider = normalized,
+      nextSources = normalizedSources;
+    void attempt(section, async () => {
+      const granted = await chrome.permissions.request({
+        origins: [new URL(nextProvider.baseUrl).origin + "/*"],
+      });
+      if (!granted) {
+        notify("ai", { error: "未授予 AI 服務連線權限。" });
+        return;
+      }
+      await request({
+        type: "settings-save",
+        provider: nextProvider,
+        sources: nextSources,
+        preferences,
+      });
+      setProvider(nextProvider);
+      setSavedProvider(nextProvider);
+      setSources(nextSources);
+      notify(section, {
+        status: nextProvider.model
+          ? "已儲存設定。搜尋能力需另外測試。"
+          : "已儲存服務設定，請載入並選擇模型，再儲存以啟用 AI。",
+      });
+    });
+  };
+  const loadModels = () =>
+    attempt("ai", async () => {
+      if (!savedProvider || serviceChanged)
+        throw new Error("請先儲存目前的服務設定，再載入模型。");
+      const list = await request<string[]>({ type: "models" });
+      const choices = [
+        ...new Set(
+          list
+            .filter((m) => typeof m === "string" && m.trim())
+            .map((m) => m.trim()),
+        ),
+      ];
+      setModels(choices);
+      if (!choices.length)
+        throw new Error(
+          "連線成功，但服務沒有提供可選擇的模型，請確認服務設定後重試。",
+        );
+      if (provider.model && !choices.includes(provider.model)) {
+        setProvider({ ...provider, model: "" });
+        notify("ai", {
+          status: "連線成功，原模型已不在清單中，請重新選擇並儲存。",
+        });
+      } else
+        notify("ai", {
+          status: `連線成功，取得 ${choices.length} 個模型。搜尋尚未驗證。`,
+        });
     });
   const testSearch = () =>
-    attempt(async () => {
+    attempt("ai", async () => {
       if (
         !window.confirm(
           "會使用已儲存的 AI 設定與來源，發送一次搜尋測試並消耗模型額度。繼續？",
@@ -107,9 +241,10 @@ export function Options() {
         while (Date.now() < deadline) {
           const r = await request<RunRecord>({ type: "run", runId: run.runId });
           if (r.state.phase === "complete") {
-            setStatus(
-              "服務已回覆。通用文字介面無法核實搜尋工具證據，搜尋能力仍標示尚未驗證。",
-            );
+            notify("ai", {
+              status:
+                "服務已回覆。通用文字介面無法核實搜尋工具證據，搜尋能力仍標示尚未驗證。",
+            });
             return;
           }
           if (["failed", "cancelled", "interrupted"].includes(r.state.phase))
@@ -130,31 +265,15 @@ export function Options() {
           播放器按 AI 開始。
         </p>
       </header>
-      <section>
+      <section aria-label="AI 服務">
         <h2>AI 服務</h2>
         <p>
           使用支援網頁搜尋的 OpenAI
-          相容服務。先儲存，再測試連線；僅能列出模型不代表支援搜尋。
+          相容服務。先儲存服務設定，再載入及選擇模型；僅能列出模型不代表支援搜尋。
         </p>
         <div className="grid">
           {field("baseUrl", "Base URL（通常包含 /v1）")}
           {field("apiToken", "API Token", true)}
-          {field("model", "模型名稱")}
-          <label>
-            <span>從已儲存服務載入的模型</span>
-            <select
-              aria-label="模型清單"
-              value=""
-              onChange={(e) =>
-                setProvider({ ...provider, model: e.target.value })
-              }
-            >
-              <option value="">選擇模型</option>
-              {models.map((m) => (
-                <option key={m}>{m}</option>
-              ))}
-            </select>
-          </label>
         </div>
         <details>
           <summary>Cloudflare Access（選填，ID 與 Secret 成對）</summary>
@@ -163,30 +282,51 @@ export function Options() {
             {field("cfClientSecret", "Cloudflare Client Secret", true)}
           </div>
         </details>
+        <div className="model-field">
+          <p id="model-label">從已儲存服務載入的模型</p>
+          <div className="row">
+            {modelChoices.length > 0 && (
+              <select
+                aria-label="模型清單"
+                aria-describedby="model-label"
+                disabled={!!busy}
+                value={provider.model}
+                onChange={(e) => {
+                  setProvider({ ...provider, model: e.target.value });
+                  notify("ai", { status: "模型選擇已變更，請儲存設定。" });
+                }}
+              >
+                <option value="">選擇模型</option>
+                {modelChoices.map((m) => (
+                  <option key={m} value={m}>
+                    {m}
+                  </option>
+                ))}
+              </select>
+            )}
+            <button
+              disabled={!!busy || !savedProvider || serviceChanged}
+              onClick={loadModels}
+            >
+              載入模型
+            </button>
+          </div>
+        </div>
         <div className="row">
-          <button disabled={busy} className="primary" onClick={save}>
+          <button
+            disabled={!!busy}
+            className="primary"
+            onClick={() => save("ai")}
+          >
             儲存設定
           </button>
-          <button
-            disabled={busy}
-            onClick={() =>
-              attempt(async () => {
-                const list = await request<string[]>({ type: "models" });
-                setModels(list);
-                setStatus(
-                  `連線成功，取得 ${list.length} 個模型。搜尋尚未驗證。`,
-                );
-              })
-            }
-          >
-            測試連線／載入模型
-          </button>
-          <button disabled={busy} onClick={testSearch}>
+          <button disabled={!!busy || !savedModelReady} onClick={testSearch}>
             測試搜尋（使用額度）
           </button>
         </div>
+        {sectionNotice("ai")}
       </section>
-      <section>
+      <section aria-label="歌詞來源">
         <h2>歌詞來源</h2>
         <p>
           AI
@@ -195,6 +335,7 @@ export function Options() {
         {sources.map((s) => (
           <div className="source" key={s.id}>
             <input
+              disabled={!!busy}
               aria-label={`啟用 ${s.name}`}
               type="checkbox"
               checked={s.enabled}
@@ -203,23 +344,27 @@ export function Options() {
               }
             />
             <input
+              disabled={!!busy}
               aria-label="來源名稱"
               value={s.name}
               onChange={(e) => updateSource(s.id, { name: e.target.value })}
             />
             <input
+              disabled={!!busy}
               aria-label="來源網域"
               placeholder="example.com"
               value={s.domain}
               onChange={(e) => updateSource(s.id, { domain: e.target.value })}
             />
             <button
+              disabled={!!busy}
               onClick={() => setSources(sources.filter((x) => x.id !== s.id))}
             >
               移除
             </button>
             <label>
               <input
+                disabled={!!busy}
                 type="checkbox"
                 checked={s.includeSubdomains}
                 onChange={(e) =>
@@ -231,6 +376,7 @@ export function Options() {
           </div>
         ))}
         <button
+          disabled={!!busy}
           onClick={() =>
             setSources([
               ...sources,
@@ -247,13 +393,15 @@ export function Options() {
         >
           新增來源
         </button>
+        {sectionNotice("sources")}
       </section>
-      <section>
+      <section aria-label="字幕顯示">
         <h2>字幕顯示</h2>
         <div className="grid">
           <label>
             <span>預設模式</span>
             <select
+              disabled={!!busy}
               value={preferences.mode}
               onChange={(e) =>
                 setPreferences({
@@ -270,6 +418,7 @@ export function Options() {
           <label>
             <span>翻譯目標</span>
             <select
+              disabled={!!busy}
               value={preferences.targetLanguage}
               onChange={(e) =>
                 setPreferences({
@@ -287,6 +436,7 @@ export function Options() {
           <label>
             <span>字級（14–64 px）</span>
             <input
+              disabled={!!busy}
               type="number"
               min="14"
               max="64"
@@ -302,6 +452,7 @@ export function Options() {
           <label>
             <span>位置</span>
             <select
+              disabled={!!busy}
               value={preferences.position}
               onChange={(e) =>
                 setPreferences({
@@ -315,11 +466,12 @@ export function Options() {
             </select>
           </label>
         </div>
-        <button disabled={busy} onClick={save}>
+        <button disabled={!!busy} onClick={() => save("preferences")}>
           儲存全部設定
         </button>
+        {sectionNotice("preferences")}
       </section>
-      <section>
+      <section aria-label="本機結果">
         <h2>本機結果</h2>
         <p>
           已保存 {records.length} 份。重新載入已保存版本不會呼叫
@@ -331,9 +483,9 @@ export function Options() {
               {r.key.videoId}／{r.lines.length} 句／{r.key.targetLanguage}
             </span>
             <button
-              disabled={busy}
+              disabled={!!busy}
               onClick={() =>
-                attempt(async () => {
+                attempt("records", async () => {
                   await request({ type: "results-delete", key: r.key });
                   await load();
                 })
@@ -345,9 +497,9 @@ export function Options() {
         ))}
         <div className="row">
           <button
-            disabled={busy}
+            disabled={!!busy}
             onClick={() =>
-              attempt(async () => {
+              attempt("records", async () => {
                 if (window.confirm("清除全部已保存歌詞？這個動作無法復原。")) {
                   await request({ type: "results-clear" });
                   await load();
@@ -358,9 +510,9 @@ export function Options() {
             清除全部結果
           </button>
           <button
-            disabled={busy}
+            disabled={!!busy}
             onClick={() =>
-              attempt(async () => {
+              attempt("records", async () => {
                 if (window.confirm("移除這台電腦保存的 AI 憑證？")) {
                   await request({ type: "clear-credentials" });
                   await load();
@@ -375,15 +527,8 @@ export function Options() {
           憑證保存在擴充功能本機儲存，不是加密保險箱；請使用可撤銷的獨立
           Token。第一版不處理音訊、不自動產生背景付費工作。
         </p>
+        {sectionNotice("records")}
       </section>
-      {error && (
-        <p className="notice error" role="alert">
-          {error}
-        </p>
-      )}
-      <p className="notice" role="status">
-        {busy ? "正在處理…" : status}
-      </p>
     </main>
   );
 }

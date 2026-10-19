@@ -10,9 +10,23 @@ const p = {
   apiToken: "secret",
   model: "m",
 };
-it("rejects blank token and model after trimming", () => {
+it("rejects blank token but accepts an unselected model for staged setup", () => {
   expect(() => normalizeProvider({ ...p, apiToken: "   " })).toThrow();
-  expect(() => normalizeProvider({ ...p, model: "   " })).toThrow();
+  const provider = normalizeProvider({ ...p, model: "   " });
+  expect(provider.model).toBe("");
+  expect(
+    publicSettings({
+      provider,
+      sources: [],
+      revision: 1,
+      preferences: {
+        mode: "original",
+        fontSize: 28,
+        position: "bottom",
+        targetLanguage: "zh-Hant",
+      },
+    }).configured,
+  ).toBe(false);
 });
 it("normalizes URL but rejects cleartext remote and partial CF", () => {
   expect(normalizeProvider(p).baseUrl).toBe("https://ai.test/v1");

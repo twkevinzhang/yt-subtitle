@@ -85,6 +85,8 @@ export function createAiClient(
       messages: ChatMessage[],
       signal: AbortSignal,
     ): Promise<CompletionEnvelope> {
+      if (!provider.model.trim())
+        throw new Error("請先載入、選擇模型並儲存設定");
       const data = await call("chat/completions", signal, {
         model: provider.model,
         messages,
