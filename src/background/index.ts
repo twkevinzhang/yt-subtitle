@@ -21,8 +21,13 @@ import {
 } from "./results";
 import { inspectVideo, readTrack, readTranscript } from "../youtube/context";
 import { searchMessages, parseSearchReply } from "../lyrics/search";
-import { alignmentMessages, validateAlignment } from "../lyrics/alignment";
-import { makeBatches } from "../lyrics/batches";
+import {
+  alignmentMessages,
+  validateAlignment,
+  enforceAlignmentOrder,
+  type AlignmentDecision,
+} from "../lyrics/alignment";
+import { makeBatches, prepareAlignmentRetry } from "../lyrics/batches";
 import type {
   ConsentReceipt,
   AlignedLine,
@@ -183,7 +188,8 @@ export async function handleMessage(
           const result = await tools.request(() =>
             client.searchText(messages, tools.signal),
           );
-          if (m.type === "search-test") return result satisfies SearchTestResult;
+          if (m.type === "search-test")
+            return result satisfies SearchTestResult;
           return parseSearchReply(result.text, s.sources, result.evidence);
         },
         "searching",
@@ -207,7 +213,8 @@ export async function handleMessage(
         },
         s.revision,
       );
-      const batches = makeBatches(input.lines, input.cues);
+      const retryLines = prepareAlignmentRetry(input.lines);
+      const batches = makeBatches(retryLines, input.cues);
       if (
         batches.length > 20 ||
         batches.some((b) => JSON.stringify(b).length > 120000)
@@ -220,42 +227,62 @@ export async function handleMessage(
         s.revision,
         async (tools) => {
           let completed: AlignedLine[] = [];
-          let lastStart = -1;
+          const decisions: AlignmentDecision[] = [];
+          let batchIndex = 0;
           for (const batch of batches) {
-            const response = await tools.request(() =>
-              client.completeJson(
+            const raw = await tools.request(() =>
+              client.completeText(
                 alignmentMessages(batch, input.targetLanguage, input.translate),
                 tools.signal,
               ),
             );
-            const lines = validateAlignment(
-              response.payload,
-              batch.lines,
-              batch.cues,
-              input.video.durationMs,
+            await tools.trace(
+              `第 ${++batchIndex} 批 AI 原始回覆：\n${raw.slice(0, 16000)}${raw.length > 16000 ? "\n［本批原文已截斷］" : ""}`,
             );
-            for (const line of lines) {
-              if (
-                line.startMs !== undefined &&
-                line.startMs < lastStart &&
-                line.status !== "manual"
-              ) {
-                line.startMs = undefined;
-                line.endMs = undefined;
-                line.status = "unaligned";
-                line.cueIds = [];
-              }
-              if (line.startMs !== undefined) lastStart = line.startMs;
+            let payload: unknown;
+            try {
+              payload = JSON.parse(
+                raw
+                  .replace(/^\s*```(?:json)?\s*/, "")
+                  .replace(/\s*```\s*$/, ""),
+              );
+            } catch {
+              throw new Error("AI 校時回覆不是有效 JSON；原文已保留於診斷");
+            }
+            let lines: AlignedLine[];
+            try {
+              lines = validateAlignment(
+                payload,
+                batch.lines,
+                batch.cues,
+                input.video.durationMs,
+                decisions,
+                false,
+              );
+            } catch (error) {
+              await tools.trace(
+                `本批校驗失敗：${error instanceof Error ? error.message : "格式錯誤"}`,
+                true,
+              );
+              throw error;
             }
             if (input.translate && lines.some((l) => !l.translation?.trim()))
               throw new Error("部分譯文缺漏，已保留完成段落");
             completed = [...completed, ...lines];
             await tools.progress(
               lines.map((l) => l.id),
-              completed,
+              enforceAlignmentOrder(completed),
             );
           }
-          return completed;
+          const ordered = enforceAlignmentOrder(completed, decisions);
+          const accepted = ordered.filter(
+            (line) => !line.excluded && line.startMs !== undefined,
+          ).length;
+          await tools.trace(
+            `全曲校驗：保留 ${accepted} 句；未對齊 ${ordered.filter((line) => !line.excluded && line.startMs === undefined).length} 句。\n逐句判定：\n${JSON.stringify(decisions, null, 2)}`,
+            true,
+          );
+          return ordered;
         },
       );
     }

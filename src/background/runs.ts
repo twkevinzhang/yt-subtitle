@@ -3,11 +3,13 @@ export interface RunRecord {
   state: RunState;
   output?: unknown;
   partial?: unknown;
+  alignmentReport?: string;
 }
 export interface RunTools {
   signal: AbortSignal;
   request<T>(fn: () => Promise<T>): Promise<T>;
   progress(ids: string[], partial?: unknown): Promise<void>;
+  trace(text: string, verdict?: boolean): Promise<void>;
 }
 export class RunManager {
   private records = new Map<string, RunRecord>();
@@ -41,6 +43,9 @@ export class RunManager {
       completedLineIds: [],
     };
     const record: RunRecord = { state };
+    let rawTrace = "",
+      finalTrace = "",
+      rawTruncated = false;
     this.records.set(runId, record);
     this.controllers.set(runId, controller);
     for (const [id, r] of this.records)
@@ -56,6 +61,24 @@ export class RunManager {
         await this.persist(record);
         const output = await job({
           signal: controller.signal,
+          trace: async (text, verdict = false) => {
+            check();
+            if (verdict)
+              finalTrace =
+                text.slice(0, 20000) +
+                (text.length > 20000 ? "\n［判定達上限，後續已截斷］" : "");
+            else {
+              const joined = rawTrace + text + "\n";
+              rawTruncated ||= joined.length > 18000;
+              rawTrace = joined.slice(-18000);
+            }
+            record.alignmentReport =
+              (rawTruncated ? "［較早的原始回覆已截斷，保留最新批次］\n" : "") +
+              rawTrace +
+              "\n" +
+              finalTrace;
+            await this.persist(record);
+          },
           request: async (fn) => {
             check();
             if (state.requestCount >= 20) throw new Error("已達 20 次請求上限");

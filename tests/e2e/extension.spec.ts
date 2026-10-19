@@ -807,6 +807,15 @@ test("Brave: settings, mock search, alignment, manual import, overlay and SRT", 
       .getByRole("button", { name: "開始對齊／翻譯", exact: true })
       .click();
     await fallback.getByText(/AI 對齊完成，已套用字幕並保存/).waitFor();
+    await fallback
+      .getByText("AI 校時診斷（原始回覆與判定）", { exact: true })
+      .click();
+    await expect(fallback.locator(".alignment-diagnostics pre")).toContainText(
+      "第 1 批 AI 原始回覆",
+    );
+    await expect(fallback.locator(".alignment-diagnostics pre")).toContainText(
+      "逐句判定",
+    );
     await expect(fallback.getByLabel("第 1 句開始秒數")).toHaveValue("1");
     await expect(fallback.getByLabel("第 2 句開始秒數")).toHaveValue("4");
     await fallback.getByRole("button", { name: "← 返回歌詞" }).click();

@@ -61,6 +61,7 @@ export function Panel({
     }
   }, [view]);
   const [metadataLoading, setMetadataLoading] = useState(true);
+  const [alignmentReport, setAlignmentReport] = useState("");
   const [captionsLoading, setCaptionsLoading] = useState(false);
   const [message, setMessage] = useState("正在檢查播放器…"),
     [error, setError] = useState(""),
@@ -230,8 +231,9 @@ export function Panel({
           throw new Error("已離開影片，工作已取消");
         }
         if (!record) throw new Error("工作已中斷，請重新開始");
+        if (record.alignmentReport) setAlignmentReport(record.alignmentReport);
         setProgress(
-          `已完成 ${record.state.completedLineIds.length} 句；已送出 ${record.state.requestCount}/20 次請求`,
+          `已處理 ${record.state.completedLineIds.length} 句（不代表全部對齊）；已送出 ${record.state.requestCount}/20 次請求`,
         );
         if (record.state.phase === "complete") return record.output;
         if (
@@ -316,6 +318,7 @@ export function Panel({
   const startGenerate = () =>
     attempt(async () => {
       if (!settings || !generatePayload) return;
+      setAlignmentReport("");
       setConfirm(null);
       const receipt = {
         purpose: "generate" as const,
@@ -576,6 +579,12 @@ export function Panel({
             </p>
           )}
           {searchReply !== null && <AiReply text={searchReply} />}
+          {alignmentReport && (
+            <details className="section alignment-diagnostics">
+              <summary>AI 校時診斷（原始回覆與判定）</summary>
+              <pre tabIndex={0}>{alignmentReport}</pre>
+            </details>
+          )}
           {!settings?.configured && lines.length > 0 && (
             <p className="notice">
               先在設定頁填入你自己的 AI 服務，解鎖搜尋、對齊與翻譯。
