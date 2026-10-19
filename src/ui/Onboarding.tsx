@@ -20,8 +20,10 @@ export function Onboarding({
   const [settingsError, setSettingsError] = useState("");
   const [retry, setRetry] = useState(0);
   useEffect(() => {
+    button.setAttribute("aria-expanded", String(visible));
+  }, [button, visible]);
+  useEffect(() => {
     let live = true,
-      first = true,
       refreshing = false;
     const checked = new Set<number>();
     const refresh = async () => {
@@ -32,13 +34,6 @@ export function Onboarding({
         if (!live) return;
         setSettings(s);
         setSettingsError("");
-        if (first) {
-          first = false;
-          if (!s.configured) {
-            setVisible(true);
-            setOpened(true);
-          }
-        }
         if (s.configured && !checked.has(s.settingsRevision)) {
           checked.add(s.settingsRevision);
           // Availability only: never generate text, retry automatically, or block local work.

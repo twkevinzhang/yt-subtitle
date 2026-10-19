@@ -35,7 +35,8 @@ it("uses a full-size loading shell when opened before settings arrive", async ()
   expect(container.querySelector(".panel .workspace")).toBeTruthy();
   expect(container.querySelectorAll(".skeleton-column")).toHaveLength(1);
 });
-it("auto opens the same local workspace before and after configuration even when offline", async () => {
+it("opens only after a click even when unconfigured or offline", async () => {
+  requestMock.mockClear();
   let configured = false;
   requestMock.mockImplementation(async (m: any) => {
     if (m.type === "settings-public")
@@ -50,12 +51,24 @@ it("auto opens the same local workspace before and after configuration even when
       overlay={{ stop: vi.fn() } as any}
     />,
   );
+  await waitFor(() =>
+    expect(requestMock).toHaveBeenCalledWith({ type: "settings-public" }),
+  );
+  expect(screen.queryByText("字幕工作面板")).toBeNull();
+  fireEvent.click(button);
   await screen.findByText("字幕工作面板");
   fireEvent.click(screen.getByRole("button", { name: "關閉" }));
   expect(
     screen.getByText("字幕工作面板").closest(".panel")?.parentElement?.style
       .display,
   ).toBe("none");
+  fireEvent.focus(window);
+  await waitFor(() =>
+    expect(
+      requestMock.mock.calls.filter(([m]) => m.type === "settings-public"),
+    ).toHaveLength(2),
+  );
+  expect(button.getAttribute("aria-expanded")).toBe("false");
   fireEvent.click(button);
   configured = true;
   fireEvent.focus(window);

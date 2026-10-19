@@ -5,6 +5,7 @@ import { createOverlay } from "./overlay";
 import { Onboarding } from "../ui/Onboarding";
 import { followYouTubeTheme } from "./theme";
 import { mountWatchPanel } from "./placement";
+import { createControlButton } from "./control-button";
 import css from "../ui/styles.css?inline";
 let cleanup = () => {};
 bindPlayer((binding) => {
@@ -13,14 +14,7 @@ bindPlayer((binding) => {
   if (!binding) return;
   const controls = binding.container.querySelector(".ytp-right-controls");
   if (!controls) return;
-  const button = document.createElement("button");
-  button.className = "ytp-button";
-  button.textContent = "AI";
-  button.title = "AI 歌詞";
-  button.setAttribute("aria-label", "AI 歌詞");
-  button.style.cssText = "font:bold 15px Arial;vertical-align:top";
-  button.dataset.aiLyricsButton = "";
-  controls.prepend(button);
+  const button = createControlButton(controls);
   const host = document.createElement("div");
   host.dataset.aiLyricsPanel = "";
   host.style.cssText = "display:block;width:100%;position:relative;z-index:1";

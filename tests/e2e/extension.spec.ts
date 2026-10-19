@@ -123,6 +123,10 @@ test("Brave: settings, mock search, alignment, manual import, overlay and SRT", 
           'id="secondary-inner"',
           'id="pending-secondary-inner"',
         );
+        body = body.replace(
+          "<button>CC</button><button>⚙</button>",
+          '<div class="ytp-right-controls-left" style="display:flex;align-items:center"><button class="ytp-button ytp-subtitles-button">CC</button></div><div class="ytp-right-controls-right"><button class="ytp-button">⚙</button></div>',
+        );
       }
       await route.fulfill({
         contentType: "text/html",
@@ -131,6 +135,25 @@ test("Brave: settings, mock search, alignment, manual import, overlay and SRT", 
     });
     const welcome = await context.newPage();
     await welcome.goto("https://www.youtube.com/watch?v=12345678901");
+    const aiButton = welcome.getByRole("button", {
+      name: "AI 歌詞",
+      exact: true,
+    });
+    await expect(aiButton).toHaveAttribute("aria-expanded", "false");
+    await expect(welcome.locator(".panel")).toHaveCount(0);
+    await expect(
+      welcome.locator(".ytp-right-controls-left > [data-ai-lyrics-button]"),
+    ).toHaveCount(1);
+    const aiBox = await aiButton.boundingBox();
+    const nativeBox = await welcome
+      .locator(".ytp-subtitles-button")
+      .boundingBox();
+    expect(Math.abs(aiBox!.height - nativeBox!.height)).toBeLessThanOrEqual(1);
+    expect(Math.abs(aiBox!.y - nativeBox!.y)).toBeLessThanOrEqual(1);
+    const iconBox = await aiButton.locator("svg").boundingBox();
+    expect(
+      Math.abs(iconBox!.x + iconBox!.width / 2 - aiBox!.x - aiBox!.width / 2),
+    ).toBeLessThanOrEqual(1);
     await welcome.getByRole("button", { name: "AI 歌詞", exact: true }).click();
     expect(await welcome.locator("[data-ai-lyrics-panel]").count()).toBe(0);
     await welcome.evaluate(() => {
@@ -310,6 +333,7 @@ test("Brave: settings, mock search, alignment, manual import, overlay and SRT", 
       .getByRole("button", { name: "關閉面板", exact: true })
       .click();
     await expect(welcomePanel).toBeHidden();
+    await expect(aiButton).toHaveAttribute("aria-expanded", "false");
     await welcome.getByRole("button", { name: "AI 歌詞", exact: true }).click();
     await expect(welcomePanel).toBeVisible();
     const options = await context.newPage();
