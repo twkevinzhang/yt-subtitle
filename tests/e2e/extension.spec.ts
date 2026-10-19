@@ -27,7 +27,11 @@ test("Brave: settings, mock search, alignment, manual import, overlay and SRT", 
               language: "ja",
               sourceId: "lrclib",
               url: "https://lrclib.net/test-song",
-              fullText: "合成歌詞第一句\n合成歌詞第二句",
+              fullText:
+                requests.filter((r) => r.path === "/v1/chat/completions")
+                  .length > 2
+                  ? null
+                  : "合成歌詞第一句\n合成歌詞第二句",
               syncedLyrics: null,
               matchReason: "測試用來源匹配",
             },
@@ -155,6 +159,13 @@ test("Brave: settings, mock search, alignment, manual import, overlay and SRT", 
     expect(
       requests.filter((x) => x.path === "/v1/chat/completions"),
     ).toHaveLength(0);
+    await page
+      .getByRole("button", { name: "開始搜尋", exact: true })
+      .evaluate((el) => (el as HTMLElement).click());
+    await page.waitForTimeout(150);
+    expect(
+      requests.filter((x) => x.path === "/v1/chat/completions"),
+    ).toHaveLength(0);
     await page.getByRole("button", { name: "開始搜尋", exact: true }).click();
     await page.getByRole("button", { name: "使用這個版本" }).click();
     await page.getByRole("checkbox", { name: /生成譯文/ }).check();
@@ -164,6 +175,13 @@ test("Brave: settings, mock search, alignment, manual import, overlay and SRT", 
     await page
       .getByRole("button", { name: "開始對齊／翻譯", exact: true })
       .click();
+    await expect(page.getByLabel("第 1 句開始秒數")).toHaveValue("1");
+    // A newly chosen candidate without text must clear the previous draft; recovery is explicit.
+    await page.getByRole("button", { name: "搜尋歌詞", exact: true }).click();
+    await page.getByRole("button", { name: "開始搜尋", exact: true }).click();
+    await page.getByRole("button", { name: "使用這個版本" }).click();
+    await expect(page.getByLabel("第 1 句開始秒數")).toHaveCount(0);
+    await page.getByRole("button", { name: "返回上一份草稿" }).click();
     await expect(page.getByLabel("第 1 句開始秒數")).toHaveValue("1");
     await page.getByRole("button", { name: "套用並保存" }).click();
     await page.getByText(/已套用並保存在本機/).waitFor();
@@ -177,7 +195,7 @@ test("Brave: settings, mock search, alignment, manual import, overlay and SRT", 
     await page.screenshot({ path: "artifacts/player.png", fullPage: true });
     expect(
       requests.filter((x) => x.path === "/v1/chat/completions"),
-    ).toHaveLength(2);
+    ).toHaveLength(3);
     // No secret is injected into the page or model messages.
     expect(await page.content()).not.toContain("test-only-token");
     for (const r of requests.filter((x) => x.body))
@@ -192,6 +210,19 @@ test("Brave: settings, mock search, alignment, manual import, overlay and SRT", 
       buffer: Buffer.from(badImport),
     });
     await expect(page.getByLabel("第 1 句開始秒數")).toHaveValue("1");
+    await page
+      .getByRole("button", { name: "對齊／生成譯文", exact: true })
+      .click();
+    await page
+      .getByRole("button", { name: "開始對齊／翻譯", exact: true })
+      .click();
+    await expect(
+      page.getByRole("textbox", { name: "譯文", exact: true }),
+    ).toHaveValue("Translation 1");
+    await expect(page.getByLabel("第 1 句結束秒數")).toHaveValue("2");
+    expect(
+      requests.filter((x) => x.path === "/v1/chat/completions"),
+    ).toHaveLength(4);
     await writeFile(
       "artifacts/browser-verification.json",
       JSON.stringify(
@@ -199,7 +230,9 @@ test("Brave: settings, mock search, alignment, manual import, overlay and SRT", 
           browser: context.browser()?.version(),
           profile,
           apiRequests: requests.length,
-          chatRequests: 2,
+          chatRequests: requests.filter(
+            (x) => x.path === "/v1/chat/completions",
+          ).length,
           kind: "synthetic fixture and local mock AI; not real YouTube/API validation",
         },
         null,

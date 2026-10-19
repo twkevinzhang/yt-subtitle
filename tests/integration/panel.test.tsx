@@ -13,6 +13,95 @@ import { Panel } from "../../src/ui/Panel";
 const { mockRequest } = vi.hoisted(() => ({ mockRequest: vi.fn() }));
 vi.mock("../../src/shared/messages", () => ({ request: mockRequest }));
 afterEach(cleanup);
+it("resaving a loaded result retains its real source, translation language and model", async () => {
+  mockRequest.mockClear();
+  const saved = {
+    schemaVersion: 1,
+    key: {
+      schemaVersion: 1,
+      videoId: "12345678901",
+      inputHash: "saved",
+      targetLanguage: "en",
+    },
+    source: { kind: "network", url: "https://lrclib.net/old" },
+    model: "old-model",
+    videoDurationMs: 10000,
+    lines: [
+      {
+        id: "l0",
+        original: "old original",
+        translation: "old English",
+        startMs: 1000,
+        endMs: 2000,
+        cueIds: [],
+        status: "manual",
+        excluded: false,
+      },
+    ],
+    offsetMs: 0,
+    createdAt: 1,
+    updatedAt: 1,
+  };
+  mockRequest.mockImplementation(async (m: any) =>
+    m.type === "settings-public"
+      ? {
+          configured: true,
+          baseUrl: "https://test/v1",
+          model: "new-model",
+          settingsRevision: 1,
+          sources: [],
+          preferences: {
+            mode: "original",
+            targetLanguage: "ja",
+            fontSize: 28,
+            position: "bottom",
+          },
+        }
+      : m.type === "results-list"
+        ? [saved]
+        : m.type === "results-save"
+          ? undefined
+          : {
+              video: {
+                schemaVersion: 1,
+                videoId: "12345678901",
+                title: "test",
+                channel: "",
+                description: "",
+                durationMs: 10000,
+              },
+              tracks: [],
+            },
+  );
+  render(
+    <Panel
+      binding={{
+        video: document.createElement("video"),
+        container: document.createElement("div"),
+        videoId: "12345678901",
+        isAd: () => false,
+      }}
+      overlay={{ setResult: vi.fn(), stop: vi.fn(), destroy: vi.fn() }}
+      onClose={() => {}}
+    />,
+  );
+  fireEvent.click(await screen.findByRole("button", { name: /^載入$/ }));
+  await screen.findByText("已載入本機結果，不會呼叫 AI");
+  fireEvent.click(screen.getByRole("button", { name: "套用並保存" }));
+  await waitFor(() =>
+    expect(
+      mockRequest.mock.calls.some(([m]) => m.type === "results-save"),
+    ).toBe(true),
+  );
+  const payload = mockRequest.mock.calls.find(
+    ([m]) => m.type === "results-save",
+  )![0].result;
+  expect(payload).toMatchObject({
+    key: { targetLanguage: "en" },
+    source: { kind: "network", url: "https://lrclib.net/old" },
+    model: "old-model",
+  });
+});
 it("refreshes settings when returning from the options tab", async () => {
   let configured = false;
   mockRequest.mockImplementation(async (m: any) =>
@@ -61,7 +150,7 @@ it("refreshes settings when returning from the options tab", async () => {
   fireEvent.focus(window);
   await waitFor(() => expect(screen.queryByText(/先在設定頁填入/)).toBeNull());
 });
-it("does not send until explicit confirmation", () => {
+it("rejects synthetic page clicks on paid consent", () => {
   const go = vi.fn();
   render(
     <Consent
@@ -74,7 +163,7 @@ it("does not send until explicit confirmation", () => {
   );
   expect(go).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole("button", { name: "開始搜尋" }));
-  expect(go).toHaveBeenCalledTimes(1);
+  expect(go).not.toHaveBeenCalled();
 });
 it("manual timing uses current video position", () => {
   const change = vi.fn();

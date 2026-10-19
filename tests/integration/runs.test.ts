@@ -30,3 +30,14 @@ it("caps request count at twenty", async () => {
   );
   expect(calls).toBe(20);
 });
+it("handles persist failure without running paid work or unhandled rejection", async () => {
+  const m = new RunManager(async () => {
+    throw new Error("quota");
+  });
+  const job = vi.fn();
+  const state = m.start(1, "12345678901", 1, job);
+  await vi.waitFor(() =>
+    expect(m.get(state.runId)?.state.phase).toBe("failed"),
+  );
+  expect(job).not.toHaveBeenCalled();
+});

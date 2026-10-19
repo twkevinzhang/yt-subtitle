@@ -45,3 +45,7 @@ it("hash changes when target text changes", async () =>
   expect(await hashInput({ a: "one" })).not.toBe(
     await hashInput({ a: "two" }),
   ));
+it("hash is independent of object property ordering at validation boundaries", async () =>
+  expect(await hashInput({ b: 2, a: 1 })).toBe(
+    await hashInput({ a: 1, b: 2 }),
+  ));

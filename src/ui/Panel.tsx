@@ -20,6 +20,12 @@ import { Candidates } from "./Candidates";
 import { Editor } from "./Editor";
 import type { createOverlay } from "../content/overlay";
 import type { RunRecord } from "../background/runs";
+import {
+  candidateDraft,
+  provenanceOf,
+  type DraftProvenance,
+} from "../lyrics/draft";
+import { startOwnedRun } from "./owned-run";
 export function Panel({
   binding,
   overlay,
@@ -51,6 +57,15 @@ export function Panel({
     activeRun = useRef<string | undefined>(undefined),
     originalHash = useRef("");
   const userProvided = useRef(true);
+  const provenance = useRef<DraftProvenance | undefined>(undefined);
+  const [previousDraft, setPreviousDraft] = useState<{
+    lines: AlignedLine[];
+    offset: number;
+    text: string;
+    selected: LyricCandidate | undefined;
+    provenance: DraftProvenance | undefined;
+    hash: string;
+  }>();
   useEffect(() => {
     const refresh = () => {
       void request<PublicSettings>({ type: "settings-public" })
@@ -146,6 +161,10 @@ export function Panel({
     }
   };
   const poll = async (state: RunState): Promise<unknown> => {
+    if (!live.current) {
+      await request({ type: "cancel", runId: state.runId });
+      throw new Error("已離開影片，工作已取消");
+    }
     activeRun.current = state.runId;
     setBusy(true);
     try {
@@ -154,6 +173,10 @@ export function Panel({
           type: "run",
           runId: state.runId,
         });
+        if (!live.current) {
+          await request({ type: "cancel", runId: state.runId });
+          throw new Error("已離開影片，工作已取消");
+        }
         if (!record) throw new Error("工作已中斷，請重新開始");
         setProgress(
           `已完成 ${record.state.completedLineIds.length} 句；已送出 ${record.state.requestCount}/20 次請求`,
@@ -165,8 +188,20 @@ export function Panel({
           if (Array.isArray(record.partial)) {
             const partial = record.partial as AlignedLine[];
             setLines((previous) =>
-              previous.map((l) => partial.find((p) => p.id === l.id) ?? l),
+              previous.map(
+                (l) =>
+                  partial.find((p) => p.id === l.id) ?? {
+                    ...l,
+                    translation: translate ? undefined : l.translation,
+                  },
+              ),
             );
+            if (settings)
+              provenance.current = {
+                source: provenance.current?.source || { kind: "user" },
+                targetLanguage: settings.preferences.targetLanguage,
+                model: settings.model,
+              };
           }
           throw new Error(record.state.errorCode || "工作已取消");
         }
@@ -205,11 +240,18 @@ export function Panel({
         settingsRevision: settings.settingsRevision,
         confirmedAt: Date.now(),
       };
-      const state = await request<RunState>({
-        type: "search",
-        video: searchPayload.video,
-        consent: receipt,
-      });
+      const state = await startOwnedRun(
+        () =>
+          request<RunState>({
+            type: "search",
+            video: searchPayload.video,
+            consent: receipt,
+          }),
+        () => live.current,
+        async (id) => {
+          await request({ type: "cancel", runId: id });
+        },
+      );
       const result = await poll(state);
       if (live.current) setCandidates(result as LyricCandidate[]);
     });
@@ -223,37 +265,61 @@ export function Panel({
         settingsRevision: settings.settingsRevision,
         confirmedAt: Date.now(),
       };
-      const state = await request<RunState>({
-        type: "generate",
-        input: { ...generatePayload, consent: receipt },
-      });
+      const state = await startOwnedRun(
+        () =>
+          request<RunState>({
+            type: "generate",
+            input: { ...generatePayload, consent: receipt },
+          }),
+        () => live.current,
+        async (id) => {
+          await request({ type: "cancel", runId: id });
+        },
+      );
       const result = await poll(state);
-      if (live.current) setLines(result as AlignedLine[]);
+      if (live.current) {
+        setLines(result as AlignedLine[]);
+        provenance.current = {
+          source: provenance.current?.source || { kind: "user" },
+          targetLanguage: translate
+            ? generatePayload.targetLanguage
+            : provenance.current?.targetLanguage ||
+              generatePayload.targetLanguage,
+          model: settings.model,
+        };
+      }
     });
   const useCandidate = (c: LyricCandidate) => {
+    if (lines.length)
+      setPreviousDraft({
+        lines,
+        offset,
+        text,
+        selected,
+        provenance: provenance.current,
+        hash: originalHash.current,
+      });
     userProvided.current = !c.fullText && !c.syncedLyrics;
     setSelected(c);
     setText(c.fullText || "");
-    if (c.syncedLyrics && video) {
+    setLines([]);
+    setOffset(0);
+    originalHash.current = "";
+    provenance.current = {
+      source: {
+        kind: userProvided.current ? "user" : "network",
+        url: c.url,
+        version: c.version,
+      },
+      targetLanguage: settings?.preferences.targetLanguage || "zh-Hant",
+      model: settings?.model || "",
+    };
+    if (video)
       void attempt(async () => {
-        setLines(
-          parseLyrics(
-            new TextEncoder().encode(c.syncedLyrics!),
-            "lrc",
-            video.durationMs,
-          ),
-        );
-        originalHash.current = await hashInput(c.syncedLyrics);
+        const draft = candidateDraft(c, video.durationMs);
+        setLines(draft.lines);
+        originalHash.current = await hashInput(draft.raw);
       });
-    } else if (c.fullText && video) {
-      setLines(
-        parseLyrics(
-          new TextEncoder().encode(c.fullText),
-          "txt",
-          video.durationMs,
-        ),
-      );
-    }
     setCandidates(null);
   };
   const result = async (): Promise<SavedResult> => {
@@ -264,6 +330,11 @@ export function Panel({
     if (errors.length)
       throw new Error(`有 ${errors.length} 句未完成校時，請修正或排除`);
     if (!lines.some((l) => !l.excluded)) throw new Error("請至少保留一句歌詞");
+    const actual = provenance.current || {
+      source: { kind: "user" as const },
+      targetLanguage: settings.preferences.targetLanguage,
+      model: "",
+    };
     return {
       schemaVersion: 1,
       key: {
@@ -271,23 +342,17 @@ export function Panel({
         videoId: video.videoId,
         inputHash: await hashInput({
           lines,
-          targetLanguage: settings.preferences.targetLanguage,
-          source: selected?.url,
-          originalHash: originalHash.current,
+          targetLanguage: actual.targetLanguage,
+          source: actual.source,
+          model: actual.model,
         }),
-        targetLanguage: settings.preferences.targetLanguage,
+        targetLanguage: actual.targetLanguage,
       },
       videoDurationMs: video.durationMs,
-      source: selected
-        ? {
-            kind: userProvided.current ? "user" : "network",
-            url: selected.url,
-            version: selected.version,
-          }
-        : { kind: "user" },
+      source: actual.source,
       lines,
       offsetMs: offset,
-      model: settings.model,
+      model: actual.model,
       createdAt: Date.now(),
       updatedAt: Date.now(),
     };
@@ -392,6 +457,8 @@ export function Panel({
                         setLines(r.lines);
                         setOffset(r.offsetMs);
                         setSelected(undefined);
+                        provenance.current = provenanceOf(r);
+                        originalHash.current = r.key.inputHash;
                         setMessage("已載入本機結果，不會呼叫 AI");
                       }}
                     >
@@ -403,6 +470,21 @@ export function Panel({
             )}
             <section className="section">
               <h3>尋找歌詞</h3>
+              {previousDraft && (
+                <button
+                  onClick={() => {
+                    setLines(previousDraft.lines);
+                    setOffset(previousDraft.offset);
+                    setText(previousDraft.text);
+                    setSelected(previousDraft.selected);
+                    provenance.current = previousDraft.provenance;
+                    originalHash.current = previousDraft.hash;
+                    setPreviousDraft(undefined);
+                  }}
+                >
+                  返回上一份草稿
+                </button>
+              )}
               <p>由你的 AI 服務搜尋勾選來源，選好版本後再對齊。</p>
               <button
                 className="primary"
@@ -466,6 +548,18 @@ export function Panel({
                         ),
                       );
                       userProvided.current = true;
+                      provenance.current = {
+                        source: selected
+                          ? {
+                              kind: "user",
+                              url: selected.url,
+                              version: selected.version,
+                            }
+                          : { kind: "user" },
+                        targetLanguage:
+                          settings?.preferences.targetLanguage || "zh-Hant",
+                        model: "",
+                      };
                       originalHash.current = await hashInput(text);
                       setConfirm(null);
                     })
@@ -501,6 +595,12 @@ export function Panel({
                             ),
                           );
                           setSelected(undefined);
+                          provenance.current = {
+                            source: { kind: "user" },
+                            targetLanguage:
+                              settings?.preferences.targetLanguage || "zh-Hant",
+                            model: "",
+                          };
                           originalHash.current = await hashInput([...bytes]);
                           setConfirm(null);
                         });

@@ -24,7 +24,12 @@ export function Consent({
         <pre>{JSON.stringify(payload, null, 2)}</pre>
       </details>
       <div className="row">
-        <button className="primary" onClick={onConfirm}>
+        <button
+          className="primary"
+          onClick={(event) => {
+            if (event.nativeEvent.isTrusted) onConfirm();
+          }}
+        >
           {title}
         </button>
         <button onClick={onCancel}>返回</button>

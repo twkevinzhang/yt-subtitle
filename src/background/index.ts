@@ -9,6 +9,7 @@ import {
 } from "./settings";
 import { createAiClient } from "./ai-client";
 import { RunManager, type RunRecord } from "./runs";
+import { RunJournal } from "./run-journal";
 import {
   hashInput,
   saveResult,
@@ -22,24 +23,18 @@ import { searchMessages, validateCandidates } from "../lyrics/search";
 import { alignmentMessages, validateAlignment } from "../lyrics/alignment";
 import { makeBatches } from "../lyrics/batches";
 import type { ConsentReceipt, AlignedLine } from "../shared/types";
-const persist = async (r: RunRecord) => {
-  await chrome.storage.session.set({ ["run:" + r.state.runId]: r });
-};
+const journal = new RunJournal({
+  get: () => chrome.storage.session.get(null),
+  set: (v) => chrome.storage.session.set(v),
+  remove: (k) => chrome.storage.session.remove(k),
+});
+const persist = (r: RunRecord) => journal.persist(r);
 const runs = new RunManager(persist);
 let initialized: Promise<void> | undefined;
 async function init() {
   return (initialized ??= (async () => {
     await protectStorage();
-    const session = await chrome.storage.session.get(null);
-    for (const [key, r] of Object.entries(session)) {
-      if (key.startsWith("run:")) {
-        if (["searching", "aligning"].includes(r.state.phase)) {
-          r.state.phase = "interrupted";
-          r.state.errorCode = "背景程序已中斷，請手動重試";
-          await chrome.storage.session.set({ [key]: r });
-        }
-      }
-    }
+    await journal.restore();
   })());
 }
 async function consent(

@@ -44,7 +44,7 @@ export class RunManager {
     this.records.set(runId, record);
     this.controllers.set(runId, controller);
     for (const [id, r] of this.records)
-      if (this.records.size > 20 && !this.controllers.has(id))
+      if (this.records.size > 2 && !this.controllers.has(id))
         this.records.delete(id);
     const timer = setTimeout(() => controller.abort(), 600000);
     const check = () => {
@@ -84,7 +84,12 @@ export class RunManager {
         clearTimeout(timer);
         this.controllers.delete(runId);
         this.busy = false;
-        await this.persist(record);
+        try {
+          await this.persist(record);
+        } catch {
+          if (state.phase !== "complete") state.phase = "failed";
+          state.errorCode = "工作暫存失敗，請及時保存結果或重新載入擴充功能";
+        }
       }
     })();
     return { ...state };
@@ -94,7 +99,7 @@ export class RunManager {
     if (r && this.controllers.has(id)) {
       r.state.phase = "cancelled";
       this.controllers.get(id)?.abort();
-      void this.persist(r);
+      void this.persist(r).catch(() => {});
     }
   }
   cancelTab(tabId: number) {

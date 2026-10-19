@@ -127,7 +127,14 @@ export async function clearResults() {
   });
 }
 export async function hashInput(value: unknown) {
-  const data = new TextEncoder().encode(JSON.stringify(value));
+  const canonical = JSON.stringify(value, (_key, item) =>
+    item && typeof item === "object" && !Array.isArray(item)
+      ? Object.fromEntries(
+          Object.entries(item).sort(([a], [b]) => a.localeCompare(b)),
+        )
+      : item,
+  );
+  const data = new TextEncoder().encode(canonical);
   const hash = await crypto.subtle.digest("SHA-256", data);
   return Array.from(new Uint8Array(hash), (n) =>
     n.toString(16).padStart(2, "0"),
