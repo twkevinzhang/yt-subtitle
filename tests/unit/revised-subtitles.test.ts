@@ -58,6 +58,38 @@ it("requires sentence cues even when one YouTube cue contains several sung lines
   expect(text).toContain("各句時間無法可靠細分時，仍逐句回傳");
   expect(text).not.toContain("可保留為合適的一個新 cue");
 });
+it("uses the whole YouTube transcript as the base even when supplied lyrics omit a later verse", () => {
+  const body = revisedSubtitleRequest(
+    "m",
+    [
+      {
+        id: "l0",
+        original: "使用者修正前段",
+        cueIds: [],
+        status: "unaligned",
+        excluded: false,
+      },
+    ],
+    [
+      { id: "c0", text: "前段辨識文字", startMs: 0, endMs: 3000 },
+      {
+        id: "c1",
+        text: "振り返れば去年みたい。無邪気だった少年時代。",
+        startMs: 164000,
+        endMs: 168000,
+      },
+    ],
+  );
+  const system = body.messages[0].content;
+  expect(system).toContain("完整 YT 字幕是輸出底稿");
+  expect(system).toContain("使用者歌詞只取代有合理對應的部分");
+  expect(system).toContain("沒有使用者歌詞對應的 YT 唱詞仍須保留");
+  expect(system).toContain("不得因使用者未貼出後半段而截斷輸出");
+  expect(system).toContain("不能只遍歷使用者歌詞");
+  const input = JSON.parse(body.messages[1].content);
+  expect(input.cues[1].startMs).toBe(164000);
+  expect(input.cues[1].text).toContain("少年時代");
+});
 it("sends only incomplete AI rows to WASM and preserves every supplied timestamp on merge", () => {
   const rows = parseRevisedSubtitles(
     {
