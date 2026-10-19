@@ -33,7 +33,7 @@ it("uses a full-size loading shell when opened before settings arrive", async ()
     screen.getByRole("status", { name: "正在載入 AI 歌詞面板" }),
   ).toBeTruthy();
   expect(container.querySelector(".panel .workspace")).toBeTruthy();
-  expect(container.querySelectorAll(".skeleton-column")).toHaveLength(2);
+  expect(container.querySelectorAll(".skeleton-column")).toHaveLength(1);
 });
 it("auto opens the same local workspace before and after configuration even when offline", async () => {
   let configured = false;

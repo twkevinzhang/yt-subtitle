@@ -55,13 +55,6 @@ export function PanelSkeleton({
             <ContentSkeleton label="正在載入 AI 歌詞面板" />
           )}
         </div>
-        <div className="lyrics-preview skeleton-column">
-          {error ? (
-            <p className="muted">讀取設定後即可準備歌詞預覽。</p>
-          ) : (
-            <ContentSkeleton label="正在準備歌詞預覽" />
-          )}
-        </div>
       </div>
     </section>
   );

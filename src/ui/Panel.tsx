@@ -46,6 +46,18 @@ export function Panel({
     [tracks, setTracks] = useState<CaptionTrack[]>([]),
     [trackId, setTrackId] = useState(""),
     [cues, setCues] = useState<Cue[]>([]);
+  const [view, setView] = useState<"lyrics" | "edit">("lyrics");
+  const editPage = useRef<HTMLElement>(null);
+  const lyricsPage = useRef<HTMLElement>(null);
+  const previousView = useRef(view);
+  useEffect(() => {
+    if (previousView.current !== view) {
+      (view === "edit" ? editPage : lyricsPage).current?.focus({
+        preventScroll: true,
+      });
+      previousView.current = view;
+    }
+  }, [view]);
   const [metadataLoading, setMetadataLoading] = useState(true);
   const [captionsLoading, setCaptionsLoading] = useState(false);
   const [message, setMessage] = useState("正在檢查播放器…"),
@@ -405,16 +417,26 @@ export function Panel({
     <div className="panel" role="region" aria-label="AI 歌詞工作面板">
       <header>
         <h2>AI 歌詞</h2>
-        <button aria-label="關閉面板" onClick={onClose}>
-          ×
-        </button>
+        <div className="row">
+          <button onClick={() => void request({ type: "open-options" })}>
+            設定
+          </button>
+          <button aria-label="關閉面板" onClick={onClose}>
+            ×
+          </button>
+        </div>
       </header>
       <div className="workspace">
         <aside
+          ref={editPage}
+          hidden={view !== "edit"}
           className="panel-body operations stack"
           aria-label="歌詞操作與設定"
           tabIndex={0}
         >
+          <button className="back-button" onClick={() => setView("lyrics")}>
+            ← 返回歌詞
+          </button>
           {settings?.configured && (
             <div className="section">
               {!video ? (
@@ -744,31 +766,6 @@ export function Panel({
                   />
                   <section className="section">
                     <label>
-                      <span>顯示模式</span>
-                      <select
-                        value={mode}
-                        onChange={(e) => setMode(e.target.value as DisplayMode)}
-                      >
-                        <option value="original">原文</option>
-                        <option
-                          value="bilingual"
-                          disabled={lines.some(
-                            (l) => !l.excluded && !l.translation,
-                          )}
-                        >
-                          原文＋譯文
-                        </option>
-                        <option
-                          value="translation"
-                          disabled={lines.some(
-                            (l) => !l.excluded && !l.translation,
-                          )}
-                        >
-                          僅譯文
-                        </option>
-                      </select>
-                    </label>
-                    <label>
                       <span>整體偏移（秒，正數為延後）</span>
                       <input
                         type="number"
@@ -818,11 +815,45 @@ export function Panel({
           )}
         </aside>
         <section
+          ref={lyricsPage}
+          hidden={view !== "lyrics"}
           className="lyrics-preview"
           aria-label="字幕編輯與預覽"
           tabIndex={0}
         >
-          <h3>歌詞預覽</h3>
+          {lines.length > 0 && (
+            <div className="lyrics-toolbar">
+              <h3>{video?.title || "目前影片"}</h3>
+              <div className="row">
+                <label>
+                  <span>顯示模式</span>
+                  <select
+                    value={mode}
+                    onChange={(e) => setMode(e.target.value as DisplayMode)}
+                  >
+                    <option value="original">原文</option>
+                    <option
+                      value="bilingual"
+                      disabled={lines.some(
+                        (l) => !l.excluded && !l.translation,
+                      )}
+                    >
+                      原文＋譯文
+                    </option>
+                    <option
+                      value="translation"
+                      disabled={lines.some(
+                        (l) => !l.excluded && !l.translation,
+                      )}
+                    >
+                      僅譯文
+                    </option>
+                  </select>
+                </label>
+                <button onClick={() => setView("edit")}>製作／編輯</button>
+              </div>
+            </div>
+          )}
           {lines.length > 0 ? (
             <LyricsPreview
               lines={lines}
@@ -838,6 +869,7 @@ export function Panel({
             <ContentSkeleton label="正在載入影片資訊" />
           ) : (
             <div className="empty-preview">
+              <p className="muted">尚未加入歌詞</p>
               <h3>{video?.title || "目前影片"}</h3>
               <p className="muted">
                 {video?.channel}
@@ -852,7 +884,7 @@ export function Panel({
                     搜尋、對齊與翻譯。
                   </p>
                   <p>
-                    貼上、匯入及手動校時現在就能使用。請從左側貼上歌詞或匯入
+                    貼上、匯入及手動校時現在就能使用。請使用「貼上／匯入」加入
                     LRC／SRT，歌詞會完整顯示在這裡。
                   </p>
                   <button
@@ -868,8 +900,32 @@ export function Panel({
                 </>
               ) : (
                 <p className="muted">
-                  從左側貼上、匯入或使用 AI
+                  貼上、匯入或使用 AI
                   尋找歌詞。每一句會顯示在這裡，點擊已校時的歌詞可跳至該句。
+                </p>
+              )}
+              <div className="empty-actions">
+                {settings?.configured && (
+                  <button
+                    className="primary"
+                    disabled={!video}
+                    onClick={() => setView("edit")}
+                  >
+                    AI 尋找歌詞
+                  </button>
+                )}
+                <button disabled={!video} onClick={() => setView("edit")}>
+                  貼上／匯入
+                </button>
+                {saved.length > 0 && (
+                  <button onClick={() => setView("edit")}>
+                    本機保存的版本
+                  </button>
+                )}
+              </div>
+              {error && (
+                <p role="alert" className="notice error">
+                  {error}
                 </p>
               )}
             </div>

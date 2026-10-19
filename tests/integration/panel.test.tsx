@@ -71,11 +71,21 @@ it("loads video independently of cache and keeps local paste available while cap
     ],
   });
   await screen.findByText("延遲字幕測試");
+  expect(screen.getByRole("button", { name: "貼上／匯入" })).toBeTruthy();
+  expect(screen.queryByRole("textbox", { name: "歌詞全文" })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "貼上／匯入" }));
   fireEvent.change(screen.getByLabelText("歌詞全文"), {
     target: { value: "本機歌詞" },
   });
   fireEvent.click(screen.getByRole("button", { name: "使用貼上歌詞" }));
   await screen.findByRole("heading", { name: "逐句預覽與校時" });
+  fireEvent.click(screen.getByRole("button", { name: "← 返回歌詞" }));
+  const preview = screen.getByRole("region", { name: "字幕編輯與預覽" });
+  preview.scrollTop = 120;
+  fireEvent.click(screen.getByRole("button", { name: "製作／編輯" }));
+  expect(screen.getByLabelText("歌詞全文")).toHaveProperty("value", "本機歌詞");
+  fireEvent.click(screen.getByRole("button", { name: "← 返回歌詞" }));
+  expect(preview.scrollTop).toBe(120);
   expect(mockRequest).toHaveBeenCalledWith({
     type: "read-track",
     trackId: "0",
@@ -154,6 +164,9 @@ it("resaving a loaded result retains its real source, translation language and m
       onClose={() => {}}
     />,
   );
+  fireEvent.click(
+    await screen.findByRole("button", { name: "本機保存的版本" }),
+  );
   fireEvent.click(await screen.findByRole("button", { name: /^載入$/ }));
   await screen.findByText("已載入本機結果，不會呼叫 AI");
   fireEvent.click(screen.getByRole("button", { name: "套用並保存" }));
@@ -216,6 +229,7 @@ it("refreshes settings when returning from the options tab", async () => {
   );
   await screen.findByText(/先在設定頁填入/);
   expect(screen.queryByRole("button", { name: /^搜尋歌詞$/ })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "貼上／匯入" }));
   expect(
     screen
       .getByRole("button", { name: "使用貼上歌詞" })
@@ -224,9 +238,6 @@ it("refreshes settings when returning from the options tab", async () => {
   expect(screen.getByLabelText("匯入 LRC／SRT").hasAttribute("disabled")).toBe(
     false,
   );
-  expect(
-    screen.getByRole("region", { name: "字幕編輯與預覽" }).textContent,
-  ).toContain("test");
   fireEvent.change(screen.getByLabelText("歌詞全文"), {
     target: { value: "本機歌詞" },
   });

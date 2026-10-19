@@ -181,6 +181,9 @@ test("Brave: settings, mock search, alignment, manual import, overlay and SRT", 
         (globalThis as any).__loadingTestPending.has("read-track"),
       ),
     ).toBe(true);
+    await welcome
+      .getByRole("button", { name: "貼上／匯入", exact: true })
+      .click();
     await expect(welcome.getByLabel("匯入 LRC／SRT")).toBeEnabled();
     await expect(
       welcome.getByRole("button", { name: "使用貼上歌詞", exact: true }),
@@ -200,13 +203,16 @@ test("Brave: settings, mock search, alignment, manual import, overlay and SRT", 
       welcome.locator("#secondary-inner > [data-ai-lyrics-panel]"),
     ).toHaveCount(1);
     expect(await welcome.locator("#related").count()).toBe(1);
-    const operationsBox = await welcome
-      .getByRole("complementary", { name: "歌詞操作與設定" })
-      .boundingBox();
-    const previewBox = await welcome
-      .getByRole("region", { name: "字幕編輯與預覽" })
-      .boundingBox();
-    expect(previewBox!.x).toBeGreaterThan(operationsBox!.x);
+    await expect(
+      welcome.getByRole("region", { name: "字幕編輯與預覽" }),
+    ).toBeHidden();
+    expect(
+      await welcome
+        .locator(".workspace")
+        .evaluate(
+          (el) => getComputedStyle(el).gridTemplateColumns.split(" ").length,
+        ),
+    ).toBe(1);
     await welcome.getByLabel("歌詞全文").fill("切換模式保留草稿");
     await welcome.evaluate(() => {
       document.querySelector("#watch-shell")!.setAttribute("data-theater", "");
@@ -243,6 +249,7 @@ test("Brave: settings, mock search, alignment, manual import, overlay and SRT", 
       "切換模式保留草稿",
     );
     await welcome.getByLabel("歌詞全文").fill("");
+    await welcome.getByRole("button", { name: "← 返回歌詞" }).click();
     await welcomePanel.scrollIntoViewIfNeeded();
     await expect(welcomePanel).toHaveCSS(
       "background-color",
@@ -254,9 +261,10 @@ test("Brave: settings, mock search, alignment, manual import, overlay and SRT", 
     );
     await expect(welcomePanel).toHaveCSS("background-color", "rgb(25, 38, 58)");
     await welcome.screenshot({ path: "artifacts/welcome-dark.png" });
-    await expect(
-      welcome.getByRole("region", { name: "字幕編輯與預覽" }),
-    ).toContainText("測試歌曲");
+    await expect(welcome.locator(".lyrics-preview")).toContainText("測試歌曲");
+    await welcome
+      .getByRole("button", { name: "貼上／匯入", exact: true })
+      .click();
     await welcome.getByLabel("匯入 LRC／SRT").setInputFiles({
       name: "before-ai.srt",
       mimeType: "text/plain",
@@ -370,6 +378,9 @@ test("Brave: settings, mock search, alignment, manual import, overlay and SRT", 
       page.getByRole("heading", { name: "歡迎使用 AI 歌詞" }),
     ).toHaveCount(0);
     await page.getByRole("button", { name: "AI 歌詞", exact: true }).click();
+    await page
+      .getByRole("button", { name: "AI 尋找歌詞", exact: true })
+      .click();
     await page.getByText("已讀取 2 段字幕，可用來對齊歌詞").waitFor();
     expect(
       requests.filter((x) => x.path === "/v1/chat/completions"),
@@ -456,22 +467,26 @@ test("Brave: settings, mock search, alignment, manual import, overlay and SRT", 
       .getByRole("button", { name: "使用貼上歌詞", exact: true })
       .click();
     await expect(page.locator(".lyrics-preview .lyric-line")).toHaveCount(60);
-    const leftScroll = await page
-      .locator(".operations")
-      .evaluate((el) => el.scrollTop);
+    const editBox = await page.locator(".panel").boundingBox();
+    await page.getByRole("button", { name: "← 返回歌詞" }).click();
+    const lyricsBox = await page.locator(".panel").boundingBox();
+    expect(Math.abs(editBox!.height - lyricsBox!.height)).toBeLessThanOrEqual(
+      1,
+    );
     await page.locator(".lyrics-preview").evaluate((el) => {
-      el.scrollTop = el.scrollHeight;
+      el.scrollTop = 500;
     });
+    const savedScroll = await page
+      .locator(".lyrics-preview")
+      .evaluate((el) => el.scrollTop);
+    expect(savedScroll).toBeGreaterThan(0);
+    await page.getByRole("button", { name: "製作／編輯" }).click();
+    await expect(page.getByLabel("歌詞全文")).toHaveValue(longLyrics);
+    await page.getByRole("button", { name: "← 返回歌詞" }).click();
     expect(
       await page.locator(".lyrics-preview").evaluate((el) => el.scrollTop),
-    ).toBeGreaterThan(0);
-    expect(
-      await page.locator(".operations").evaluate((el) => el.scrollTop),
-    ).toBe(leftScroll);
+    ).toBe(savedScroll);
     await page.locator(".lyrics-preview").evaluate((el) => {
-      el.scrollTop = 0;
-    });
-    await page.locator(".operations").evaluate((el) => {
       el.scrollTop = 0;
     });
     await page.locator(".panel").scrollIntoViewIfNeeded();
