@@ -8,6 +8,7 @@ import type {
   PlayerBinding,
   PublicSettings,
   RunState,
+  LyricSearchResult,
   SavedResult,
   VideoContext,
 } from "../shared/types";
@@ -20,6 +21,7 @@ import { Candidates } from "./Candidates";
 import { Editor } from "./Editor";
 import { LyricsPreview } from "./LyricsPreview";
 import { ContentSkeleton } from "./Skeleton";
+import { AiReply } from "./AiReply";
 import type { createOverlay } from "../content/overlay";
 import type { RunRecord } from "../background/runs";
 import {
@@ -64,6 +66,7 @@ export function Panel({
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false),
     [candidates, setCandidates] = useState<LyricCandidate[] | null>(null),
+    [searchReply, setSearchReply] = useState<string | null>(null),
     [selected, setSelected] = useState<LyricCandidate>(),
     [text, setText] = useState(""),
     [lines, setLines] = useState<AlignedLine[]>([]),
@@ -277,6 +280,8 @@ export function Panel({
     attempt(async () => {
       if (!settings || !searchPayload) return;
       setConfirm(null);
+      setSearchReply(null);
+      setCandidates(null);
       const receipt = {
         purpose: "search" as const,
         inputHash: await hashInput(searchPayload),
@@ -295,8 +300,12 @@ export function Panel({
           await request({ type: "cancel", runId: id });
         },
       );
-      const result = await poll(state);
-      if (live.current) setCandidates(result as LyricCandidate[]);
+      const result = (await poll(state)) as LyricSearchResult;
+      if (live.current) {
+        setSearchReply(result.text);
+        setCandidates(result.error ? null : result.candidates);
+        setError(result.error || "");
+      }
     });
   const startGenerate = () =>
     attempt(async () => {
@@ -499,6 +508,7 @@ export function Panel({
               {error}
             </p>
           )}
+          {searchReply !== null && <AiReply text={searchReply} />}
           {!settings?.configured && lines.length > 0 && (
             <p className="notice">
               先在設定頁填入你自己的 AI 服務，解鎖搜尋、對齊與翻譯。

@@ -5,6 +5,7 @@ import type {
   LyricCandidate,
   SearchEvidence,
   ChatMessage,
+  LyricSearchResult,
 } from "../shared/types";
 const candidate = z.object({
   id: z.string(),
@@ -18,6 +19,40 @@ const candidate = z.object({
   syncedLyrics: z.string().max(200000).nullable(),
   matchReason: z.string().max(2000),
 });
+// Keep diagnostic text even when the response cannot be used as lyrics.
+export function parseSearchReply(
+  text: string,
+  sources: SourceSettings[],
+): LyricSearchResult {
+  try {
+    const payload = JSON.parse(
+      text.replace(/^\s*```(?:json)?\s*/, "").replace(/\s*```\s*$/, ""),
+    );
+    const candidates = validateCandidates(payload, sources, {
+      status: "unverified",
+      citations: [],
+    });
+    return {
+      text,
+      candidates,
+      ...(!candidates.length
+        ? {
+            error:
+              "AI 未找到符合已勾選來源的可用結果，請查看原文或改用貼上／匯入。",
+          }
+        : {}),
+    };
+  } catch (e) {
+    return {
+      text,
+      candidates: [],
+      error:
+        e instanceof SyntaxError || e instanceof z.ZodError
+          ? "AI 回覆格式不符，請查看原文或改用貼上／匯入。"
+          : "AI 未找到可用結果，請查看原文或改用貼上／匯入。",
+    };
+  }
+}
 export function searchMessages(
   video: VideoContext,
   sources: SourceSettings[],

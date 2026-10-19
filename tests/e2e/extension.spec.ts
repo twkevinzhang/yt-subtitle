@@ -673,6 +673,52 @@ test("Brave: settings, mock search, alignment, manual import, overlay and SRT", 
     await expect(
       options.getByText("第二次測試的 AI 回覆", { exact: true }),
     ).toBeVisible();
+    await page.bringToFront();
+    await page.getByRole("button", { name: "製作／編輯", exact: true }).click();
+    mockTestReply = JSON.stringify(
+      {
+        candidates: [],
+        error: "目前無法搜尋這個 live 版本的歌詞，請提供來源。".repeat(8),
+      },
+      null,
+      2,
+    );
+    replyDelay = 0;
+    await page.getByRole("button", { name: "搜尋歌詞", exact: true }).click();
+    await page.getByRole("button", { name: "開始搜尋", exact: true }).click();
+    const panelReply = page.getByRole("region", {
+      name: "AI 實際回覆",
+      exact: true,
+    });
+    await expect(panelReply).toBeVisible();
+    expect(await panelReply.locator("pre").textContent()).toBe(mockTestReply);
+    expect(
+      (await panelReply.locator("pre").boundingBox())!.height,
+    ).toBeLessThanOrEqual(80);
+    await panelReply.getByRole("button", { name: "展開", exact: true }).click();
+    expect(
+      (await panelReply.locator("pre").boundingBox())!.height,
+    ).toBeGreaterThan(80);
+    await panelReply.getByRole("button", { name: "收合", exact: true }).click();
+    await expect(
+      page.getByRole("button", { name: "使用這個版本" }),
+    ).toHaveCount(0);
+    await expect(page.getByLabel("歌詞全文")).toHaveValue(longLyrics);
+    await page.locator(".operations").evaluate((el) => {
+      el.scrollTop = 0;
+    });
+    await page.screenshot({
+      path: "artifacts/panel-ai-reply.png",
+      fullPage: true,
+    });
+    mockTestReply = "目前沒有網頁搜尋工具。\n請貼上歌詞或提供來源連結。";
+    replyDelay = 1500;
+    await page.getByRole("button", { name: "搜尋歌詞", exact: true }).click();
+    await page.getByRole("button", { name: "開始搜尋", exact: true }).click();
+    await expect(panelReply).toHaveCount(0);
+    await expect(panelReply).toBeVisible();
+    expect(await panelReply.locator("pre").textContent()).toBe(mockTestReply);
+    await expect(page.getByLabel("歌詞全文")).toHaveValue(longLyrics);
     await writeFile(
       "artifacts/browser-verification.json",
       JSON.stringify(

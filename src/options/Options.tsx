@@ -16,7 +16,7 @@ import type {
 } from "../shared/types";
 import { hashInput } from "../background/results";
 import type { RunRecord } from "../background/runs";
-import { AiReply } from "./AiReply";
+import { AiReply } from "../ui/AiReply";
 const emptyProvider: ProviderSettings = {
   schemaVersion: 1,
   baseUrl: "",

@@ -1,5 +1,9 @@
 import { it, expect } from "vitest";
-import { validateCandidates, searchMessages } from "../../src/lyrics/search";
+import {
+  validateCandidates,
+  searchMessages,
+  parseSearchReply,
+} from "../../src/lyrics/search";
 const source = {
   schemaVersion: 1 as const,
   id: "s",
@@ -21,6 +25,39 @@ const candidate = {
   matchReason: "matches",
 };
 const evidence = { status: "unverified" as const, citations: [] };
+it("preserves AI refusal text instead of discarding the reason", () => {
+  const text = JSON.stringify({
+    candidates: [],
+    error: "服務目前無法搜尋網路",
+  });
+  const result = parseSearchReply(text, [source]);
+  expect(result.text).toBe(text);
+  expect(result.error).toBeTruthy();
+  expect(result.candidates).toEqual([]);
+});
+it("keeps non-JSON replies for display without treating them as lyrics", () => {
+  const text = "找不到這個 live 版本，請貼上歌詞。";
+  const result = parseSearchReply(text, [source]);
+  expect(result.text).toBe(text);
+  expect(result.error).toContain("格式");
+  expect(result.candidates).toEqual([]);
+});
+it("retains fenced raw replies while enforcing source and evidence validation", () => {
+  const text =
+    "```json\n" + JSON.stringify({ candidates: [candidate] }) + "\n```";
+  expect(parseSearchReply(text, [source])).toMatchObject({
+    text,
+    candidates: [{ id: "a", evidence: { status: "unverified" } }],
+  });
+  const spoof = parseSearchReply(
+    JSON.stringify({
+      candidates: [{ ...candidate, url: "https://evil.test/lyrics" }],
+    }),
+    [source],
+  );
+  expect(spoof.candidates).toEqual([]);
+  expect(spoof.error).toContain("來源");
+});
 it("rejects spoofed domains and disabled sources", () => {
   expect(
     validateCandidates(

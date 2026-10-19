@@ -77,6 +77,11 @@ export interface SearchTestResult {
   text: string;
   evidence: SearchEvidence;
 }
+export interface LyricSearchResult {
+  text: string;
+  candidates: LyricCandidate[];
+  error?: string;
+}
 export interface ChatMessage {
   role: "system" | "user";
   content: string;

@@ -20,7 +20,7 @@ import {
   resultSchema,
 } from "./results";
 import { inspectVideo, readTrack } from "../youtube/context";
-import { searchMessages, validateCandidates } from "../lyrics/search";
+import { searchMessages, parseSearchReply } from "../lyrics/search";
 import { alignmentMessages, validateAlignment } from "../lyrics/alignment";
 import { makeBatches } from "../lyrics/batches";
 import type {
@@ -185,14 +185,10 @@ export async function handleMessage(
               evidence: { status: "unverified", citations: [] },
             } satisfies SearchTestResult;
           }
-          const response = await tools.request(() =>
-            client.completeJson(messages, tools.signal),
+          const text = await tools.request(() =>
+            client.completeText(messages, tools.signal),
           );
-          return validateCandidates(
-            response.payload,
-            s.sources,
-            response.evidence,
-          );
+          return parseSearchReply(text, s.sources);
         },
         "searching",
       );
