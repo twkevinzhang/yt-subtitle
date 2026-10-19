@@ -44,17 +44,17 @@ it("keeps missing times missing and rejects malformed supplied times", () => {
 });
 it("asks for a revised complete subtitle list instead of fixed input IDs", () => {
   const text = revisedSubtitleRequest("m", [], []).messages[0].content;
-  expect(text).toContain("新版字幕");
-  expect(text).toContain("不得平均");
+  expect(text).toContain("整首逐句字幕");
+  expect(text).toContain("估計時間不是聲學確認");
   expect(text).toContain("不必保留輸入行數或 ID");
-  expect(text).toContain("既有時間軸為基礎");
+  expect(text).toContain("完整 YT 字幕是輸出底稿");
   expect(text).toContain("能沿用或合併");
 });
 it("requires sentence cues even when one YouTube cue contains several sung lines", () => {
   const text = revisedSubtitleRequest("m", [], []).messages[0].content;
   expect(text).toContain("每個 lines 項目只包含一句唱詞");
   expect(text).toContain("不得把數句唱詞合併成一項");
-  expect(text).toContain("不得將同一段起迄複製給數句依序演唱的歌詞");
+  expect(text).toContain("一個 cue 拆成多句不能複製整段起迄");
   expect(text).toContain("各句時間無法可靠細分時，仍逐句回傳");
   expect(text).not.toContain("可保留為合適的一個新 cue");
 });
@@ -89,6 +89,41 @@ it("uses the whole YouTube transcript as the base even when supplied lyrics omit
   const input = JSON.parse(body.messages[1].content);
   expect(input.cues[1].startMs).toBe(164000);
   expect(input.cues[1].text).toContain("少年時代");
+});
+it("requests playable estimated times and constrains repeated lyrics with surrounding anchors", () => {
+  const system = revisedSubtitleRequest("m", [], []).messages[0].content;
+  expect(system).toContain("每一句都提供可播放的數值 startMs/endMs");
+  expect(system).toContain("estimated:true");
+  expect(system).not.toContain("這些句子的 startMs 與 endMs 全部填 null");
+  expect(system).toContain("候選 cue 必須位於前後錨點之間");
+});
+it("preserves AI estimated timing as estimated instead of an acoustic confirmation", () => {
+  expect(
+    parseRevisedSubtitles(
+      {
+        lines: [
+          { text: "approximate", startMs: 100, endMs: 900, estimated: true },
+        ],
+      },
+      1000,
+    )[0].status,
+  ).toBe("estimated");
+});
+it("keeps explicitly estimated shared times usable instead of blocking the complete subtitle", () => {
+  const rows = parseRevisedSubtitles(
+    {
+      lines: [
+        { text: "first", startMs: 1000, endMs: 4000, estimated: true },
+        { text: "second", startMs: 1000, endMs: 4000, estimated: true },
+      ],
+    },
+    5000,
+  );
+  expect(
+    rows.every(
+      (l) => l.status === "estimated" && l.startMs === 1000 && l.endMs === 4000,
+    ),
+  ).toBe(true);
 });
 it("sends only incomplete AI rows to WASM and preserves every supplied timestamp on merge", () => {
   const rows = parseRevisedSubtitles(

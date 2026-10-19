@@ -128,7 +128,7 @@ it("uses AI revised rows first, acquires audio only for missing timing, then pre
   )[1][0];
   expect(fill.input.timingOnly).toBe(true);
   expect(fill.input.audioAssetId).toBe("asset");
-  expect(sent.input.body.messages[0].content).toContain("新版字幕");
+  expect(sent.input.body.messages[0].content).toContain("整首逐句字幕");
   expect(screen.getByLabelText("逐句時間戳").textContent).toContain("pending");
   expect(
     screen.getByRole("button", { name: "套用並保存" }).hasAttribute("disabled"),
