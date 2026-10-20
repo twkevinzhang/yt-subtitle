@@ -19,6 +19,10 @@ const candidate = z.object({
   syncedLyrics: z.string().max(200000).nullable(),
   matchReason: z.string().max(2000),
 });
+const searchPayload = z.object({
+  candidates: z.array(z.unknown()).max(20),
+  error: z.string().max(2000).optional(),
+});
 // Keep diagnostic text even when the response cannot be used as lyrics.
 export function parseSearchReply(
   text: string,
@@ -27,9 +31,13 @@ export function parseSearchReply(
   route: "configured" | "comments" | "web" = "configured",
 ): LyricSearchResult {
   try {
-    const payload = JSON.parse(
-      text.replace(/^\s*```(?:json)?\s*/, "").replace(/\s*```\s*$/, ""),
+    const payload = searchPayload.parse(
+      JSON.parse(
+        text.replace(/^\s*```(?:json)?\s*/, "").replace(/\s*```\s*$/, ""),
+      ),
     );
+    if (!payload.candidates.length && payload.error?.trim())
+      return { text, candidates: [], error: payload.error };
     const candidates = validateCandidates(payload, sources, evidence, route);
     return {
       text,
@@ -80,12 +88,7 @@ export function validateCandidates(
   evidence: SearchEvidence,
   route: "configured" | "comments" | "web" = "configured",
 ): LyricCandidate[] {
-  const data = z
-    .object({
-      candidates: z.array(z.unknown()).max(20),
-      error: z.string().optional(),
-    })
-    .parse(payload);
+  const data = searchPayload.parse(payload);
   if (data.error && !data.candidates.length)
     throw new Error("AI 未找到可用結果，請改用貼入字幕");
   const used = new Set<string>();

@@ -108,3 +108,14 @@ it("retains source links with missing full text and ignores model verification",
 });
 it("requires enabled sources", () =>
   expect(() => searchMessages({ title: "x" } as any, [])).toThrow());
+it("keeps a bounded server access error distinct from an empty search result", () => {
+  const reason = "無法取得指定影片的留言內容，因此無法確認留言區是否提供歌詞。";
+  const parsed = parseSearchReply(
+    JSON.stringify({ candidates: [], error: reason }),
+    [],
+    { status: "unverified", citations: [] },
+    "comments",
+  );
+  expect(parsed.error).toBe(reason);
+  expect(parsed.candidates).toEqual([]);
+});
