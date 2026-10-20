@@ -56,7 +56,10 @@ function chunk(data: Uint8Array, sequence = 0, generation = 0) {
     init: sequence === 0,
   };
 }
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.useRealTimers();
+});
 it("emits_before_eof", async () => {
   const decoder = setup();
   await decoder.push(chunk(fixture.slice(0, Math.floor(fixture.length / 2))));
@@ -74,6 +77,97 @@ it("flushes only on terminal finish, after submitted packets", async () => {
   expect(flush).toHaveBeenCalledTimes(1);
   decoder.dispose();
   await expect(decoder.finish()).rejects.toThrow();
+});
+it("decodes only the requested window plus Opus preroll rather than an entire native prefetch", async () => {
+  setup().dispose();
+  outputs.length = 0;
+  let wanted = { startMs: 3000, endMs: 4000 };
+  const decoder = createProgressiveDecoder(
+    (r) => outputs.push(r),
+    (e) => {
+      throw e;
+    },
+    () => wanted,
+  );
+  await decoder.push(chunk(fixture));
+  expect(outputs.length).toBeGreaterThan(30);
+  expect(outputs.length).toBeLessThan(70);
+  expect(outputs[0].startMs).toBeGreaterThanOrEqual(2800);
+  expect(outputs.at(-1).startMs).toBeLessThan(4150);
+  outputs.length = 0;
+  wanted = { startMs: 6000, endMs: 7000 };
+  await decoder.push(chunk(fixture, 1));
+  expect(outputs.length).toBeGreaterThan(30);
+  expect(outputs.length).toBeLessThan(70);
+  expect(outputs[0].startMs).toBeGreaterThanOrEqual(5800);
+  expect(decoders).toHaveLength(2);
+  const close = vi.fn();
+  decoders[0].callbacks.output({ close });
+  expect(close).toHaveBeenCalledOnce();
+  decoder.dispose();
+});
+it("bounds the native decode queue instead of enqueueing the entire compressed chunk", async () => {
+  setup().dispose();
+  class QueuedDecoder extends Decoder {
+    decodeQueueSize = 0;
+    peak = 0;
+    events = new EventTarget();
+    addEventListener(type: string, listener: EventListener) {
+      this.events.addEventListener(type, listener);
+    }
+    removeEventListener(type: string, listener: EventListener) {
+      this.events.removeEventListener(type, listener);
+    }
+    decode(chunk: any) {
+      this.peak = Math.max(this.peak, ++this.decodeQueueSize);
+      setTimeout(() => {
+        super.decode(chunk);
+        this.decodeQueueSize--;
+        this.events.dispatchEvent(new Event("dequeue"));
+      }, 0);
+    }
+  }
+  vi.stubGlobal("AudioDecoder", QueuedDecoder);
+  const decoder = createProgressiveDecoder(
+    () => {},
+    (e) => {
+      throw e;
+    },
+  );
+  await decoder.push(chunk(fixture));
+  expect(decoders.at(-1).peak).toBeLessThanOrEqual(64);
+  expect(decoders.at(-1).decodeQueueSize).toBe(0);
+  decoder.dispose();
+});
+it("does not renew the five-second watchdog for dequeue notifications without progress", async () => {
+  vi.useFakeTimers();
+  setup().dispose();
+  class StalledDecoder extends Decoder {
+    decodeQueueSize = 0;
+    events = new EventTarget();
+    decode() {
+      this.decodeQueueSize++;
+    }
+    addEventListener(type: string, listener: EventListener) {
+      this.events.addEventListener(type, listener);
+    }
+    removeEventListener(type: string, listener: EventListener) {
+      this.events.removeEventListener(type, listener);
+    }
+  }
+  vi.stubGlobal("AudioDecoder", StalledDecoder);
+  const decoder = createProgressiveDecoder(
+    () => {},
+    () => {},
+  );
+  const pending = decoder.push(chunk(fixture));
+  const rejected = expect(pending).rejects.toThrow(/5 秒/);
+  await vi.advanceTimersByTimeAsync(4000);
+  decoders.at(-1).events.dispatchEvent(new Event("dequeue"));
+  await vi.advanceTimersByTimeAsync(1000);
+  await rejected;
+  expect(decoders.at(-1).state).toBe("closed");
+  decoder.dispose();
 });
 it("split_headers_and_clusters", async () => {
   const decoder = setup();

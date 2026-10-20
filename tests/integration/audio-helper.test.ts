@@ -4,6 +4,7 @@ class BufferMock extends EventTarget {
   buffered = { length: 1, start: () => 0, end: () => 10 };
   appendBuffer = vi.fn();
   abort = vi.fn();
+  remove = vi.fn();
   changeType = vi.fn();
 }
 class MediaSourceMock {
@@ -518,6 +519,38 @@ it("reports verified content EOF before idle failure but never reports an ad end
   vi.advanceTimersByTime(400);
   expect(send.mock.calls.filter((c) => c[0].type === "eof")).toHaveLength(1);
 });
+it("announces a verified native tail even if YouTube leaves MediaSource open without ended", async () => {
+  (location as any).href += "&ai-lyrics-stream=1";
+  await import("../../src/youtube/audio-helper");
+  const { video, player } = playerState();
+  Object.defineProperties(video, {
+    duration: { value: 10 },
+    ended: { value: false },
+  });
+  const source = new MediaSourceMock();
+  video.src = URL.createObjectURL(source as any);
+  const buffer = source.addSourceBuffer("audio/webm");
+  buffer.appendBuffer(init);
+  buffer.dispatchEvent(new Event("updateend"));
+  window.dispatchEvent(
+    new MessageEvent("message", {
+      source: parent,
+      origin: "https://www.youtube.com",
+      data: {
+        tag: "ai-lyrics-control",
+        nonce: "00000000-0000-0000-0000-000000000001",
+        action: "range",
+        range: { startMs: 0, endMs: 10000 },
+      },
+    }),
+  );
+  vi.advanceTimersByTime(600);
+  expect(send.mock.calls.filter((c) => c[0].type === "tail")).toHaveLength(1);
+  expect(send.mock.calls.some((c) => c[0].type === "eof")).toBe(false);
+  player.classList.add("ad-showing");
+  vi.advanceTimersByTime(400);
+  expect(send.mock.calls.filter((c) => c[0].type === "tail")).toHaveLength(1);
+});
 it("forwards parser reset only for the verified attached content buffer", async () => {
   (location as any).href += "&ai-lyrics-stream=1";
   await import("../../src/youtube/audio-helper");
@@ -536,4 +569,46 @@ it("forwards parser reset only for the verified attached content buffer", async 
   expect(
     send.mock.calls.filter((c) => c[0].type === "discontinuity"),
   ).toHaveLength(1);
+});
+it("refetches an uncaptured nonzero request once instead of seeking over retained native audio", async () => {
+  (location as any).href += "&ai-lyrics-stream=1";
+  await import("../../src/youtube/audio-helper");
+  const { video, player, seekTo } = playerState();
+  const source = new MediaSourceMock();
+  video.src = URL.createObjectURL(source as any);
+  const buffer = source.addSourceBuffer("audio/webm");
+  buffer.appendBuffer(init);
+  buffer.dispatchEvent(new Event("updateend"));
+  const command = () =>
+    window.dispatchEvent(
+      new MessageEvent("message", {
+        source: parent,
+        origin: "https://www.youtube.com",
+        data: {
+          tag: "ai-lyrics-control",
+          nonce: "00000000-0000-0000-0000-000000000001",
+          action: "range",
+          range: { startMs: 8000, endMs: 10000 },
+        },
+      }),
+    );
+  command();
+  player.classList.add("ad-showing");
+  vi.advanceTimersByTime(400);
+  expect(buffer.remove).not.toHaveBeenCalled();
+  player.classList.remove("ad-showing");
+  // A fresh source after the ad must pass initialization before refetching.
+  const fresh = new MediaSourceMock();
+  video.src = URL.createObjectURL(fresh as any);
+  const content = fresh.addSourceBuffer("audio/webm");
+  Object.assign(player, { getVideoData: () => ({ video_id: "12345678901" }) });
+  content.appendBuffer(init);
+  content.dispatchEvent(new Event("updateend"));
+  vi.advanceTimersByTime(600);
+  expect(content.remove).toHaveBeenCalledExactlyOnceWith(8, 10);
+  expect(seekTo).toHaveBeenCalledWith(8, true);
+  command();
+  vi.advanceTimersByTime(400);
+  expect(content.remove).toHaveBeenCalledTimes(1);
+  expect(seekTo.mock.calls.every((c) => c[0] === 8)).toBe(true);
 });

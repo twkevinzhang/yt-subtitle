@@ -59,6 +59,16 @@ export function createProgressiveAudioSource(
       window.removeEventListener("message", receive);
     },
   );
+  function pauseIfReady() {
+    if (!wanted) return;
+    const actual = source.readableRange(wanted);
+    if (
+      source
+        .availableRanges()
+        .some((r) => r.startMs <= actual.startMs && r.endMs >= actual.endMs)
+    )
+      command("pause");
+  }
   function open() {
     helperGeneration = 0;
     nonce = crypto.randomUUID();
@@ -78,19 +88,12 @@ export function createProgressiveAudioSource(
           range.startMs + range.pcm.length / 16,
         );
         source.append({ ...range, generation: decodeEpoch });
-        if (
-          wanted &&
-          source
-            .availableRanges()
-            .some(
-              (r) => r.startMs <= wanted!.startMs && r.endMs >= wanted!.endMs,
-            )
-        )
-          command("pause");
+        pauseIfReady();
       },
       (error) => {
         if (frame === ownFrame) source.fail(error);
       },
+      () => wanted,
     );
     frame.onload = () => command("range");
     document.documentElement.append(frame);
@@ -117,7 +120,11 @@ export function createProgressiveAudioSource(
       maximumEnd = 0;
     }
     const messageEpoch = source.generation;
-    if (m.type === "eof" && m.generation !== helperGeneration) return;
+    if (
+      (m.type === "eof" || m.type === "tail") &&
+      m.generation !== helperGeneration
+    )
+      return;
     if (m.type === "status")
       onNotice(
         m.state === "waiting-ad"
@@ -154,6 +161,7 @@ export function createProgressiveAudioSource(
       m.type !== "reset" &&
       m.type !== "chunk" &&
       m.type !== "eof" &&
+      m.type !== "tail" &&
       m.type !== "discontinuity"
     )
       return;
@@ -166,6 +174,13 @@ export function createProgressiveAudioSource(
           return;
         }
         decodeEpoch = messageEpoch;
+        if (m.type === "tail") {
+          if (messageEpoch === source.generation) {
+            source.confirmTail(messageEpoch);
+            pauseIfReady();
+          }
+          return;
+        }
         if (m.type === "discontinuity") {
           if (
             messageEpoch === source.generation &&

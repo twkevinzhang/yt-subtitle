@@ -9,6 +9,7 @@ export interface OpusTrack {
 }
 export interface OpusPacket {
   timestampUs: number;
+  durationUs: number;
   data: Uint8Array;
 }
 function vint(bytes: Uint8Array, at: number, id = false) {
@@ -278,8 +279,13 @@ export class WebmDemuxer {
       if (size <= 0 || at + size > data.length)
         throw new Error("無效 lace frame 長度");
       const packet = data.slice(at, at + size);
-      this.onPacket({ timestampUs: Math.round(timestampUs), data: packet });
-      timestampUs += packetDuration(packet);
+      const durationUs = packetDuration(packet);
+      this.onPacket({
+        timestampUs: Math.round(timestampUs),
+        durationUs,
+        data: packet,
+      });
+      timestampUs += durationUs;
       at += size;
     }
   }

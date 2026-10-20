@@ -76,6 +76,7 @@ for (const [name, executablePath] of [
             samples: number[];
           }[] = [];
           const errors: string[] = [];
+          let wanted: { startMs: number; endMs: number } | undefined;
           const decoder = createProgressiveDecoder(
             (range: any) => {
               source.append(range);
@@ -86,6 +87,7 @@ for (const [name, executablePath] of [
               });
             },
             (e: Error) => errors.push(e.message),
+            () => wanted,
           );
           try {
             let sequence = 0;
@@ -107,7 +109,7 @@ for (const [name, executablePath] of [
               if (first >= 0)
                 onsetMs = Math.min(onsetMs, row.startMs + first / 16);
             }
-            return {
+            const initial = {
               decodedRanges: source.availableRanges(),
               onsetMs,
               sampleCount,
@@ -117,6 +119,35 @@ for (const [name, executablePath] of [
               bytesSent: end,
               bytesTotal: bytes.length,
               errors,
+            };
+            const before = rows.length;
+            wanted = { startMs: 6000, endMs: 7000 };
+            for (let at = end; at < bytes.length; at += 1024) {
+              await decoder.push({
+                generation: 0,
+                sequence,
+                init: sequence++ === 0,
+                mime: 'audio/webm; codecs="opus"',
+                data: bytes.slice(at, at + 1024).buffer,
+              });
+            }
+            const selected = rows
+              .slice(before)
+              .filter((row) => row.startMs >= 5800);
+            const read = await source.read(6000, 7000).catch((error: Error) => {
+              throw new Error(
+                `${error.message}; PCM=${JSON.stringify(source.availableRanges())}; selected=${selected[0]?.startMs}..${selected.at(-1)?.startMs}`,
+              );
+            });
+            return {
+              ...initial,
+              selected: {
+                count: selected.length,
+                startMs: selected[0]?.startMs,
+                endMs: selected.at(-1)?.startMs,
+                readSamples: read.pcm.length,
+              },
+              finalRanges: source.availableRanges(),
             };
           } finally {
             decoder.dispose();
@@ -134,6 +165,12 @@ for (const [name, executablePath] of [
       expect(result.rates).toEqual([16000]);
       expect(Math.abs(result.onsetMs - 1000)).toBeLessThanOrEqual(20);
       expect(result.lastMs).toBeLessThan(8000);
+      expect(result.selected.count).toBeGreaterThan(30);
+      expect(result.selected.count).toBeLessThan(70);
+      expect(result.selected.startMs).toBeGreaterThanOrEqual(5800);
+      expect(result.selected.endMs).toBeLessThan(7150);
+      expect(result.selected.readSamples).toBe(16000);
+      expect(result.finalRanges).toHaveLength(2);
       await test.info().attach("progressive-decoder.json", {
         body: JSON.stringify(result, null, 2),
         contentType: "application/json",

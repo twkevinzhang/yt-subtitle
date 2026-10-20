@@ -6,11 +6,13 @@ import type { PcmRange } from "./progressive-contracts";
 export class RangeAudioSource implements AudioSource {
   generation = 0;
   private chunks: PcmRange[] = [];
+  private ranges: TimeRange[] | undefined = [];
+  private pcmBytes = 0;
   private listeners = new Set<() => void>();
   private pins = new Set<TimeRange>();
   private disposed = false;
   private error?: Error;
-  private ended = false;
+  private terminalVerified = false;
   private peak = 0;
   constructor(
     readonly durationMs: number,
@@ -20,7 +22,7 @@ export class RangeAudioSource implements AudioSource {
   ) {}
   stats() {
     return {
-      pcmBytes: this.chunks.reduce((n, c) => n + c.pcm.byteLength, 0),
+      pcmBytes: this.pcmBytes,
       peakPcmBytes: this.peak,
       generation: this.generation,
     };
@@ -41,8 +43,10 @@ export class RangeAudioSource implements AudioSource {
   reset(generation: number) {
     if (generation <= this.generation) return;
     this.generation = generation;
-    this.ended = false;
+    this.terminalVerified = false;
     this.chunks = [];
+    this.ranges = [];
+    this.pcmBytes = 0;
     this.notify();
   }
   append(chunk: PcmRange) {
@@ -62,7 +66,12 @@ export class RangeAudioSource implements AudioSource {
     const copy = { ...chunk, pcm: chunk.pcm.slice(0, count) };
     if (copy.pcm.byteLength > this.maxBytes) throw new Error("PCM 超過 64 MiB");
     // Decoder emits non-overlapping ranges in a generation; don't replace trusted samples.
+    const lastChunk = this.chunks.at(-1);
+    const follows =
+      !lastChunk ||
+      copy.startMs >= lastChunk.startMs + lastChunk.pcm.length / 16;
     if (
+      !follows &&
       this.chunks.some(
         (c) =>
           c.startMs <= copy.startMs &&
@@ -71,8 +80,18 @@ export class RangeAudioSource implements AudioSource {
     )
       return;
     this.chunks.push(copy);
-    this.chunks.sort((a, b) => a.startMs - b.startMs);
-    while (this.stats().pcmBytes > this.maxBytes) {
+    this.pcmBytes += copy.pcm.byteLength;
+    if (!follows) {
+      this.chunks.sort((a, b) => a.startMs - b.startMs);
+      this.ranges = undefined;
+    } else if (this.ranges) {
+      const last = this.ranges.at(-1),
+        endMs = copy.startMs + copy.pcm.length / 16;
+      if (last && Math.round(copy.startMs * 16) <= Math.round(last.endMs * 16))
+        last.endMs = Math.max(last.endMs, endMs);
+      else this.ranges.push({ startMs: copy.startMs, endMs });
+    }
+    while (this.pcmBytes > this.maxBytes) {
       const index = this.chunks.findIndex(
         (c) =>
           !this.pins.size ||
@@ -85,12 +104,18 @@ export class RangeAudioSource implements AudioSource {
         this.fail(new Error("在途音訊超過 64 MiB"));
         return;
       }
+      this.pcmBytes -= this.chunks[index].pcm.byteLength;
       this.chunks.splice(index, 1);
+      this.ranges = undefined;
     }
-    this.peak = Math.max(this.peak, this.stats().pcmBytes);
+    this.peak = Math.max(this.peak, this.pcmBytes);
     this.notify();
   }
   availableRanges(): TimeRange[] {
+    return this.coverage().map((r) => ({ ...r }));
+  }
+  private coverage(): TimeRange[] {
+    if (this.ranges) return this.ranges;
     const ranges: TimeRange[] = [];
     for (const c of this.chunks) {
       const endMs = c.startMs + c.pcm.length / 16,
@@ -99,22 +124,26 @@ export class RangeAudioSource implements AudioSource {
         last.endMs = Math.max(last.endMs, endMs);
       else ranges.push({ startMs: c.startMs, endMs });
     }
+    this.ranges = ranges;
     return ranges;
   }
   private has(r: TimeRange) {
-    return this.availableRanges().some(
+    return this.coverage().some(
       (a) =>
         Math.round(a.startMs * 16) <= Math.round(r.startMs * 16) &&
         Math.round(a.endMs * 16) >= Math.round(r.endMs * 16),
     );
   }
   finish(generation: number) {
+    this.confirmTail(generation);
+  }
+  confirmTail(generation: number) {
     if (generation !== this.generation || this.disposed) return;
-    this.ended = true;
+    this.terminalVerified = true;
     this.notify();
   }
   readableRange(range: TimeRange): TimeRange {
-    if (this.ended && range.endMs === this.durationMs) {
+    if (this.terminalVerified && range.endMs === this.durationMs) {
       const tail = this.availableRanges().find(
         (r) =>
           r.startMs <= range.startMs &&
@@ -206,6 +235,8 @@ export class RangeAudioSource implements AudioSource {
     if (this.disposed) return;
     this.disposed = true;
     this.chunks = [];
+    this.ranges = [];
+    this.pcmBytes = 0;
     this.notify();
     this.listeners.clear();
     this.cleanup();

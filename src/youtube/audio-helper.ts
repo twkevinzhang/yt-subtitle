@@ -39,7 +39,9 @@ if (
     requestedSeek = false,
     rangeStarted = performance.now(),
     parked = false,
-    eofSent = false;
+    eofSent = false,
+    tailSent = false,
+    rangeCleared = false;
   type Player = HTMLElement & {
     playVideo?(): void;
     pauseVideo?(): void;
@@ -113,6 +115,8 @@ if (
         return;
       requested = m.range;
       eofSent = false;
+      tailSent = false;
+      rangeCleared = false;
       lastSeek = m.range.startMs / 1000;
       requestedSeek = true;
       parked = false;
@@ -127,6 +131,8 @@ if (
   const resetCapture = (reason: string) => {
     generation++;
     eofSent = false;
+    tailSent = false;
+    rangeCleared = false;
     coverage = new AudioCoverage();
     bytes = 0;
     sequence = 0;
@@ -391,24 +397,31 @@ if (
     const capturingCurrent =
       !!audioSource &&
       sources.get(video.src || video.currentSrc) === audioSource;
-    // EOF is a native content lifecycle signal, never an inference from buffered
-    // ranges alone. The receiver drains its decoder and retains only real PCM.
-    if (
+    const verifiedTail =
       streaming &&
-      !eofSent &&
       requested &&
       state === "content" &&
       capturingCurrent &&
       audioBuffer &&
       initializedGeneration.get(audioBuffer) === generation &&
-      (video.ended || audioSource?.readyState === "ended") &&
       Number.isFinite(video.duration) &&
       video.duration > 0 &&
       (!expectedDuration ||
         Math.abs(video.duration * 1000 - expectedDuration) <= 1000) &&
       (!player.getVideoData ||
         player.getVideoData().video_id === url.searchParams.get("v")) &&
-      coverage.edgeFrom(requested.startMs / 1000) >= video.duration - 0.08
+      coverage.edgeFrom(requested.startMs / 1000) >= video.duration - 0.08;
+    // YouTube can keep MSE open at song end. This only attests the native
+    // timeline; the receiver still requires actual PCM within 40ms of its end.
+    if (verifiedTail && !tailSent) {
+      tailSent = true;
+      send({ type: "tail", generation });
+    }
+    // Only actual EOF flushes the decoder; tail confirmation never does.
+    if (
+      verifiedTail &&
+      !eofSent &&
+      (video.ended || audioSource?.readyState === "ended")
     ) {
       eofSent = true;
       parked = true;
@@ -420,7 +433,7 @@ if (
       fail(
         state === "awaiting-content"
           ? "廣告結束後尚無法確認正片音訊初始化與時間軸"
-          : "音訊 15 秒沒有進度，請稍後重新校時",
+          : `音訊 15 秒沒有進度，請稍後重新校時（請求 ${requested?.startMs}–${requested?.endMs}；原生音訊尾端 ${requested ? coverage.edgeFrom(requested.startMs / 1000).toFixed(3) : "未知"} 秒；尾段確認 ${tailSent ? "是" : "否"}；正片來源 ${capturingCurrent ? "是" : "否"}；初始化 ${audioBuffer && initializedGeneration.get(audioBuffer) === generation ? "是" : "否"}；影片相符 ${!player.getVideoData || player.getVideoData().video_id === url.searchParams.get("v") ? "是" : "否"}；原生長度 ${video.duration}）`,
         "no-progress",
       );
       return;
@@ -431,6 +444,36 @@ if (
     }
     if (streaming && capturingCurrent && requested) {
       if (requestedSeek) {
+        if (audioBuffer?.updating) return;
+        // A missing PCM request can already be buffered by the native player
+        // from appends we did not capture. Refetch it once, rather than seeking
+        // over those bytes and waiting forever for them to be appended again.
+        if (requested.startMs > 0 && !rangeCleared && audioBuffer) {
+          rangeCleared = true;
+          const overlaps = Array.from(
+            { length: audioBuffer.buffered.length },
+            (_, i) => i,
+          ).some(
+            (i) =>
+              audioBuffer!.buffered.start(i) < requested!.endMs / 1000 &&
+              audioBuffer!.buffered.end(i) > requested!.startMs / 1000,
+          );
+          if (overlaps) {
+            coverage = new AudioCoverage();
+            try {
+              audioBuffer.remove(
+                requested.startMs / 1000,
+                requested.endMs / 1000,
+              );
+            } catch {
+              fail(
+                "無法重新取得輔助播放器的正片音訊；歌詞與已完成時間保留",
+                "refetch",
+              );
+            }
+            return;
+          }
+        }
         requestedSeek = false;
         seekStart = false;
         player.seekTo?.(requested.startMs / 1000, true);

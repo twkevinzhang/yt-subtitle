@@ -85,3 +85,33 @@ it("never clips an interior gap or a truncated song on EOF", () => {
     10000,
   );
 });
+it("accepts verified native tail without EOF only when real PCM reaches the final codec tolerance", async () => {
+  const audio = new RangeAudioSource(10000, () => {});
+  const wanted = { startMs: 8000, endMs: 10000 };
+  audio.confirmTail(0);
+  expect(audio.readableRange(wanted)).toEqual(wanted);
+  const pending = audio.ensure(wanted, new AbortController().signal);
+  audio.append(range(8000, 9992.5));
+  await pending;
+  expect(audio.readableRange(wanted).endMs).toBe(9992.5);
+  expect(audio.availableRanges()).toEqual([{ startMs: 8000, endMs: 9992.5 }]);
+  audio.dispose();
+});
+it("keeps cached coverage and byte totals correct across out-of-order appends, eviction and reset", () => {
+  const audio = new RangeAudioSource(10000, () => {}, 128000);
+  audio.append(range(2000, 3000));
+  audio.append(range(0, 1000));
+  const snapshot = audio.availableRanges();
+  snapshot[0].endMs = 9000;
+  audio.append(range(1000, 2000));
+  expect(audio.availableRanges()).toEqual([{ startMs: 1000, endMs: 3000 }]);
+  expect(audio.stats().pcmBytes).toBe(128000);
+  audio.append(range(1000, 2000));
+  expect(audio.stats().pcmBytes).toBe(128000);
+  audio.reset(1);
+  expect(audio.availableRanges()).toEqual([]);
+  expect(audio.stats().pcmBytes).toBe(0);
+  audio.append(range(0, 1000, 1));
+  audio.dispose();
+  expect(audio.stats().pcmBytes).toBe(0);
+});
