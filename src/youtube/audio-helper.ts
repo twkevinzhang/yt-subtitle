@@ -38,7 +38,8 @@ if (
   let requested: { startMs: number; endMs: number } | undefined,
     requestedSeek = false,
     rangeStarted = performance.now(),
-    parked = false;
+    parked = false,
+    eofSent = false;
   type Player = HTMLElement & {
     playVideo?(): void;
     pauseVideo?(): void;
@@ -102,16 +103,30 @@ if (
       m.range.endMs > m.range.startMs &&
       m.range.endMs - m.range.startMs <= 30000
     ) {
+      // A load notification can arrive after early PCM already parked this range.
+      // Repeating the same request must not restart playback, seeking or its deadline.
+      if (
+        requested &&
+        requested.startMs === m.range.startMs &&
+        requested.endMs === m.range.endMs
+      )
+        return;
       requested = m.range;
+      eofSent = false;
+      lastSeek = m.range.startMs / 1000;
       requestedSeek = true;
       parked = false;
       rangeStarted = performance.now();
       lastProgress = performance.now();
     }
   }
-  if (streaming) window.addEventListener("message", control);
+  if (streaming) {
+    window.addEventListener("message", control);
+    send({ type: "ready" });
+  }
   const resetCapture = (reason: string) => {
     generation++;
+    eofSent = false;
     coverage = new AudioCoverage();
     bytes = 0;
     sequence = 0;
@@ -151,6 +166,24 @@ if (
     const buffer = original.call(this, mime);
     if (!mime.startsWith("audio/")) return buffer;
     const append = buffer.appendBuffer;
+    const abort = buffer.abort;
+    if (abort)
+      buffer.abort = function () {
+        const result = abort.call(this);
+        const video = document.querySelector("video");
+        const player = document.querySelector("#movie_player");
+        if (
+          !stopped &&
+          !observeAd(player) &&
+          state === "content" &&
+          audioBuffer === buffer &&
+          initializedGeneration.get(buffer) === generation &&
+          video &&
+          sources.get(video.src || video.currentSrc) === source
+        )
+          send({ type: "discontinuity", generation });
+        return result;
+      };
     buffer.appendBuffer = function (data) {
       if (stopped) return append.call(this, data);
       const video = document.querySelector("video");
@@ -289,14 +322,16 @@ if (
       )
         return;
       appendGeneration.delete(buffer);
-      const previous = coverage.edge;
+      const position = streaming && requested ? requested.startMs / 1000 : 0;
+      const previous = coverage.edgeFrom(position);
       coverage.add(
         Array.from({ length: buffer.buffered.length }, (_, i) => [
           buffer.buffered.start(i),
           buffer.buffered.end(i),
         ]),
       );
-      if (coverage.edge > previous) lastProgress = performance.now();
+      if (coverage.edgeFrom(position) > previous)
+        lastProgress = performance.now();
       send({ type: "coverage", edge: coverage.edge, generation });
     });
     const changeType = buffer.changeType;
@@ -353,6 +388,34 @@ if (
       player.pauseVideo?.();
       return;
     }
+    const capturingCurrent =
+      !!audioSource &&
+      sources.get(video.src || video.currentSrc) === audioSource;
+    // EOF is a native content lifecycle signal, never an inference from buffered
+    // ranges alone. The receiver drains its decoder and retains only real PCM.
+    if (
+      streaming &&
+      !eofSent &&
+      requested &&
+      state === "content" &&
+      capturingCurrent &&
+      audioBuffer &&
+      initializedGeneration.get(audioBuffer) === generation &&
+      (video.ended || audioSource?.readyState === "ended") &&
+      Number.isFinite(video.duration) &&
+      video.duration > 0 &&
+      (!expectedDuration ||
+        Math.abs(video.duration * 1000 - expectedDuration) <= 1000) &&
+      (!player.getVideoData ||
+        player.getVideoData().video_id === url.searchParams.get("v")) &&
+      coverage.edgeFrom(requested.startMs / 1000) >= video.duration - 0.08
+    ) {
+      eofSent = true;
+      parked = true;
+      player.pauseVideo?.();
+      send({ type: "eof", generation });
+      return;
+    }
     if (performance.now() - lastProgress > 15000) {
       fail(
         state === "awaiting-content"
@@ -366,14 +429,23 @@ if (
       if (video.paused) player.playVideo();
       return;
     }
-    const capturingCurrent =
-      !!audioSource &&
-      sources.get(video.src || video.currentSrc) === audioSource;
     if (streaming && capturingCurrent && requested) {
       if (requestedSeek) {
         requestedSeek = false;
         seekStart = false;
         player.seekTo?.(requested.startMs / 1000, true);
+        return;
+      }
+      // Move through audio we already own, rather than waiting for video playback
+      // to exhaust a parked native buffer. This never skips an uncaptured gap.
+      const edge = coverage.edgeFrom(requested.startMs / 1000);
+      if (
+        edge > requested.startMs / 1000 &&
+        edge < requested.endMs / 1000 &&
+        edge > lastSeek + 1
+      ) {
+        lastSeek = edge;
+        player.seekTo?.(Math.max(requested.startMs / 1000, edge - 0.15), true);
         return;
       }
       // Native buffered coverage is not decoded PCM coverage. Only the receiver

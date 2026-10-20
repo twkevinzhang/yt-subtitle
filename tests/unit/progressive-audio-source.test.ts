@@ -44,3 +44,44 @@ it("resolves only after PCM arrives and evicts consumed cache within its bound",
   expect(audio.availableRanges()[0].startMs).toBe(1000);
   audio.dispose();
 });
+it("clips only a verified terminal codec tail without manufacturing PCM", async () => {
+  const audio = new RangeAudioSource(10000, () => {});
+  audio.append(range(8000, 9987));
+  const requested = { startMs: 8000, endMs: 10000 };
+  expect(audio.readableRange(requested)).toEqual(requested);
+  const pending = audio.ensure(requested, new AbortController().signal);
+  audio.finish(0);
+  await pending;
+  expect(audio.readableRange(requested)).toEqual({
+    startMs: 8000,
+    endMs: 9987,
+  });
+  await expect(audio.read(8000, 10000)).rejects.toThrow();
+  expect((await audio.read(8000, 9987)).pcm).toHaveLength(1987 * 16);
+  expect(audio.availableRanges()).toEqual([{ startMs: 8000, endMs: 9987 }]);
+  audio.reset(1);
+  audio.append(range(8000, 9987, 1));
+  audio.finish(0);
+  expect(audio.readableRange(requested)).toEqual(requested);
+  audio.dispose();
+});
+it("never clips an interior gap or a truncated song on EOF", () => {
+  const audio = new RangeAudioSource(10000, () => {});
+  audio.append(range(8000, 9000));
+  audio.append(range(9013, 9987));
+  audio.finish(0);
+  expect(audio.readableRange({ startMs: 8000, endMs: 10000 })).toEqual({
+    startMs: 8000,
+    endMs: 10000,
+  });
+  expect(audio.readableRange({ startMs: 8000, endMs: 9010 })).toEqual({
+    startMs: 8000,
+    endMs: 9010,
+  });
+  const truncated = new RangeAudioSource(10000, () => {});
+  truncated.append(range(8000, 9900));
+  truncated.finish(0);
+  expect(truncated.readableRange({ startMs: 8000, endMs: 10000 }).endMs).toBe(
+    10000,
+  );
+});

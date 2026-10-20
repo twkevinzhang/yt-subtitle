@@ -135,6 +135,8 @@ export const localInferenceSchema = z.object({
   operation: z.enum(["prepare", "transcribe", "align"]),
   assetId: z.string().optional(),
   language: z.enum(["ja", "zh", "en", "auto"]).optional(),
+  leadingText: z.string().max(4000).optional(),
+  trailingText: z.string().max(4000).optional(),
   segment: segmentSchema.optional(),
   lines: z.array(lineSchema).max(10000).optional(),
 });

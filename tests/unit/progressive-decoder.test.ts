@@ -65,6 +65,16 @@ it("emits_before_eof", async () => {
   expect(outputs.every((r) => r.startMs >= 0 && r.pcm.length > 0)).toBe(true);
   decoder.dispose();
 });
+it("flushes only on terminal finish, after submitted packets", async () => {
+  const decoder = setup();
+  await decoder.push(chunk(fixture));
+  const flush = vi.spyOn(decoders[0], "flush");
+  expect(flush).not.toHaveBeenCalled();
+  await decoder.finish();
+  expect(flush).toHaveBeenCalledTimes(1);
+  decoder.dispose();
+  await expect(decoder.finish()).rejects.toThrow();
+});
 it("split_headers_and_clusters", async () => {
   const decoder = setup();
   for (

@@ -23,7 +23,14 @@ export class AudioCoverage {
     }
   }
   get edge() {
-    return this.ranges[0]?.[0] <= 0.08 ? this.ranges[0][1] : 0;
+    return this.edgeFrom(0);
+  }
+  edgeFrom(position: number) {
+    return (
+      this.ranges.find(
+        (r) => r[0] <= position + 0.08 && r[1] > position,
+      )?.[1] ?? 0
+    );
   }
   complete(duration: number) {
     return (

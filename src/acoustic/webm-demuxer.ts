@@ -70,11 +70,60 @@ export class WebmDemuxer {
   private scale = 1000000;
   private clusterTime = 0;
   private track?: OpusTrack;
+  private needsSegment = false;
+  private repeatedInitialization = false;
   constructor(
     private onTrack: (track: OpusTrack) => void,
     private onPacket: (packet: OpusPacket) => void,
   ) {}
-  push(data: Uint8Array) {
+  discontinuity() {
+    // SourceBuffer.abort() discards an unfinished media segment but retains the
+    // initialized track. Do not concatenate its remaining leaves with a seek.
+    this.bytes = new Uint8Array(0);
+    this.offset = 0;
+    this.stack = [];
+    this.clusterTime = 0;
+    this.needsSegment = true;
+  }
+  push(data: Uint8Array, nativeAppendBoundary = false) {
+    if (
+      nativeAppendBoundary &&
+      this.track &&
+      [0x1a, 0x45, 0xdf, 0xa3].every((b, i) => data[i] === b)
+    ) {
+      this.discontinuity();
+      this.needsSegment = false;
+      this.repeatedInitialization = true;
+    }
+    // MSE can append a new media segment after a seek without calling the
+    // instance abort wrapper. Recognize only a Cluster at the exact native
+    // append boundary with its first Timestamp child, never scan packet bytes.
+    if (
+      nativeAppendBoundary &&
+      this.track &&
+      data.length >= 4 &&
+      data[0] === 0x1f &&
+      data[1] === 0x43 &&
+      data[2] === 0xb6 &&
+      data[3] === 0x75
+    ) {
+      const id = vint(data, 0, true),
+        size = id?.value === 0x1f43b675 && vint(data, id.width);
+      if (id && size) {
+        const start = id.width + size.width,
+          time = vint(data, start, true),
+          length = time?.value === 0xe7 && vint(data, start + time.width);
+        if (
+          time &&
+          length &&
+          !length.unknown &&
+          length.value > 0 &&
+          length.value <= 8 &&
+          start + time.width + length.width + length.value <= data.length
+        )
+          this.discontinuity();
+      }
+    }
     if (this.bytes.length + data.length > LIMIT)
       throw new Error("壓縮音訊超過 64 MiB");
     const joined = new Uint8Array(this.bytes.length + data.length);
@@ -88,6 +137,11 @@ export class WebmDemuxer {
       const id = vint(this.bytes, at, true),
         size = id && vint(this.bytes, at + id.width);
       if (!id || !size) break;
+      if (this.needsSegment) {
+        if (id.value !== 0x1f43b675)
+          throw new Error("跳轉後缺少完整 WebM Cluster 邊界");
+        this.needsSegment = false;
+      }
       const start = at + id.width + size.width;
       // A new level-1 element ends a preceding unknown-size Cluster.
       if (
@@ -101,8 +155,12 @@ export class WebmDemuxer {
         throw new Error("不支援未知長度 WebM 元素");
       const end = size.unknown ? Infinity : this.offset + start + size.value;
       if (end > (this.stack.at(-1)?.end ?? Infinity))
-        throw new Error("WebM 元素超出容器");
+        throw new Error(
+          `WebM 元素超出容器（元素 ${id.value.toString(16)}，位置 ${this.offset + at}，結尾 ${end}，容器 ${this.stack.at(-1)?.id.toString(16)}／${this.stack.at(-1)?.end}）`,
+        );
       if (container) {
+        if (id.value === 0x1f43b675 && this.repeatedInitialization)
+          throw new Error("重送 WebM 初始化缺少音軌確認");
         this.stack.push({ id: id.value, end });
         if (id.value === 0x1f43b675) this.clusterTime = 0;
         at = start;
@@ -119,13 +177,17 @@ export class WebmDemuxer {
   private element(id: number, data: Uint8Array) {
     if (id === 0x1549a966) {
       for (const c of children(data))
-        if (c.id === 0x2ad7b1) this.scale = uint(c.data);
+        if (c.id === 0x2ad7b1) {
+          const scale = uint(c.data);
+          if (this.repeatedInitialization && scale !== this.scale)
+            throw new Error("重送 WebM 初始化的時間軸比例不同");
+          this.scale = scale;
+        }
       if (!this.scale) throw new Error("WebM TimestampScale 無效");
     } else if (id === 0xae) {
       const fields = children(data),
         get = (key: number) => fields.find((c) => c.id === key)?.data;
       if (uint(get(0x83) ?? new Uint8Array([0])) !== 2) return;
-      if (this.track) throw new Error("不支援多音軌 WebM");
       const codec = new TextDecoder().decode(get(0x86));
       if (codec !== "A_OPUS") throw new Error("不支援的 WebM 音訊 codec");
       const description = get(0x63a2);
@@ -139,7 +201,7 @@ export class WebmDemuxer {
       const channels = description[9];
       if (channels < 1 || channels > 2) throw new Error("不支援的 Opus 聲道數");
       const delay = get(0x56aa);
-      this.track = {
+      const nextTrack = {
         number: uint(get(0xd7) ?? new Uint8Array([0])),
         channels,
         description: description.slice(),
@@ -147,6 +209,21 @@ export class WebmDemuxer {
           ? uint(delay) / 1000
           : ((description[10] + description[11] * 256) / 48) * 1000,
       };
+      if (this.track) {
+        const prior = this.track;
+        if (
+          !this.repeatedInitialization ||
+          nextTrack.number !== prior.number ||
+          nextTrack.channels !== prior.channels ||
+          nextTrack.delayUs !== prior.delayUs ||
+          nextTrack.description.length !== prior.description.length ||
+          nextTrack.description.some((b, i) => b !== prior.description[i])
+        )
+          throw new Error("WebM 音軌初始化不一致或包含多音軌");
+        this.repeatedInitialization = false;
+        return;
+      }
+      this.track = nextTrack;
       this.onTrack(this.track);
     } else if (id === 0xe7) this.clusterTime = uint(data);
     else if (id === 0xa3 || id === 0xa1) this.block(data);

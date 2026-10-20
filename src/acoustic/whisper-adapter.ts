@@ -46,6 +46,7 @@ export class WhisperAdapter {
     lines,
     pcm,
     leadingText,
+    trailingText,
   }: AcousticInput): Promise<AlignedLine[]> {
     segmentSchema.parse(segment);
     assertSegmentLines(
@@ -65,6 +66,14 @@ export class WhisperAdapter {
       selected.unshift({
         id: "__audio-context",
         original: leadingText,
+        cueIds: [],
+        status: "unaligned",
+        excluded: false,
+      });
+    if (trailingText?.trim())
+      selected.push({
+        id: "__audio-context-end",
+        original: trailingText,
         cueIds: [],
         status: "unaligned",
         excluded: false,

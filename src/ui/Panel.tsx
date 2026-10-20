@@ -420,6 +420,16 @@ export function Panel({
       </header>
       <div className="workspace">
         <section className="panel-body stack" aria-label="歌詞操作與設定">
+          {!!notice && (
+            <p role="status" className="notice">
+              {notice}
+            </p>
+          )}
+          {!!error && (
+            <p role="alert" className="error">
+              {error}
+            </p>
+          )}
           {!video ? (
             <ContentSkeleton label="正在載入影片資訊" />
           ) : (
@@ -612,13 +622,25 @@ export function Panel({
                     {modeNames[runMode]}：
                     {work.progress?.phase === "loading"
                       ? "模型載入中"
-                      : `已完成 ${lines.filter((l) => !l.excluded && l.startMs !== undefined && l.endMs !== undefined).length}／${lines.filter((l) => !l.excluded).length} 句`}
+                      : `${work.progress?.phase === "buffering" ? "取得正片音訊中" : "本機辨識與校時中"}，已檢查 ${work.progress?.checked.length ?? 0} 個音訊區段`}
                   </p>
                   <button onClick={() => void attempt(() => work.cancel())}>
                     取消補時
                   </button>
                 </>
               )}
+              <p>
+                已校時{" "}
+                {
+                  lines.filter(
+                    (l) =>
+                      !l.excluded &&
+                      l.startMs !== undefined &&
+                      l.endMs !== undefined,
+                  ).length
+                }
+                ／{lines.filter((l) => !l.excluded).length} 句
+              </p>
               <p>待處理 {pending.length} 句</p>
               <label>
                 <input
@@ -752,16 +774,6 @@ export function Panel({
                 </article>
               ))}
             </section>
-          )}
-          {!!notice && (
-            <p role="status" className="notice">
-              {notice}
-            </p>
-          )}
-          {!!error && (
-            <p role="alert" className="error">
-              {error}
-            </p>
           )}
         </section>
       </div>

@@ -8,6 +8,7 @@ import {
 } from "./contracts";
 export interface AcousticInput {
   leadingText?: string;
+  trailingText?: string;
   segment: Segment;
   lines: AlignedLine[];
   pcm: Float32Array;

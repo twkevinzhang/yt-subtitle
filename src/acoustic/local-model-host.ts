@@ -40,6 +40,8 @@ export class LocalModelHost {
       if (!input.segment || !input.lines) throw new Error("缺少逐句校時資料");
       return this.session.align({
         pcm,
+        leadingText: input.leadingText,
+        trailingText: input.trailingText,
         segment: input.segment,
         lines: input.lines,
       });

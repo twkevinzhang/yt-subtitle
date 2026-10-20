@@ -13,6 +13,8 @@ export interface PcmRange {
 }
 export interface ProgressiveDecoder {
   push(chunk: AudioChunk): Promise<void>;
+  finish(): Promise<void>;
+  discontinuity(): Promise<void>;
   reset(generation: number): void;
   dispose(): void;
 }

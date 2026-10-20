@@ -122,6 +122,36 @@ export function createProgressiveDecoder(
   const demux = () => new WebmDemuxer(track, (packet) => packets.push(packet));
   let parser = demux();
   return {
+    async discontinuity() {
+      const expected = token;
+      await queued;
+      if (disposed || failed || expected !== token)
+        throw new Error("解碼器已停止");
+      parser.discontinuity();
+    },
+    async finish() {
+      const expected = token;
+      await queued;
+      if (disposed || failed || expected !== token)
+        throw new Error("解碼器已停止");
+      // Flush once at verified content EOF, never between streaming appends.
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await Promise.race([
+          native?.flush(),
+          new Promise<never>((_, reject) => {
+            timer = setTimeout(
+              () => reject(new Error("音訊收尾達 5 秒上限")),
+              5000,
+            );
+          }),
+        ]);
+      } finally {
+        clearTimeout(timer);
+      }
+      if (disposed || failed || expected !== token)
+        throw new Error("音訊 generation 已改變");
+    },
     push(chunk: AudioChunk) {
       const expected = token;
       const task = queued.then(async () => {
@@ -135,7 +165,7 @@ export function createProgressiveDecoder(
         if (!globals.AudioDecoder || !globals.EncodedAudioChunk)
           throw new Error("瀏覽器不支援 Audio WebCodecs");
         sequence++;
-        parser.push(new Uint8Array(chunk.data));
+        parser.push(new Uint8Array(chunk.data), true);
         await configure;
         if (expected !== token || disposed)
           throw new Error("音訊 generation 已改變");

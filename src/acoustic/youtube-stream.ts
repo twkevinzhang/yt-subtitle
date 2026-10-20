@@ -18,6 +18,7 @@ export function createProgressiveAudioSource(
     peakCompressedBytes = 0,
     maximumEnd = 0,
     decodeEpoch = 0,
+    helperGeneration = 0,
     chain: Promise<void> = Promise.resolve(),
     disposed = false;
   const command = (action: string) =>
@@ -59,6 +60,7 @@ export function createProgressiveAudioSource(
     },
   );
   function open() {
+    helperGeneration = 0;
     nonce = crypto.randomUUID();
     frame = document.createElement("iframe");
     frame.src = `https://www.youtube.com/watch?v=${key.videoId}&ai-lyrics-audio=${nonce}&ai-lyrics-duration=${durationMs}&ai-lyrics-stream=1&autoplay=1&mute=1`;
@@ -105,11 +107,17 @@ export function createProgressiveAudioSource(
     const m = event.data,
       ownFrame = frame,
       ownDecoder = decoder!;
+    if (m.type === "ready") {
+      command("range");
+      return;
+    }
     if (m.type === "reset") {
+      helperGeneration = m.generation;
       source.reset(source.generation + 1);
       maximumEnd = 0;
     }
     const messageEpoch = source.generation;
+    if (m.type === "eof" && m.generation !== helperGeneration) return;
     if (m.type === "status")
       onNotice(
         m.state === "waiting-ad"
@@ -119,7 +127,15 @@ export function createProgressiveAudioSource(
             : "繼續取得正片音訊…",
       );
     if (m.type === "error") {
-      source.fail(new Error(m.message));
+      const ranges = source
+        .availableRanges()
+        .map((r) => `${r.startMs.toFixed(1)}–${r.endMs.toFixed(1)}`)
+        .join(", ");
+      source.fail(
+        new Error(
+          `${m.message}${m.code === "no-progress" ? `（已解碼毫秒：${ranges || "無"}）` : ""}`,
+        ),
+      );
       return;
     }
     if (m.type === "chunk") {
@@ -134,7 +150,13 @@ export function createProgressiveAudioSource(
         return;
       }
     }
-    if (m.type !== "reset" && m.type !== "chunk") return;
+    if (
+      m.type !== "reset" &&
+      m.type !== "chunk" &&
+      m.type !== "eof" &&
+      m.type !== "discontinuity"
+    )
+      return;
     // Reset waits for preceding decode work; its PCM is invalidated before the next generation.
     chain = chain
       .then(async () => {
@@ -144,6 +166,35 @@ export function createProgressiveAudioSource(
           return;
         }
         decodeEpoch = messageEpoch;
+        if (m.type === "discontinuity") {
+          if (
+            messageEpoch === source.generation &&
+            m.generation === helperGeneration
+          )
+            await ownDecoder.discontinuity();
+          return;
+        }
+        if (m.type === "eof") {
+          if (messageEpoch !== source.generation) return;
+          await ownDecoder.finish();
+          source.finish(messageEpoch);
+          if (messageEpoch === source.generation && wanted) {
+            const actual = source.readableRange(wanted);
+            if (
+              !source
+                .availableRanges()
+                .some(
+                  (r) => r.startMs <= actual.startMs && r.endMs >= actual.endMs,
+                )
+            )
+              source.fail(
+                new Error(
+                  "正片已結束，但解碼音訊仍有缺口；歌詞與已完成時間均已保留",
+                ),
+              );
+          }
+          return;
+        }
         try {
           await ownDecoder.push({
             generation: m.generation,

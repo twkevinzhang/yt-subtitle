@@ -57,3 +57,47 @@ it("rejects concurrent requests and invalid PCM", async () => {
     }),
   ).rejects.toThrow(/30/);
 });
+it("passes recognized surrounding speech through the local host for precise short-line alignment", async () => {
+  const align = vi.fn(async () => []);
+  const host = new LocalModelHost(
+    {
+      ensureReady: async () => {},
+      transcribe: async () => "",
+      align,
+      cancel: () => {},
+    },
+    async () => new Float32Array(16000).buffer,
+  );
+  await host.infer({
+    key,
+    operation: "align",
+    assetId: "pcm",
+    leadingText: "recognized before",
+    trailingText: "recognized after",
+    lines: [
+      {
+        id: "line",
+        original: "世界はイビツで",
+        cueIds: [],
+        status: "unaligned",
+        excluded: false,
+      },
+    ],
+    segment: {
+      id: "s",
+      lineIds: ["line"],
+      contextLineIds: [],
+      startMs: 0,
+      endMs: 1000,
+      language: "ja",
+      evidenceCueIds: [],
+      occurrence: 1,
+    },
+  });
+  expect(align).toHaveBeenCalledWith(
+    expect.objectContaining({
+      leadingText: "recognized before",
+      trailingText: "recognized after",
+    }),
+  );
+});

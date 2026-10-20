@@ -16,6 +16,7 @@ export const lyricLanguage = (text: string): "en" | "ja" | "zh" =>
       ? "en"
       : "zh";
 export interface LocationResult {
+  contexts?: Record<string, { leadingText: string; trailingText: string }>;
   segments: Segment[];
   checked: TimeRange[];
   ambiguousLineIds: string[];
@@ -65,7 +66,65 @@ export function matchLyricWindow(
     ambiguousLineIds: [],
     silent: [],
   };
-  if (!best) return result;
+  if (!best) {
+    // A noisy passage need not invalidate a whole, uniquely recognized line.
+    // Only exact, nontrivial anchors qualify here; neighbors receive no time.
+    const anchors = texts.flatMap((text, index) => {
+      const line = lines[index];
+      const cjk = /[\p{Script=Han}ぁ-ヿ]/u.test(text);
+      if (
+        line.excluded ||
+        (line.startMs !== undefined && line.endMs !== undefined) ||
+        text.length < (cjk ? 6 : 24) ||
+        (!cjk &&
+          ((line.alignmentText ?? line.original).match(/\p{L}+/gu) ?? [])
+            .length < 4) ||
+        texts.filter((other) => other.includes(text)).length !== 1
+      )
+        return [];
+      const at = obs.indexOf(text);
+      if (at < 0 || obs.indexOf(text, at + 1) >= 0) return [];
+      const before = [...lines.slice(0, index)]
+        .reverse()
+        .find((l) => l.endMs !== undefined);
+      const after = lines.slice(index + 1).find((l) => l.startMs !== undefined);
+      const startMs = Math.max(range.startMs, before?.endMs ?? 0);
+      const endMs = Math.min(range.endMs, after?.startMs ?? Infinity);
+      // Context was recognized from the entire lookup PCM. Keep that exact
+      // window; neighboring source locks are enforced on the inferred result.
+      return endMs > startMs ? [{ index, at, ...range }] : [];
+    });
+    if (anchors.some((a, i) => i > 0 && a.at <= anchors[i - 1].at))
+      return result;
+    const positions: number[] = [];
+    let offset = 0;
+    for (const char of observed) {
+      for (let i = 0; i < normalize(char).length; i++) positions.push(offset);
+      offset += char.length;
+    }
+    positions.push(observed.length);
+    result.contexts = {};
+    result.segments = anchors.map((a) => ({
+      id: `anchor-${a.index}-${Math.round(a.startMs)}`,
+      lineIds: [lines[a.index].id],
+      contextLineIds: [],
+      startMs: a.startMs,
+      endMs: a.endMs,
+      language: lyricLanguage(
+        lines[a.index].alignmentText ?? lines[a.index].original,
+      ),
+      evidenceCueIds: [],
+      occurrence: 1,
+    }));
+    for (let i = 0; i < anchors.length; i++) {
+      const a = anchors[i];
+      result.contexts[result.segments[i].id] = {
+        leadingText: observed.slice(0, positions[a.at]),
+        trailingText: observed.slice(positions[a.at + texts[a.index].length]),
+      };
+    }
+    return result;
+  }
   // Completed passages still explain speech heard inside this lookup window.
   // Removing them from competition can turn a later chorus into a false unique hit.
   for (let from = 0; from < lines.length; from++) {
@@ -144,13 +203,37 @@ export async function locateLyrics(
 ): Promise<LocationResult> {
   await audio.ensure(range, signal);
   if (signal.aborted) throw new Error("工作已取消");
+  range = audio.readableRange(range);
   const { pcm } = await audio.read(range.startMs, range.endMs);
+  const generation = audio.generation;
   const rms = Math.sqrt(
     pcm.reduce((n, v) => n + v * v, 0) / Math.max(1, pcm.length),
   );
-  const text = await recognizer.transcribe({ pcm, language: "auto" });
+  let text = await recognizer.transcribe({ pcm, language: "auto" });
   if (signal.aborted) throw new Error("工作已取消");
-  const result = matchLyricWindow(lines, text, range);
+  let result = matchLyricWindow(lines, text, range);
+  // Music can make automatic language detection transcribe Japanese as repeated
+  // English. Recheck once with a script hint, still recognizing audio alone.
+  const language = lyricLanguage(
+    lines
+      .filter(
+        (l) =>
+          !l.excluded && (l.startMs === undefined || l.endMs === undefined),
+      )
+      .map((l) => l.alignmentText ?? l.original)
+      .join(" "),
+  );
+  if (
+    !result.segments.length &&
+    !result.ambiguousLineIds.length &&
+    language !== "en" &&
+    (text.trim() || rms >= 0.003) &&
+    generation === audio.generation
+  ) {
+    text = await recognizer.transcribe({ pcm, language });
+    if (signal.aborted) throw new Error("工作已取消");
+    result = matchLyricWindow(lines, text, range);
+  }
   if (!text.trim() && rms < 0.003) result.silent.push(range);
   return result;
 }

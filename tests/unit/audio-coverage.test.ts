@@ -21,3 +21,14 @@ it("retains earlier coverage after SourceBuffer eviction and rejects bad ranges"
   expect(() => coverage.add([[130, 120]])).toThrow();
   expect(coverage.complete(0)).toBe(false);
 });
+it("tracks progress from a requested position without declaring gaps covered", () => {
+  const coverage = new AudioCoverage();
+  coverage.add([
+    [0, 20],
+    [120, 140],
+  ]);
+  expect(coverage.edgeFrom(125)).toBe(140);
+  expect(coverage.edgeFrom(60)).toBe(0);
+  expect(coverage.edge).toBe(20);
+  expect(coverage.complete(140)).toBe(false);
+});

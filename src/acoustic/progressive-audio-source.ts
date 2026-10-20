@@ -10,6 +10,7 @@ export class RangeAudioSource implements AudioSource {
   private pins = new Set<TimeRange>();
   private disposed = false;
   private error?: Error;
+  private ended = false;
   private peak = 0;
   constructor(
     readonly durationMs: number,
@@ -40,6 +41,7 @@ export class RangeAudioSource implements AudioSource {
   reset(generation: number) {
     if (generation <= this.generation) return;
     this.generation = generation;
+    this.ended = false;
     this.chunks = [];
     this.notify();
   }
@@ -106,6 +108,24 @@ export class RangeAudioSource implements AudioSource {
         Math.round(a.endMs * 16) >= Math.round(r.endMs * 16),
     );
   }
+  finish(generation: number) {
+    if (generation !== this.generation || this.disposed) return;
+    this.ended = true;
+    this.notify();
+  }
+  readableRange(range: TimeRange): TimeRange {
+    if (this.ended && range.endMs === this.durationMs) {
+      const tail = this.availableRanges().find(
+        (r) =>
+          r.startMs <= range.startMs &&
+          r.endMs > range.startMs &&
+          r.endMs < this.durationMs &&
+          this.durationMs - r.endMs <= 40,
+      );
+      if (tail) return { ...range, endMs: tail.endMs };
+    }
+    return range;
+  }
   ensure(range: TimeRange, signal: AbortSignal): Promise<void> {
     if (this.disposed || signal.aborted)
       return Promise.reject(new Error("音訊已取消"));
@@ -117,7 +137,7 @@ export class RangeAudioSource implements AudioSource {
       range.endMs - range.startMs > 30000
     )
       return Promise.reject(new Error("音訊區間不合法"));
-    if (this.has(range)) return Promise.resolve();
+    if (this.has(this.readableRange(range))) return Promise.resolve();
     return new Promise((resolve, reject) => {
       this.pins.add(range);
       const cleanup = () => {
@@ -134,7 +154,7 @@ export class RangeAudioSource implements AudioSource {
         if (this.error || this.disposed) {
           cleanup();
           reject(this.error ?? new Error("音訊已停止"));
-        } else if (this.has(range)) {
+        } else if (this.has(this.readableRange(range))) {
           cleanup();
           resolve();
         }

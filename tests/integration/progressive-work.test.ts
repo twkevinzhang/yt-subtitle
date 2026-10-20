@@ -156,3 +156,119 @@ it("never treats a lookup window as ready when only one subpassage was verified"
     ),
   ).toBe(true);
 });
+it("retains the recognized surrounding speech when aligning an exact anchor in a noisy window", async () => {
+  const lines = normalizeSubtitle("世界はイビツで", { kind: "paste" }, 10000);
+  const audio = new RangeAudioSource(10000, () => {});
+  audio.append({
+    generation: 0,
+    startMs: 0,
+    sampleRate: 16000,
+    pcm: new Float32Array(160000).fill(0.1),
+  });
+  const text =
+    "とんがったくつさきからのぞく世界はイビツで花につくかわくつな俺ばまたくつずれ";
+  let context: any;
+  const model = {
+    prepare: async () => {},
+    transcribe: async () => text,
+    cancel: async () => {},
+    align: async (input: any) => {
+      context = input;
+      return [{ ...lines[0], startMs: 4000, endMs: 5000 }];
+    },
+  };
+  const result = await runSubtitleAlignment(
+    {
+      key,
+      lines,
+      durationMs: 10000,
+      mode: "background",
+      signal: new AbortController().signal,
+    },
+    { source: () => audio, model, positionMs: () => 0, publish: () => {} },
+  );
+  expect(context.leadingText).toBe("とんがったくつさきからのぞく");
+  expect(context.trailingText).toBe("花につくかわくつな俺ばまたくつずれ");
+  expect(result.lines[0].original).toBe("世界はイビツで");
+  expect(result.phase).toBe("complete");
+});
+it("rejects a later exact anchor that crosses an already committed neighboring timestamp", async () => {
+  const lines = normalizeSubtitle(
+    "世界はイビツで\n今も忘れちゃないぜ",
+    { kind: "paste" },
+    10000,
+  );
+  const audio = new RangeAudioSource(10000, () => {});
+  audio.append({
+    generation: 0,
+    startMs: 0,
+    sampleRate: 16000,
+    pcm: new Float32Array(160000).fill(0.1),
+  });
+  const model = {
+    prepare: async () => {},
+    cancel: async () => {},
+    transcribe: async () =>
+      "あ".repeat(60) +
+      "世界はイビツで" +
+      "う".repeat(60) +
+      "今も忘れちゃないぜ" +
+      "え".repeat(60),
+    align: async (input: any) => [
+      {
+        ...lines.find((l) => l.id === input.segment.lineIds[0])!,
+        startMs: input.segment.lineIds[0] === "l0" ? 1000 : 2000,
+        endMs: input.segment.lineIds[0] === "l0" ? 3000 : 4000,
+      },
+    ],
+  };
+  const result = await runSubtitleAlignment(
+    {
+      key,
+      lines,
+      durationMs: 10000,
+      mode: "background",
+      signal: new AbortController().signal,
+    },
+    { source: () => audio, model, positionMs: () => 0, publish: () => {} },
+  );
+  expect(result.lines[0].endMs).toBe(3000);
+  expect(result.lines[1].startMs).toBeUndefined();
+});
+it("preserves existing overlapping source times while filling an unrelated later missing line", async () => {
+  const lines = normalizeSubtitle(
+    "first source\nsecond source\nhello world",
+    { kind: "paste" },
+    10000,
+  );
+  Object.assign(lines[0], { startMs: 1000, endMs: 3000, status: "anchor" });
+  Object.assign(lines[1], { startMs: 2000, endMs: 4000, status: "anchor" });
+  const audio = new RangeAudioSource(10000, () => {});
+  audio.append({
+    generation: 0,
+    startMs: 0,
+    sampleRate: 16000,
+    pcm: new Float32Array(160000).fill(0.1),
+  });
+  const model = {
+    prepare: async () => {},
+    cancel: async () => {},
+    transcribe: async () => "hello world",
+    align: async () => [{ ...lines[2], startMs: 5000, endMs: 6000 }],
+  };
+  const result = await runSubtitleAlignment(
+    {
+      key,
+      lines,
+      durationMs: 10000,
+      mode: "background",
+      signal: new AbortController().signal,
+    },
+    { source: () => audio, model, positionMs: () => 0, publish: () => {} },
+  );
+  expect(result.lines.map((l) => [l.startMs, l.endMs])).toEqual([
+    [1000, 3000],
+    [2000, 4000],
+    [5000, 6000],
+  ]);
+});

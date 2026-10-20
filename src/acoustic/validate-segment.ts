@@ -15,6 +15,7 @@ export function validateSegment(
     return fail("片段結果缺句或 ID 重複");
   const map = new Map(result.map((l) => [l.id, l]));
   let previousEnd = -Infinity;
+  let previousInferred = false;
   for (const original of all) {
     const row = map.get(original.id) ?? original;
     if (map.has(original.id)) {
@@ -42,11 +43,14 @@ export function validateSegment(
     }
     if (row.excluded) continue;
     if (row.startMs === undefined || row.endMs === undefined) continue;
-    if (row.startMs < previousEnd)
+    if (row.startMs < previousEnd && (map.has(row.id) || previousInferred))
       return fail(
         `句子與相鄰段落時間交錯（${row.id}: ${row.startMs} < ${previousEnd} ms）`,
       );
-    previousEnd = row.endMs;
+    if (row.endMs >= previousEnd) {
+      previousEnd = row.endMs;
+      previousInferred = map.has(row.id);
+    }
   }
   return { ok: true };
 }

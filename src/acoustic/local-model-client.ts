@@ -61,6 +61,8 @@ export function createLocalModelClient(key: JobKey, signal: AbortSignal) {
         input: {
           key,
           operation: "align",
+          leadingText: input.leadingText,
+          trailingText: input.trailingText,
           assetId,
           segment: input.segment,
           lines: input.lines,

@@ -103,3 +103,76 @@ it("keeps a timed chorus as competing evidence instead of locating a later untim
   expect(result.segments).toEqual([]);
   expect(result.ambiguousLineIds).toContain("l2");
 });
+it("rechecks a failed automatic language detection with the script of untimed lyrics, without a lyric prompt", async () => {
+  const audio = new RangeAudioSource(1000, () => {});
+  audio.append({
+    generation: 0,
+    startMs: 0,
+    sampleRate: 16000,
+    pcm: new Float32Array(16000).fill(0.2),
+  });
+  const calls: any[] = [];
+  const input = lines("ありあまるメルセデスベンツ\n泣く子も黙るブレぬセンス");
+  const result = await locateLyrics(
+    input,
+    { startMs: 0, endMs: 1000 },
+    audio,
+    {
+      transcribe: async (request) => {
+        calls.push(request);
+        return request.language === "ja"
+          ? "ありあまるメルセデスベンツ 泣く子も黙るブレぬセンス"
+          : "the more I talk about the more I talk about";
+      },
+    },
+    new AbortController().signal,
+  );
+  expect(result.segments).toHaveLength(1);
+  expect(calls.map((c) => c.language)).toEqual(["auto", "ja"]);
+  expect(
+    calls.every((c) => Object.keys(c).sort().join() === "language,pcm"),
+  ).toBe(true);
+  audio.dispose();
+});
+it("locates a unique complete lyric inside a noisy transcript without assigning time to its neighbors", () => {
+  const input = lines(
+    "とんがった口先じゃ何か言ったところで\n世界はイビツで\n鼻につく革靴\n治ればまた靴擦れ",
+  );
+  const result = matchLyricWindow(
+    input,
+    "トンガーたくつさきじゃなに描いたところで ツリー上がったしっかりからの属 世界はイビツで 花につくかわくつ な俺ばまたくつずれ",
+    { startMs: 24000, endMs: 50000 },
+  );
+  expect(result.segments.map((s) => s.lineIds)).toEqual([["l1"]]);
+  expect(result.contexts?.[result.segments[0].id]?.leadingText).toContain(
+    "トンガー",
+  );
+  expect(result.contexts?.[result.segments[0].id]?.trailingText).toContain(
+    "花につく",
+  );
+  expect(input.every((l) => l.startMs === undefined)).toBe(true);
+  expect(
+    matchLyricWindow(
+      lines("世界はイビツで\nunique verse\n世界はイビツで"),
+      "unrelated noise 世界はイビツで more noise",
+      { startMs: 0, endMs: 26000 },
+    ).segments,
+  ).toEqual([]);
+  expect(
+    matchLyricWindow(lines("本日も"), "noise 本日も noise", {
+      startMs: 0,
+      endMs: 26000,
+    }).segments,
+  ).toEqual([]);
+});
+it("keeps the audio window of recognized context intact around neighboring source locks", () => {
+  const input = lines("known before\n世界はイビツで\nknown after");
+  input[0] = { ...input[0], startMs: 0, endMs: 10000, status: "anchor" };
+  input[2] = { ...input[2], startMs: 20000, endMs: 26000, status: "anchor" };
+  const result = matchLyricWindow(
+    input,
+    "あ".repeat(30) + "世界はイビツで" + "う".repeat(30),
+    { startMs: 0, endMs: 26000 },
+  );
+  expect(result.segments[0]).toMatchObject({ startMs: 0, endMs: 26000 });
+});

@@ -104,11 +104,12 @@ export async function runSubtitleAlignment(
               segment: candidate,
               lines,
               pcm,
+              ...location.contexts?.[segment.id],
             });
             check();
             if (generation !== audio.generation) break;
             const owned = lines.filter((l) => candidate.lineIds.includes(l.id));
-            const validation = validateSegment(result, candidate, owned);
+            const validation = validateSegment(result, candidate, lines);
             if (!validation.ok)
               throw new AcousticBoundaryError(validation.reason);
             const found = new Map(result.map((l) => [l.id, l]));
@@ -126,6 +127,8 @@ export async function runSubtitleAlignment(
           } catch (error) {
             if (input.signal.aborted) throw error;
             if (!(error instanceof AcousticBoundaryError)) throw error;
+            // Reusing recognized context with different PCM would misalign it.
+            if (location.contexts?.[segment.id]) break;
             if (attempt === 1) break;
             candidate = {
               ...segment,
