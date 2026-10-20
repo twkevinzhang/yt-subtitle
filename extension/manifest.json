@@ -14,7 +14,7 @@
   "background": { "service_worker": "background.js" },
   "content_scripts": [
     {
-      "matches": ["https://www.youtube.com/watch*"],
+      "matches": ["https://www.youtube.com/*"],
       "js": ["audio-helper.js"],
       "run_at": "document_start",
       "world": "MAIN",

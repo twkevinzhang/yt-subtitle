@@ -1,6 +1,10 @@
 import { AudioCoverage } from "../acoustic/audio-coverage";
 import { MAX_AUDIO_BYTES } from "../acoustic/contracts";
 import { inspectAudioInitialization } from "./audio-initialization";
+import { installMediaIntentBridge } from "./media-intent";
+
+if (parent === window && location.hostname === "www.youtube.com")
+  installMediaIntentBridge();
 
 // MAIN world, document_start, helper frame only. Observe native audio appends;
 // the native player still obtains and authorizes all media requests itself.

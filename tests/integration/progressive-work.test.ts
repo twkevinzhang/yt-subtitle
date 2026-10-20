@@ -108,3 +108,51 @@ it("discards a recognition result across an ad generation reset and reruns only 
   expect(result.phase).toBe("complete");
   expect(result.generation).toBe(1);
 });
+it("never treats a lookup window as ready when only one subpassage was verified", async () => {
+  const lines = normalizeSubtitle(
+      "hello world\nunknown lyrics",
+      { kind: "paste" },
+      26000,
+    ),
+    audio = new RangeAudioSource(26000, () => {});
+  audio.append({
+    generation: 0,
+    startMs: 0,
+    sampleRate: 16000,
+    pcm: new Float32Array(416000).fill(0.1),
+  });
+  const snapshots: any[] = [];
+  const model = {
+    prepare: async () => {},
+    transcribe: async () => "hello world",
+    align: async () => [
+      { ...lines[0], status: "estimated" as const, startMs: 1000, endMs: 4000 },
+    ],
+    cancel: async () => {},
+  };
+  await runSubtitleAlignment(
+    {
+      key,
+      lines,
+      durationMs: 26000,
+      mode: "buffer-before-play",
+      signal: new AbortController().signal,
+    },
+    {
+      source: () => audio,
+      model,
+      positionMs: () => 0,
+      publish: (p) => snapshots.push(p),
+    },
+  );
+  expect(
+    snapshots.every((p) =>
+      p.ready.every((r: any) => r.startMs >= 1000 && r.endMs <= 4000),
+    ),
+  ).toBe(true);
+  expect(
+    snapshots.some((p) =>
+      p.ready.some((r: any) => r.startMs === 1000 && r.endMs === 4000),
+    ),
+  ).toBe(true);
+});

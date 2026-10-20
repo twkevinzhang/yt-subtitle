@@ -56,3 +56,35 @@ it("aborts the old revision before mode switching and ignores late publications"
   unmount();
   expect(jobs[1].input.signal.aborted).toBe(true);
 });
+it("only starts the latest mode when two changes wait on the same cancelling inference", async () => {
+  const jobs: any[] = [];
+  m.run.mockImplementation(
+    (input, deps) =>
+      new Promise((resolve) => jobs.push({ input, deps, resolve })),
+  );
+  const binding = {
+    video: document.createElement("video"),
+    container: document.body,
+    videoId: "12345678901",
+    isAd: () => false,
+  };
+  const { result, unmount } = renderHook(() =>
+    useSubtitleWork(
+      binding,
+      () => {},
+      () => {},
+    ),
+  );
+  await act(async () => {
+    void result.current.start([], "background", 10000);
+  });
+  await act(async () => {
+    void result.current.start([], "buffer-before-play", 10000);
+    void result.current.start([], "complete-before-use", 10000);
+    jobs[0].resolve();
+  });
+  expect(jobs).toHaveLength(2);
+  expect(jobs[1].input.mode).toBe("complete-before-use");
+  unmount();
+  jobs[1].resolve();
+});

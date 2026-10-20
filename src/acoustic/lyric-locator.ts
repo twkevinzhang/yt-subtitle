@@ -66,6 +66,36 @@ export function matchLyricWindow(
     silent: [],
   };
   if (!best) return result;
+  // Completed passages still explain speech heard inside this lookup window.
+  // Removing them from competition can turn a later chorus into a false unique hit.
+  for (let from = 0; from < lines.length; from++) {
+    let text = "";
+    for (let to = from; to < Math.min(lines.length, from + 40); to++) {
+      const row = lines[to];
+      if (
+        row.excluded ||
+        row.startMs === undefined ||
+        row.endMs === undefined ||
+        row.endMs <= range.startMs ||
+        row.startMs >= range.endMs
+      )
+        break;
+      text += texts[to];
+      if (text.length > 4000 || text.length > obs.length * 1.25) break;
+      const coverage = transcriptCoverage(text, obs),
+        precision = transcriptCoverage(obs, text);
+      if (
+        coverage >= 0.8 &&
+        precision >= 0.45 &&
+        coverage * precision >= best.score - 0.08
+      ) {
+        result.ambiguousLineIds = lines
+          .slice(best.from, best.to + 1)
+          .map((l) => l.id);
+        return result;
+      }
+    }
+  }
   const alternatives = candidates.filter(
     (c) =>
       Math.abs(c.score - best.score) < 0.08 &&

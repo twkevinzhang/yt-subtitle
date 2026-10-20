@@ -122,6 +122,8 @@ export function bindPlaybackCoordinator(
 ) {
   let ownPause = 0,
     ownPlay = 0;
+  let mediaReady = !navigator.mediaSession;
+  const mediaNonce = crypto.randomUUID();
   const coordinator = createPlaybackCoordinator(
     {
       paused: () => video.paused,
@@ -134,6 +136,10 @@ export function bindPlaybackCoordinator(
         }
       },
       play: async () => {
+        if (!mediaReady) {
+          onNotice("無法確認系統媒體暫停意圖，請手動播放");
+          return;
+        }
         if (video.paused) {
           ownPlay++;
           try {
@@ -159,6 +165,25 @@ export function bindPlaybackCoordinator(
   video.addEventListener("pause", pause);
   video.addEventListener("play", play);
   video.addEventListener("seeking", seek);
+  const media = (event: MessageEvent) => {
+    if (event.source !== window || event.origin !== location.origin) return;
+    if (
+      event.data?.tag === "ai-lyrics-media-ready" &&
+      event.data.nonce === mediaNonce
+    )
+      mediaReady = event.data.available === true;
+    if (
+      event.data?.tag === "ai-lyrics-media-intent" &&
+      event.data.videoId === new URL(location.href).searchParams.get("v") &&
+      event.data.action === "pause"
+    )
+      coordinator.userIntent("pause");
+  };
+  window.addEventListener("message", media);
+  window.postMessage(
+    { tag: "ai-lyrics-media-query", nonce: mediaNonce },
+    location.origin,
+  );
   const click = (event: Event) => {
     const target = event.target;
     if (
@@ -194,6 +219,7 @@ export function bindPlaybackCoordinator(
       video.removeEventListener("pause", pause);
       video.removeEventListener("play", play);
       video.removeEventListener("seeking", seek);
+      window.removeEventListener("message", media);
       document.removeEventListener("click", click, true);
       document.removeEventListener("keydown", key, true);
     },

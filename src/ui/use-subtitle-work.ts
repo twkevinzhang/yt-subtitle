@@ -17,6 +17,7 @@ export function useSubtitleWork(
   const handlers = useRef({ publish, notice });
   handlers.current = { publish, notice };
   const revision = useRef(0),
+    launchRevision = useRef(0),
     active = useRef<
       | {
           controller: AbortController;
@@ -32,23 +33,29 @@ export function useSubtitleWork(
     live.current = true;
     return () => {
       live.current = false;
+      launchRevision.current++;
       active.current?.playback.dispose();
       active.current?.controller.abort();
     };
   }, [binding.videoId]);
-  const cancel = async () => {
+  const stop = async () => {
     const work = active.current;
     if (!work) return;
     work.controller.abort();
     await work.promise.catch(() => {});
+  };
+  const cancel = async () => {
+    launchRevision.current++;
+    await stop();
   };
   async function start(
     lines: SubtitleLine[],
     mode: AlignmentMode,
     durationMs: number,
   ) {
-    await cancel();
-    if (!live.current) return;
+    const launch = ++launchRevision.current;
+    await stop();
+    if (!live.current || launch !== launchRevision.current) return;
     const controller = new AbortController(),
       key = {
         runId: crypto.randomUUID(),

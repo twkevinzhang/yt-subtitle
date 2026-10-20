@@ -59,3 +59,21 @@ it("retains untimed rows in mixed LRC and warns on malformed timing", () => {
   expect(lines.map((l) => l.original)).toEqual(["甲", "乙", "丙"]);
   expect(lines[2].timing.warning).toBeTruthy();
 });
+it("keeps SRT text and whichever endpoint can be parsed", () => {
+  const one = normalizeSubtitle(
+    "1\n00:00:01,000 --> 00:xx:03,000\nkeep this text\nsecond row",
+    { kind: "paste" },
+    10000,
+  );
+  expect(one[0].original).toBe("keep this text\nsecond row");
+  expect(one[0].startMs).toBe(1000);
+  expect(one[0].endMs).toBeUndefined();
+  expect(one[0].timing.warning).toContain("無法解析");
+  const two = normalizeSubtitle(
+    "1\ninvalid --> 00:00:03,000\nkeep end",
+    { kind: "paste" },
+    10000,
+  );
+  expect(two[0].startMs).toBeUndefined();
+  expect(two[0].endMs).toBe(3000);
+});

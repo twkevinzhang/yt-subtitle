@@ -32,6 +32,34 @@ export function parseLyrics(
       .map(blank);
   else if (format === "srt") {
     for (const [i, block] of text.split(/\n\s*\n/).entries()) {
+      if (options.allowPartial) {
+        const partial = block.match(
+          /^(?:\d+\n)?([^\n]*?)\s*-->\s*([^\n]*)\n([\s\S]+)$/,
+        );
+        if (!partial) throw new Error("SRT 格式錯誤");
+        const endpoint = (value: string) => {
+          const m = value
+            .trim()
+            .match(/^(\d{2,}):(\d{2}):(\d{2})[,.](\d{3})(?:\s.*)?$/);
+          return m && +m[2] < 60 && +m[3] < 60
+            ? ((+m[1] * 60 + +m[2]) * 60 + +m[3]) * 1000 + +m[4]
+            : undefined;
+        };
+        const startMs = endpoint(partial[1]),
+          endMs = endpoint(partial[2]);
+        lines.push({
+          ...blank(partial[3].trim(), i),
+          status: "manual",
+          startMs,
+          endMs,
+          ...(startMs === undefined || endMs === undefined
+            ? {
+                timing: { warning: "無法解析部分時間碼，已保留文字與有效端點" },
+              }
+            : {}),
+        });
+        continue;
+      }
       const match = block.match(
         /^(?:\d+\n)?(\d{2,}):(\d{2}):(\d{2})[,.](\d{3})\s*-->\s*(\d{2,}):(\d{2}):(\d{2})[,.](\d{3})[^\n]*\n([\s\S]+)$/,
       );

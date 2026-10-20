@@ -36,7 +36,11 @@ const overlay = {
   stop: vi.fn(),
   destroy: vi.fn(),
 };
-function setup(tracks: any[] = [], configured = false) {
+function setup(
+  tracks: any[] = [],
+  configured = false,
+  savedResults: any[] = [],
+) {
   request.mockImplementation(async (m: any) =>
     m.type === "settings-public"
       ? {
@@ -50,7 +54,7 @@ function setup(tracks: any[] = [], configured = false) {
       : m.type === "inspect"
         ? { video, tracks, selectedTrackId: "j" }
         : m.type === "results-list"
-          ? []
+          ? savedResults
           : m.type === "read-manual-track"
             ? [{ id: "c", text: "manual lyrics", startMs: 1000, endMs: 3000 }]
             : null,
@@ -135,5 +139,52 @@ it("accepts pasted timed text without AI configuration or inference", async () =
           m.type === "results-save" && m.result.lines[0].original === "hello",
       ),
     ).toBe(true),
+  );
+});
+
+it("loads an original-only saved version safely after choosing bilingual display", async () => {
+  const saved = {
+    schemaVersion: 1,
+    key: {
+      schemaVersion: 1,
+      videoId: video.videoId,
+      inputHash: "old",
+      targetLanguage: "en",
+    },
+    videoDurationMs: 10000,
+    source: { kind: "user" },
+    model: "old",
+    offsetMs: 0,
+    createdAt: 1,
+    updatedAt: 1,
+    lines: [
+      {
+        id: "old",
+        original: "saved original",
+        startMs: 1000,
+        endMs: 2000,
+        status: "anchor",
+        excluded: false,
+        cueIds: [],
+      },
+    ],
+  };
+  setup([], false, [saved]);
+  const paste = await screen.findByRole("button", { name: "貼入字幕" });
+  await waitFor(() => expect(paste.hasAttribute("disabled")).toBe(false));
+  fireEvent.click(paste);
+  fireEvent.change(screen.getByLabelText("字幕全文"), {
+    target: { value: "1\n00:00:01,000 --> 00:00:02,000\ncurrent" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "使用貼入字幕" }));
+  fireEvent.change(await screen.findByLabelText("顯示方式"), {
+    target: { value: "bilingual" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "← 返回歌詞" }));
+  fireEvent.click(screen.getByRole("button", { name: "本機版本（1）" }));
+  fireEvent.click(screen.getByRole("button", { name: "載入這份版本" }));
+  expect(overlay.setResult.mock.calls.at(-1)?.[1]).toBe("original");
+  expect((screen.getByLabelText("顯示方式") as HTMLSelectElement).value).toBe(
+    "original",
   );
 });

@@ -34,7 +34,11 @@ export async function runSubtitleAlignment(
     audio: RangeAudioSource | undefined,
     sequence = 0;
   const checked: TimeRange[] = [],
-    ready: TimeRange[] = [],
+    ready: TimeRange[] = lines
+      .filter(
+        (l) => !l.excluded && l.startMs !== undefined && l.endMs !== undefined,
+      )
+      .map((l) => ({ startMs: l.startMs!, endMs: l.endMs! })),
     policy = createAlignmentPolicy(input.mode, input.durationMs);
   const complete = () =>
     lines.every(
@@ -87,7 +91,6 @@ export async function runSubtitleAlignment(
         input.signal,
       );
       if (generation !== audio.generation) continue;
-      let verified = false;
       for (const segment of location.segments) {
         let candidate = segment;
         for (let attempt = 0; attempt < 2; attempt++) {
@@ -114,12 +117,11 @@ export async function runSubtitleAlignment(
                 ? mergeTiming(l, found.get(l.id)!, input.durationMs)
                 : l,
             );
-            verified = owned.every((l) => {
+            for (const l of owned) {
               const updated = lines.find((x) => x.id === l.id)!;
-              return (
-                updated.startMs !== undefined && updated.endMs !== undefined
-              );
-            });
+              if (updated.startMs !== undefined && updated.endMs !== undefined)
+                ready.push({ startMs: updated.startMs, endMs: updated.endMs });
+            }
             break;
           } catch (error) {
             if (input.signal.aborted) throw error;
@@ -137,7 +139,7 @@ export async function runSubtitleAlignment(
       }
       if (generation !== audio.generation) continue;
       checked.push(range);
-      if (verified || location.silent.length) ready.push(range);
+      ready.push(...location.silent);
       // Union verified windows; unknown/ambiguous windows never unlock playback.
       ready.sort((a, b) => a.startMs - b.startMs);
       for (let i = 1; i < ready.length;)

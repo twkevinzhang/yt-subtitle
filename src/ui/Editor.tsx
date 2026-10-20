@@ -72,6 +72,7 @@ export function Editor({
               排除這句
             </label>
           </div>
+          {l.timing?.warning && <p className="muted">{l.timing.warning}</p>}
           <label>
             <span>原文</span>
             <textarea

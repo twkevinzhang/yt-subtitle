@@ -733,7 +733,17 @@ export function Panel({
                         targetLanguage: value.key.targetLanguage,
                         model: value.model,
                       };
-                      overlay.setResult(value, mode, prefs);
+                      const loadedMode =
+                        mode !== "original" &&
+                        value.lines.some(
+                          (l) => !l.excluded && !l.translation?.trim(),
+                        )
+                          ? "original"
+                          : mode;
+                      if (loadedMode !== mode)
+                        setNotice("此版本譯文不完整，已先以原文顯示。");
+                      setMode(loadedMode);
+                      overlay.setResult(value, loadedMode, prefs);
                       setView("edit");
                     }}
                   >

@@ -93,3 +93,13 @@ it("only marks an empty transcript as silent when PCM also has silence evidence"
     audio.dispose();
   }
 });
+it("keeps a timed chorus as competing evidence instead of locating a later untimed repeat", () => {
+  const input = lines("hello world\nunique bridge\nhello world");
+  input[0] = { ...input[0], status: "anchor", startMs: 1000, endMs: 4000 };
+  const result = matchLyricWindow(input, "hello world", {
+    startMs: 0,
+    endMs: 26000,
+  });
+  expect(result.segments).toEqual([]);
+  expect(result.ambiguousLineIds).toContain("l2");
+});
