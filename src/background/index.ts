@@ -31,7 +31,7 @@ import type { ConsentReceipt, AlignedLine } from "../shared/types";
 import { AudioUploads, AudioStaging } from "./audio-uploads";
 import type { JobKey } from "../acoustic/contracts";
 import { startSearchGroup, type SearchGroupSnapshot } from "./search-group";
-import { readManualTrack } from "../youtube/context";
+import { readManualTrack, readComments } from "../youtube/context";
 const searchGroups = new Map<
   string,
   {
@@ -203,6 +203,8 @@ export async function handleMessage(
         (snapshot) => {
           group.snapshot = { ...snapshot, id };
         },
+        undefined,
+        (signal) => readComments(tabId, m.video.videoId, signal),
       ).catch(() => {});
       return { id };
     }

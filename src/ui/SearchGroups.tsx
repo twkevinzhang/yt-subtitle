@@ -23,6 +23,12 @@ export function SearchGroups({
         return (
           <section className="section" key={route} aria-label={names[route]}>
             <h3>{names[route]}</h3>
+            {route === "comments" && result?.commentsRead && (
+              <p className="muted">
+                已取得 {result.commentsRead.count} 則實際留言（置頂{" "}
+                {result.commentsRead.pinned} 則）；僅分析已載入的前 20 則。
+              </p>
+            )}
             <p role="status">
               {!result || result.phase === "pending"
                 ? "搜尋中…"
@@ -44,6 +50,7 @@ export function SearchGroups({
                 <a href={c.url} target="_blank" rel="noopener noreferrer">
                   開啟來源
                 </a>
+                {c.sourceId === "comments" && <p>{c.matchReason}</p>}
                 <p>
                   {c.syncedLyrics ? "含時間碼" : "需要本機補時"}；搜尋證據
                   {c.evidence.status === "verified" ? "已驗證" : "尚未驗證"}

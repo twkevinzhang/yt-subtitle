@@ -41,7 +41,7 @@
 
 填入 Base URL（例如 `https://your-service.example/v1`）、API Token，必要時成對填入 Cloudflare Access Client ID／Secret；載入模型、選取後儲存。來源預設提供 LRCLIB，可新增網域及選擇子網域。
 
-搜尋要求 AI server 支援 Responses API 的 `web_search` 工具。留言不可存取、服務無搜尋能力或格式不符時會顯示失敗與原文，不把無來源文字當成功。AI 按鈕明示使用額度；設定頁的搜尋測試另外確認送出。模型清單查詢上限 8 秒，不自動重試。
+設定來源及全網搜尋要求 AI server 支援 Responses API 的 `web_search` 工具。留言路徑改由擴充功能先讀取目前影片實際載入的頂層留言，再經 `chat/completions` 請 AI 選出歌詞，不要求 AI 自行開啟留言。讀取最多等待 15 秒，最多 20 則、單則 24,000 字元、合計 64,000 字元，優先呈現置頂；必要時暫時捲至留言區觸發載入。這不是全留言爬取。候選必須通過留言 ID、來源 URL 與原文順序比對，才可採用。讀取失敗不轉交 AI 猜測；各路失敗不影響其他路徑。AI 按鈕明示使用額度；設定頁的搜尋測試另外確認送出。模型清單查詢上限 8 秒，不自動重試。
 
 憑證保存在這台電腦的擴充功能可信儲存，不同步、不傳給 YouTube、不放入 prompt 或 SRT。請使用可獨立撤銷的 Token。未設定 AI 仍可使用人工 YT 字幕、貼入、本機補時、手動校時與保存／匯出。
 
@@ -70,3 +70,5 @@ npm run package
 本機環境 npm 不在 PATH 時可用 `node .tools/package/bin/npm-cli.js` 執行相同命令。E2E 使用獨立暫存 profile 與 localhost 假 AI，結束清理，不操作使用者登入瀏覽器。真實 WASM 測試需要忽略目錄中的既有模型及音訊素材；缺少時明示 skip，不冒充推論成功。建置與 ZIP 不含測試憑證或測試 manifest 的 localhost 固定權限。
 
 `node scripts/verify-progressive-youtube.mjs` 為單影片、90 秒、零重試、零 AI 的真實解碼 smoke；舊驗證文件記錄的是當時版本，請以本次驗收文件理解目前能力。程式未複製 asbplayer 的 AGPL 原始碼；套件各自授權保留。
+
+`node scripts/verify-youtube-comments.mjs` 會使用忽略的 `ai-server.payload` 呼叫一次真實 AI，以指定影片的真實置頂留言驗證讀取、分析與採用；需事先建置，並備有 E2E 的 Brave 與本機模型。此測試將其他搜尋路徑隔離為本機回覆，單一 AI 請求上限 120 秒、零重試，整體上限 180 秒。請求／回覆與截圖只存於忽略的 artifacts，憑證不寫入瀏覽器。成功證據與限制見[原生留言驗收](docs/validation/2026-10-21-native-comments.md)。

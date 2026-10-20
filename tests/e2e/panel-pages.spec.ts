@@ -14,10 +14,10 @@ test("Brave: three independent search requests, route failure isolation and expl
     }
     const body = JSON.parse(raw);
     requests.push(body);
-    const prompt = JSON.stringify(body.input);
+    const prompt = JSON.stringify(body.input ?? body.messages);
     const route = prompt.includes("本次只查 sources")
       ? "configured"
-      : prompt.includes("本次只查影片")
+      : prompt.includes("歌詞辨識助手")
         ? "comments"
         : "web";
     if (route === "comments") {
@@ -97,7 +97,13 @@ test("Brave: three independent search requests, route failure isolation and expl
       `http://127.0.0.1:${(server.address() as any).port}/v1`,
     );
     await app.context.route("https://www.youtube.com/watch*", async (route) =>
-      route.fulfill({ contentType: "text/html", body: await watchFixture() }),
+      route.fulfill({
+        contentType: "text/html",
+        body: (await watchFixture()).replace(
+          "</body>",
+          '<div id="comments"><ytd-comment-thread-renderer><div id="pinned-comment-badge">置頂</div><a href="/watch?v=12345678901&lc=test-comment">date</a><div id="content-text">actual fixture lyrics</div></ytd-comment-thread-renderer></div></body>',
+        ),
+      }),
     );
     const page = await app.context.newPage();
     await page.goto("https://www.youtube.com/watch?v=12345678901");
@@ -120,7 +126,9 @@ test("Brave: three independent search requests, route failure isolation and expl
     expect(requests).toHaveLength(3);
     expect(
       requests.every(
-        (r) => r.input.length === 2 && r.tools[0].type === "web_search",
+        (r) =>
+          (r.input ?? r.messages).length === 2 &&
+          (r.messages ? !r.tools : r.tools[0].type === "web_search"),
       ),
     ).toBe(true);
     await mkdir("artifacts/subtitle-sources", { recursive: true });

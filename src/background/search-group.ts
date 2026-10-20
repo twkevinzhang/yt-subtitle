@@ -1,6 +1,12 @@
 import { createAiClient } from "./ai-client";
 import type { SettingsRecord } from "./settings";
 import { searchMessages, parseSearchReply } from "../lyrics/search";
+import {
+  commentMessages,
+  parseCommentReply,
+  validateCommentBatch,
+  type CommentBatch,
+} from "../youtube/comments";
 import type {
   ChatMessage,
   LyricSearchResult,
@@ -15,6 +21,7 @@ export interface SearchGroupSnapshot {
     SearchRoute,
     LyricSearchResult & {
       phase: "pending" | "complete" | "failed" | "cancelled" | "unconfigured";
+      commentsRead?: { count: number; pinned: number };
     }
   >;
 }
@@ -28,6 +35,7 @@ export async function startSearchGroup(
     messages: ChatMessage[],
     signal: AbortSignal,
   ) => Promise<{ text: string; evidence?: SearchEvidence }>,
+  readComments?: (signal: AbortSignal) => Promise<CommentBatch>,
 ): Promise<SearchGroupSnapshot> {
   const snapshot: SearchGroupSnapshot = {
     id: crypto.randomUUID(),
@@ -63,7 +71,7 @@ export async function startSearchGroup(
         }
         let rejectAbort: () => void = () => {};
         try {
-          const messages = searchMessages(video, settings.sources, route);
+          if (controller.signal.aborted) throw new Error("已取消");
           const aborted = new Promise<never>((_, reject) => {
             rejectAbort = () =>
               reject(
@@ -74,27 +82,62 @@ export async function startSearchGroup(
             });
             if (controller.signal.aborted) rejectAbort();
           });
+          let batch: CommentBatch | undefined;
+          if (route === "comments") {
+            if (!readComments)
+              throw new Error("留言讀取器不可用，未要求AI猜測留言內容");
+            batch = validateCommentBatch(
+              await Promise.race([readComments(controller.signal), aborted]),
+              video.videoId,
+            );
+            snapshot.routes.comments.commentsRead = {
+              count: batch.comments.length,
+              pinned: batch.comments.filter((c) => c.pinned).length,
+            };
+            publish();
+          }
+          if (controller.signal.aborted) throw new Error("已取消");
+          const messages = batch
+            ? commentMessages(video, batch)
+            : searchMessages(video, settings.sources, route);
           const response = await Promise.race([
             send
               ? send(route, messages, controller.signal)
-              : createAiClient(settings.provider!).searchText(
-                  messages,
-                  controller.signal,
-                ),
+              : batch
+                ? createAiClient(settings.provider!)
+                    .completeText(messages, controller.signal)
+                    .then((text) => ({ text, evidence: undefined }))
+                : createAiClient(settings.provider!).searchText(
+                    messages,
+                    controller.signal,
+                  ),
             aborted,
           ]);
           if (controller.signal.aborted) return;
-          const result = parseSearchReply(
-            response.text,
-            settings.sources,
-            response.evidence,
-            route,
-          );
+          const result = batch
+            ? parseCommentReply(response.text, batch)
+            : parseSearchReply(
+                response.text,
+                settings.sources,
+                response.evidence,
+                route,
+              );
           if (route === "comments")
             result.candidates = result.candidates.filter(
               (c) => new URL(c.url).searchParams.get("v") === video.videoId,
             );
-          snapshot.routes[route] = { ...result, phase: "complete" };
+          snapshot.routes[route] = {
+            ...result,
+            phase: "complete",
+            ...(batch
+              ? {
+                  commentsRead: {
+                    count: batch.comments.length,
+                    pinned: batch.comments.filter((c) => c.pinned).length,
+                  },
+                }
+              : {}),
+          };
         } catch (e) {
           snapshot.routes[route] = {
             text: "",

@@ -3,6 +3,22 @@ import { videoSchema } from "../shared/schemas";
 import { parseYouTubeCaptions } from "./captions";
 import type { CaptionTrack, Cue, VideoContext } from "../shared/types";
 import { manualTracks } from "./manual-tracks";
+import { readCommentsPage, validateCommentBatch } from "./comments";
+export async function readComments(
+  tabId: number,
+  videoId: string,
+  signal: AbortSignal,
+) {
+  if (signal.aborted) throw new Error("已取消");
+  const [result] = await chrome.scripting.executeScript({
+    target: { tabId },
+    world: "MAIN",
+    func: readCommentsPage,
+    args: [videoId],
+  });
+  if (signal.aborted) throw new Error("已取消");
+  return validateCommentBatch(result?.result, videoId);
+}
 export async function readManualTrack(
   tabId: number,
   trackId: string,
