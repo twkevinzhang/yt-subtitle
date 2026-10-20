@@ -30,6 +30,11 @@ if (
   const initializedGeneration = new WeakMap<SourceBuffer, number>();
   const keyDiagnostics = new WeakSet<HTMLVideoElement>();
   const expectedDuration = Number(url.searchParams.get("ai-lyrics-duration"));
+  const streaming = url.searchParams.get("ai-lyrics-stream") === "1";
+  let requested: { startMs: number; endMs: number } | undefined,
+    requestedSeek = false,
+    rangeStarted = performance.now(),
+    parked = false;
   type Player = HTMLElement & {
     playVideo?(): void;
     pauseVideo?(): void;
@@ -59,9 +64,48 @@ if (
     if (stopped) return;
     stopped = true;
     clearInterval(timer);
+    window.removeEventListener("message", control);
     (document.querySelector("video") as HTMLVideoElement | null)?.pause();
     send({ type: "error", message, code, state, generation });
   };
+  function control(event: MessageEvent) {
+    if (
+      !streaming ||
+      stopped ||
+      event.source !== parent ||
+      event.origin !== location.origin ||
+      event.data?.tag !== "ai-lyrics-control" ||
+      event.data?.nonce !== nonce
+    )
+      return;
+    const m = event.data;
+    if (m.action === "stop") {
+      stopped = true;
+      clearInterval(timer);
+      window.removeEventListener("message", control);
+      (document.querySelector("video") as HTMLVideoElement | null)?.pause();
+      return;
+    }
+    if (m.action === "pause") {
+      parked = true;
+      return;
+    }
+    if (
+      m.action === "range" &&
+      Number.isFinite(m.range?.startMs) &&
+      Number.isFinite(m.range?.endMs) &&
+      m.range.startMs >= 0 &&
+      m.range.endMs > m.range.startMs &&
+      m.range.endMs - m.range.startMs <= 30000
+    ) {
+      requested = m.range;
+      requestedSeek = true;
+      parked = false;
+      rangeStarted = performance.now();
+      lastProgress = performance.now();
+    }
+  }
+  if (streaming) window.addEventListener("message", control);
   const resetCapture = (reason: string) => {
     generation++;
     coverage = new AudioCoverage();
@@ -72,6 +116,10 @@ if (
     seekStart = false;
     audioBuffer = undefined;
     audioSource = undefined;
+    if (streaming && requested) {
+      parked = false;
+      requestedSeek = true;
+    }
     send({ type: "reset", reason, generation });
   };
   const observeAd = (player: Element | null) => {
@@ -280,7 +328,13 @@ if (
     if (stopped) return;
     const video = document.querySelector("video");
     const player = document.querySelector("#movie_player") as Player | null;
-    if (performance.now() - started >= 90000) {
+    if (
+      performance.now() - started >= (streaming ? 600000 : 90000) ||
+      (streaming &&
+        requested &&
+        !parked &&
+        performance.now() - rangeStarted >= 90000)
+    ) {
       fail("音訊擷取達 90 秒總上限，歌詞與已完成結果保留", "deadline");
       return;
     }
@@ -289,6 +343,10 @@ if (
     video.muted = true;
     if (waitingAd) {
       if (video.paused) player.playVideo();
+      return;
+    }
+    if (streaming && parked) {
+      player.pauseVideo?.();
       return;
     }
     if (performance.now() - lastProgress > 15000) {
@@ -307,12 +365,36 @@ if (
     const capturingCurrent =
       !!audioSource &&
       sources.get(video.src || video.currentSrc) === audioSource;
+    if (streaming && capturingCurrent && requested) {
+      if (requestedSeek) {
+        requestedSeek = false;
+        seekStart = false;
+        player.seekTo?.(requested.startMs / 1000, true);
+        return;
+      }
+      const available = Array.from(
+        { length: audioBuffer!.buffered.length },
+        (_, i) => [
+          audioBuffer!.buffered.start(i),
+          audioBuffer!.buffered.end(i),
+        ],
+      ).find(
+        (r) =>
+          r[0] <= requested!.startMs / 1000 + 0.04 &&
+          r[1] >= requested!.endMs / 1000 - 0.04,
+      );
+      if (available) {
+        parked = true;
+        player.pauseVideo?.();
+        return;
+      }
+    }
     if (capturingCurrent && seekStart) {
       seekStart = false;
       player.seekTo?.(0, true);
       return;
     }
-    if (capturingCurrent && coverage.complete(video.duration)) {
+    if (!streaming && capturingCurrent && coverage.complete(video.duration)) {
       stopped = true;
       clearInterval(timer);
       player.pauseVideo?.();
@@ -326,7 +408,7 @@ if (
     }
     video.muted = true;
     if (video.paused) player.playVideo();
-    if (capturingCurrent && coverage.edge > lastSeek + 1) {
+    if (!streaming && capturingCurrent && coverage.edge > lastSeek + 1) {
       lastSeek = coverage.edge;
       player.seekTo?.(Math.max(0, coverage.edge - 0.15), true);
     }
