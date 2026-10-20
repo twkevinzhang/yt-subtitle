@@ -78,28 +78,29 @@ it("loads video independently of cache and keeps local paste available while cap
     ],
   });
   await screen.findByText("延遲字幕測試");
-  expect(screen.getByRole("button", { name: "貼上歌詞" })).toBeTruthy();
-  expect(screen.queryByRole("textbox", { name: "歌詞全文" })).toBeNull();
-  fireEvent.click(screen.getByRole("button", { name: "貼上歌詞" }));
-  fireEvent.change(screen.getByLabelText("歌詞全文"), {
-    target: { value: "本機歌詞" },
+  expect(screen.getByRole("button", { name: "貼入字幕" })).toBeTruthy();
+  expect(screen.queryByRole("textbox", { name: "字幕全文" })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "貼入字幕" }));
+  fireEvent.change(screen.getByLabelText("字幕全文"), {
+    target: { value: "1\n00:00:01,000 --> 00:00:02,000\n本機歌詞" },
   });
-  fireEvent.click(screen.getByRole("button", { name: "使用貼上歌詞" }));
+  fireEvent.click(screen.getByRole("button", { name: "使用貼入字幕" }));
   await screen.findByRole("heading", { name: "逐句預覽與校時" });
   fireEvent.click(screen.getByRole("button", { name: "← 返回歌詞" }));
-  const preview = screen.getByRole("region", { name: "字幕編輯與預覽" });
+  const preview = screen.getByLabelText("整段歌詞");
   preview.scrollTop = 120;
-  fireEvent.click(screen.getByRole("button", { name: "繼續編輯草稿" }));
+  fireEvent.click(screen.getByRole("button", { name: "製作／編輯" }));
   expect(screen.getByRole("textbox", { name: "原文" })).toHaveProperty(
     "value",
     "本機歌詞",
   );
   fireEvent.click(screen.getByRole("button", { name: "← 返回歌詞" }));
   expect(preview.scrollTop).toBe(120);
-  expect(mockRequest).toHaveBeenCalledWith({
-    type: "read-track",
-    trackId: "0",
-  });
+  expect(
+    mockRequest.mock.calls.some(
+      ([m]) => m.type === "read-track" || m.type === "read-manual-track",
+    ),
+  ).toBe(false);
   expect(screen.queryByRole("status", { name: "正在載入影片資訊" })).toBeNull();
 });
 it("resaving a loaded result retains its real source, translation language and model", async () => {
@@ -180,11 +181,9 @@ it("resaving a loaded result retains its real source, translation language and m
       onClose={() => {}}
     />,
   );
-  fireEvent.click(
-    await screen.findByRole("button", { name: "本機保存的版本" }),
-  );
-  fireEvent.click(await screen.findByRole("button", { name: /^載入$/ }));
-  await screen.findByText("已載入本機結果，不會呼叫 AI");
+  fireEvent.click(await screen.findByRole("button", { name: "本機版本（1）" }));
+  fireEvent.click(await screen.findByRole("button", { name: "載入這份版本" }));
+  await screen.findByRole("heading", { name: "逐句預覽與校時" });
   fireEvent.click(screen.getByRole("button", { name: "套用並保存" }));
   await waitFor(() =>
     expect(
@@ -249,19 +248,23 @@ it("refreshes settings when returning from the options tab", async () => {
       onClose={() => {}}
     />,
   );
-  await screen.findByText(/先在設定頁填入/);
-  expect(screen.queryByRole("button", { name: /^搜尋歌詞$/ })).toBeNull();
-  fireEvent.click(screen.getByRole("button", { name: "貼上歌詞" }));
+  await screen.findByText(/尚未設定 AI 服務/);
   expect(
     screen
-      .getByRole("button", { name: "使用貼上歌詞" })
+      .getByRole("button", { name: /^AI 找字幕$/ })
+      .hasAttribute("disabled"),
+  ).toBe(true);
+  fireEvent.click(screen.getByRole("button", { name: "貼入字幕" }));
+  expect(
+    screen
+      .getByRole("button", { name: "使用貼入字幕" })
       .hasAttribute("disabled"),
   ).toBe(false);
   expect(screen.queryByLabelText("匯入 LRC／SRT")).toBeNull();
-  fireEvent.change(screen.getByLabelText("歌詞全文"), {
-    target: { value: "本機歌詞" },
+  fireEvent.change(screen.getByLabelText("字幕全文"), {
+    target: { value: "1\n00:00:01,000 --> 00:00:02,000\n本機歌詞" },
   });
-  fireEvent.click(screen.getByRole("button", { name: "使用貼上歌詞" }));
+  fireEvent.click(screen.getByRole("button", { name: "使用貼入字幕" }));
   await screen.findByRole("heading", { name: "逐句預覽與校時" });
   expect(screen.queryByRole("checkbox", { name: /生成譯文/ })).toBeNull();
   fireEvent.change(screen.getByLabelText("第 1 句開始秒數"), {
@@ -276,10 +279,12 @@ it("refreshes settings when returning from the options tab", async () => {
       mockRequest.mock.calls.some(([m]) => m.type === "results-save"),
     ).toBe(true),
   );
-  await screen.findByText(/已套用並保存在本機/);
+  await screen.findByText(/已套用並保存至本機/);
   configured = true;
   fireEvent.focus(window);
-  await waitFor(() => expect(screen.queryByText(/先在設定頁填入/)).toBeNull());
+  await waitFor(() =>
+    expect(screen.queryByText(/尚未設定 AI 服務/)).toBeNull(),
+  );
 });
 it("rejects synthetic page clicks on paid consent", () => {
   const go = vi.fn();

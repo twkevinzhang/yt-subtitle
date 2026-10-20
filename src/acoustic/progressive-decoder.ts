@@ -19,6 +19,9 @@ interface DecodedAudio {
 }
 interface NativeDecoder {
   state: string;
+  decodeQueueSize: number;
+  addEventListener(type: "dequeue", listener: () => void): void;
+  removeEventListener(type: "dequeue", listener: () => void): void;
   configure(config: object): void;
   decode(chunk: object): void;
   flush(): Promise<void>;
@@ -44,6 +47,7 @@ export function createProgressiveDecoder(
   let configure: Promise<void> | undefined;
   let lastEndSample: number | undefined;
   let queued: Promise<void> = Promise.resolve();
+  const drains = new Set<() => void>();
   const globals = globalThis as unknown as {
     AudioDecoder?: DecoderConstructor;
     EncodedAudioChunk?: new (data: object) => object;
@@ -52,6 +56,7 @@ export function createProgressiveDecoder(
     value instanceof Error ? value : new Error(String(value));
   const close = () => {
     if (native && native.state !== "closed") native.close();
+    for (const drain of [...drains]) drain();
     native = undefined;
   };
   function output(audio: DecodedAudio, expected: number) {
@@ -144,7 +149,30 @@ export function createProgressiveDecoder(
               data: packet.data,
             }),
           );
-        if (current.length) await native!.flush();
+        // flush() ends a codec sequence and Chromium trims Opus priming again
+        // on the next push. Drain the submission queue without restarting it.
+        const decoder = native;
+        if (decoder && decoder.decodeQueueSize > 0)
+          await new Promise<void>((resolve, reject) => {
+            const finish = () => {
+              clearTimeout(timer);
+              decoder.removeEventListener("dequeue", check);
+              drains.delete(finish);
+              resolve();
+            };
+            const check = () => {
+              if (decoder.decodeQueueSize === 0 || decoder.state === "closed")
+                finish();
+            };
+            const timer = setTimeout(() => {
+              decoder.removeEventListener("dequeue", check);
+              drains.delete(finish);
+              reject(new Error("音訊解碼達 5 秒上限"));
+            }, 5000);
+            drains.add(finish);
+            decoder.addEventListener("dequeue", check);
+            check();
+          });
         if (failed) throw new Error("音訊解碼失敗");
       });
       queued = task.catch(() => {});

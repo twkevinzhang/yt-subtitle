@@ -11,9 +11,7 @@ export function Candidates({
   return (
     <section>
       <h3>選擇歌詞版本</h3>
-      {!candidates.length && (
-        <p>沒有符合來源限制的結果，請貼上歌詞或匯入檔案。</p>
-      )}
+      {!candidates.length && <p>沒有符合來源限制的結果，請使用貼入字幕。</p>}
       {candidates.map((c) => (
         <article key={c.id} className="candidate">
           <h3>

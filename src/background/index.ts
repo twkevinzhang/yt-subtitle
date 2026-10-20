@@ -7,6 +7,7 @@ import {
   clearCredentials,
   protectStorage,
   normalizeProvider,
+  savePreferences,
 } from "./settings";
 import { createAiClient } from "./ai-client";
 import { RunManager, type RunRecord } from "./runs";
@@ -28,6 +29,36 @@ import {
 import { authorizeAcousticHost, callAcousticHost } from "./acoustic-host";
 import type { ConsentReceipt, AlignedLine } from "../shared/types";
 import { AudioUploads, AudioStaging } from "./audio-uploads";
+import type { JobKey } from "../acoustic/contracts";
+import { startSearchGroup, type SearchGroupSnapshot } from "./search-group";
+import { readManualTrack } from "../youtube/context";
+const searchGroups = new Map<
+  string,
+  {
+    tabId: number;
+    videoId: string;
+    controller: AbortController;
+    snapshot?: SearchGroupSnapshot;
+  }
+>();
+function cancelSearches(tabId: number) {
+  for (const [id, group] of searchGroups)
+    if (group.tabId === tabId) {
+      group.controller.abort();
+      searchGroups.delete(id);
+    }
+}
+let localOwner:
+  { key: JobKey; timer: ReturnType<typeof setTimeout> } | undefined;
+async function stopLocal(tabId: number) {
+  const owner = localOwner;
+  if (!owner || owner.key.tabId !== tabId) return;
+  await callAcousticHost("local-cancel", { key: owner.key });
+  if (localOwner === owner) {
+    clearTimeout(owner.timer);
+    localOwner = undefined;
+  }
+}
 import {
   stageJobAudio,
   clearJobAudio,
@@ -67,6 +98,9 @@ async function init() {
         })
       : [];
     if (contexts.length) {
+      const local = await callAcousticHost("local-status");
+      if (local?.key)
+        await callAcousticHost("local-cancel", { key: local.key });
       const status = await callAcousticHost("query");
       const key = status.key ?? status.snapshot?.key;
       const candidate =
@@ -140,9 +174,101 @@ export async function handleMessage(
   await init();
   const tabId = sender.tab?.id ?? -1;
   switch (m.type) {
+    case "preferences-save":
+      return savePreferences(m.preferences);
+    case "search-start": {
+      const settings = await getSettings();
+      if (!settings.provider?.model) throw new Error("請先設定 AI 服務");
+      if (m.video.videoId !== new URL(sender.url!).searchParams.get("v"))
+        throw new Error("影片已切換");
+      await consent(
+        m.consent,
+        "search",
+        { video: m.video, sources: settings.sources.filter((s) => s.enabled) },
+        settings.revision,
+      );
+      cancelSearches(tabId);
+      const id = crypto.randomUUID(),
+        group = {
+          tabId,
+          videoId: m.video.videoId,
+          controller: new AbortController(),
+          snapshot: undefined as SearchGroupSnapshot | undefined,
+        };
+      searchGroups.set(id, group);
+      void startSearchGroup(
+        m.video,
+        settings,
+        group.controller.signal,
+        (snapshot) => {
+          group.snapshot = { ...snapshot, id };
+        },
+      ).catch(() => {});
+      return { id };
+    }
+    case "search-group":
+    case "search-cancel": {
+      const group = searchGroups.get(m.id);
+      if (
+        !group ||
+        group.tabId !== tabId ||
+        group.videoId !== new URL(sender.url!).searchParams.get("v")
+      )
+        throw new Error("搜尋工作已中斷");
+      if (m.type === "search-cancel") group.controller.abort();
+      return group.snapshot;
+    }
+    case "read-manual-track":
+      return readManualTrack(
+        tabId,
+        m.trackId,
+        new URL(sender.url!).searchParams.get("v")!,
+      );
+    case "local-model": {
+      const videoId = new URL(sender.url!).searchParams.get("v");
+      if (m.input.key.videoId !== videoId) throw new Error("影片已切換");
+      const key = { ...m.input.key, tabId };
+      if (
+        runs.isBusy ||
+        (localOwner &&
+          (localOwner.key.tabId !== tabId ||
+            localOwner.key.runId !== key.runId ||
+            localOwner.key.draftRevision !== key.draftRevision))
+      )
+        throw new Error("已有本機工作正在處理");
+      if (!localOwner) {
+        if (m.input.operation !== "prepare")
+          throw new Error("模型工作已中斷，請重新補時");
+        localOwner = {
+          key,
+          timer: setTimeout(() => {
+            void stopLocal(tabId).catch(() => {});
+          }, 600000),
+        };
+      }
+      if (m.input.assetId) staged.claim(m.input.assetId, tabId, videoId!);
+      try {
+        return await callAcousticHost("local-infer", {
+          input: { ...m.input, key },
+        });
+      } finally {
+        if (m.input.assetId) await deleteJobAudio(m.input.assetId);
+      }
+    }
+    case "local-model-cancel": {
+      if (localOwner && localOwner.key.runId !== m.key.runId)
+        throw new Error("本機工作已更換");
+      await stopLocal(tabId);
+      await dropTabAudio(tabId);
+      return null;
+    }
     case "audio-begin":
       await staged.expire();
-      if (runs.isBusy || staged.isBusy)
+      if (
+        runs.isBusy ||
+        staged.isBusy ||
+        (localOwner && localOwner.key.tabId !== tabId)
+      )
         throw new Error("已有工作正在處理，請先取消或等待完成");
       return uploads.begin(tabId, new URL(sender.url!).searchParams.get("v")!);
     case "audio-chunk":
@@ -306,6 +432,7 @@ export async function handleMessage(
       );
     }
     case "generate": {
+      if (localOwner) throw new Error("已有本機工作正在處理");
       const s = await getSettings();
       if (!s.provider?.model) throw new Error("請先載入、選擇模型並儲存設定");
       const input = m.input;
@@ -461,11 +588,15 @@ if (typeof chrome !== "undefined" && chrome.runtime?.id) {
     void chrome.runtime.openOptionsPage();
   });
   chrome.tabs.onRemoved.addListener((id) => {
+    cancelSearches(id);
+    void stopLocal(id).catch(() => {});
     runs.cancelTab(id);
     void dropTabAudio(id);
   });
   chrome.tabs.onUpdated.addListener((id, change) => {
     if (change.url) {
+      cancelSearches(id);
+      void stopLocal(id).catch(() => {});
       runs.cancelTab(id);
       void dropTabAudio(id);
     }

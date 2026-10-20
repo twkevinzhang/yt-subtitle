@@ -8,6 +8,7 @@ import {
 } from "./contracts";
 import { lineSchema, cueSchema } from "../shared/schemas";
 import { locateMissing } from "./missing-location";
+import { LocalModelHost } from "./local-model-host";
 import type { AlignedLine } from "../shared/types";
 import type { Segment } from "./contracts";
 import { ModelSession } from "./model-session";
@@ -63,6 +64,7 @@ const session = new ModelSession(
   },
 );
 const cleaned = clearJobAudio();
+const localHost = new LocalModelHost(session, takeJobAudio);
 async function notify() {
   await chrome.runtime
     .sendMessage({
@@ -346,6 +348,14 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
     return false;
   }
   void (async () => {
+    if (message.command === "local-infer") {
+      await cleaned;
+      if (owner) throw new Error("已有聲學工作正在處理");
+      return localHost.infer(message.input);
+    }
+    if (message.command === "local-status") return { key: localHost.key };
+    if (message.command === "local-cancel")
+      return localHost.cancel(message.key);
     if (message.command === "start") return start(message.input);
     if (message.command === "query") {
       await cleaned;

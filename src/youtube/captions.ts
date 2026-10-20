@@ -11,7 +11,7 @@ export function parseYouTubeCaptions(
       data = JSON.parse(raw);
     } catch {
       throw new Error(
-        "YouTube 未回傳有效字幕內容，請啟用原生字幕後重試，或匯入 LRC／SRT",
+        "YouTube 未回傳有效字幕內容，請啟用原生字幕後重試，或使用貼入字幕",
       );
     }
     cues = (data.events || [])

@@ -37,7 +37,13 @@ for (const [name, entry] of Object.entries({
 await mkdir("dist", { recursive: true });
 await copyFile("extension/manifest.json", "dist/manifest.json");
 await copyFile("offscreen.html", "dist/offscreen.html");
-for (const name of ["offscreen", "model-worker", "progressive-decoder"]) {
+for (const name of [
+  "offscreen",
+  "model-worker",
+  "progressive-decoder",
+  "lyric-locator",
+  "progressive-audio-source",
+]) {
   await build({
     configFile: false,
     logLevel: "warn",

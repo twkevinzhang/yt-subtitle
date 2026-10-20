@@ -34,6 +34,7 @@ export function Options() {
     [savedProvider, setSavedProvider] = useState<ProviderSettings | null>(null),
     [sources, setSources] = useState<SourceSettings[]>([]),
     [preferences, setPreferences] = useState<Preferences>({
+      alignmentMode: "buffer-before-play",
       mode: "original",
       targetLanguage: "zh-Hant",
       fontSize: 28,
@@ -306,7 +307,8 @@ export function Options() {
         <h2>歌詞來源</h2>
         <p>
           AI
-          只能搜尋勾選的網域。首次使用請確認來源；未勾選任何來源時仍可貼上或匯入歌詞。
+          設定來源路徑只搜尋勾選的網域。首次使用請確認來源；未勾選來源時仍可搜尋留言區與全網，或使用
+          YT 字幕與貼入字幕。
         </p>
         {sources.map((s) => (
           <div className="source" key={s.id}>
@@ -407,6 +409,57 @@ export function Options() {
             </select>
           </label>
         </div>
+        <fieldset disabled={!!busy}>
+          <legend>缺時字幕的校時模式</legend>
+          {(
+            [
+              [
+                "buffer-before-play",
+                "先緩衝再播放",
+                "先準備前方字幕，必要時自動暫停與恢復；手動暫停不會被覆蓋。",
+              ],
+              [
+                "background",
+                "播放中背景校時",
+                "影片持續播放，完成的片段逐步顯示；缺時句暫不顯示。",
+              ],
+              [
+                "complete-before-use",
+                "整首校完再使用",
+                "所有缺時句完成後才啟用本次字幕；準備期間保留原字幕。",
+              ],
+            ] as const
+          ).map(([value, label, description]) => (
+            <label key={value} className="mode-choice">
+              <input
+                type="radio"
+                name="alignment-mode"
+                value={value}
+                checked={
+                  (preferences.alignmentMode ?? "buffer-before-play") === value
+                }
+                onChange={() =>
+                  setPreferences({ ...preferences, alignmentMode: value })
+                }
+              />
+              <strong>{label}</strong>
+              <small>{description}</small>
+            </label>
+          ))}
+          <p>
+            所有來源的有效時間碼均保留。儲存後套用到下一次工作，不改變目前正在執行的模式。
+          </p>
+          <button
+            onClick={() =>
+              void attempt("preferences", async () => {
+                await request({ type: "preferences-save", preferences });
+                notify("preferences", { status: "已儲存顯示與校時設定。" });
+              })
+            }
+          >
+            儲存顯示與校時設定
+          </button>
+        </fieldset>
         <button disabled={!!busy} onClick={() => save("preferences")}>
           儲存全部設定
         </button>
@@ -466,7 +519,7 @@ export function Options() {
         </div>
         <p className="muted credential-note">
           憑證保存在擴充功能本機儲存，不是加密保險箱；請使用可撤銷的獨立
-          Token。第一版不處理音訊、不自動產生背景付費工作。
+          Token。音訊在本機處理；字幕搜尋只在使用者點擊時發送，不自動產生背景付費工作。
         </p>
         {sectionNotice("records")}
       </section>

@@ -2,6 +2,29 @@ import { inspectPage, readCaptionPage, readTranscriptPage } from "./bridge";
 import { videoSchema } from "../shared/schemas";
 import { parseYouTubeCaptions } from "./captions";
 import type { CaptionTrack, Cue, VideoContext } from "../shared/types";
+import { manualTracks } from "./manual-tracks";
+export async function readManualTrack(
+  tabId: number,
+  trackId: string,
+  videoId: string,
+): Promise<Cue[]> {
+  const context = await inspectVideo(tabId);
+  if (
+    context.video.videoId !== videoId ||
+    !manualTracks(context.tracks).some((t) => t.id === trackId)
+  )
+    throw new Error("不是可用的人工字幕軌");
+  const [r] = await chrome.scripting.executeScript({
+    target: { tabId },
+    world: "MAIN",
+    func: readCaptionPage,
+    args: [trackId, videoId],
+  });
+  if (!r?.result) throw new Error("人工字幕讀取失敗，請重新讀取");
+  const cues = parseYouTubeCaptions(r.result.raw, r.result.format);
+  if (!cues.length) throw new Error("人工字幕內容為空");
+  return cues;
+}
 export async function readTranscript(
   tabId: number,
   videoId: string,
@@ -34,9 +57,11 @@ export function chooseTracks(tracks: CaptionTrack[]) {
       Number(a.isAuto) - Number(b.isAuto),
   );
 }
-export async function inspectVideo(
-  tabId: number,
-): Promise<{ video: VideoContext; tracks: CaptionTrack[] }> {
+export async function inspectVideo(tabId: number): Promise<{
+  video: VideoContext;
+  tracks: CaptionTrack[];
+  selectedTrackId?: string;
+}> {
   const [r] = await chrome.scripting.executeScript({
     target: { tabId },
     world: "MAIN",
@@ -45,6 +70,10 @@ export async function inspectVideo(
   if (!r?.result) throw new Error("無法讀取播放器");
   const data = r.result;
   return {
+    selectedTrackId:
+      typeof data.selectedTrackId === "string"
+        ? data.selectedTrackId
+        : undefined,
     video: videoSchema.parse(data.video),
     tracks: chooseTracks(
       data.tracks.filter((t: any) => {

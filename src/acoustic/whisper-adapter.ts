@@ -196,11 +196,11 @@ export class WhisperAdapter {
       !pcm.length ||
       pcm.length > 480000 ||
       pcm.some((v) => !Number.isFinite(v)) ||
-      !["ja", "zh", "en"].includes(language)
+      !["ja", "zh", "en", "auto"].includes(language)
     )
       throw new Error("辨識片段不合法");
     const output = await this.pipeline(pcm, {
-      language,
+      ...(language === "auto" ? {} : { language }),
       task: "transcribe",
       max_new_tokens: 160,
       do_sample: false,

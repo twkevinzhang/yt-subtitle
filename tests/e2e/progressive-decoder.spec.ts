@@ -15,9 +15,18 @@ for (const [name, executablePath] of [
     const folder = await mkdtemp(path.join(os.tmpdir(), "lyrics-progressive-"));
     const ext = path.resolve("dist");
     const server = createServer(async (req, res) => {
-      if (req.url === "/decoder.js") {
+      if (
+        req.url === "/decoder.js" ||
+        req.url === "/progressive-audio-source.js"
+      ) {
         res.setHeader("Content-Type", "text/javascript");
-        res.end(await readFile("dist/acoustic/progressive-decoder.js"));
+        res.end(
+          await readFile(
+            req.url === "/decoder.js"
+              ? "dist/acoustic/progressive-decoder.js"
+              : "dist/acoustic/progressive-audio-source.js",
+          ),
+        );
       } else {
         res.setHeader("Content-Type", "text/html");
         res.end("<!doctype html><title>Local codec test</title>");
@@ -56,6 +65,10 @@ for (const [name, executablePath] of [
       const result = await page.evaluate(
         async ({ base64, moduleUrl }) => {
           const { createProgressiveDecoder } = await import(moduleUrl);
+          const { RangeAudioSource } = await import(
+            new URL("progressive-audio-source.js", moduleUrl).href
+          );
+          const source = new RangeAudioSource(8000, () => {});
           const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
           const rows: {
             startMs: number;
@@ -64,12 +77,14 @@ for (const [name, executablePath] of [
           }[] = [];
           const errors: string[] = [];
           const decoder = createProgressiveDecoder(
-            (range: any) =>
+            (range: any) => {
+              source.append(range);
               rows.push({
                 startMs: range.startMs,
                 sampleRate: range.sampleRate,
                 samples: [...range.pcm],
-              }),
+              });
+            },
             (e: Error) => errors.push(e.message),
           );
           try {
@@ -93,6 +108,7 @@ for (const [name, executablePath] of [
                 onsetMs = Math.min(onsetMs, row.startMs + first / 16);
             }
             return {
+              decodedRanges: source.availableRanges(),
               onsetMs,
               sampleCount,
               ranges: rows.length,
@@ -109,18 +125,19 @@ for (const [name, executablePath] of [
         { base64: data, moduleUrl },
       );
       expect(result.errors).toEqual([]);
+      expect(result.decodedRanges).toHaveLength(1);
+      expect(result.decodedRanges[0].startMs).toBe(0);
+      expect(result.decodedRanges[0].endMs).toBeGreaterThan(1000);
       expect(result.bytesSent).toBeLessThan(result.bytesTotal);
       expect(result.ranges).toBeGreaterThan(10);
       expect(result.sampleCount).toBeGreaterThan(16000);
       expect(result.rates).toEqual([16000]);
       expect(Math.abs(result.onsetMs - 1000)).toBeLessThanOrEqual(20);
       expect(result.lastMs).toBeLessThan(8000);
-      await test
-        .info()
-        .attach("progressive-decoder.json", {
-          body: JSON.stringify(result, null, 2),
-          contentType: "application/json",
-        });
+      await test.info().attach("progressive-decoder.json", {
+        body: JSON.stringify(result, null, 2),
+        contentType: "application/json",
+      });
     } finally {
       await browser.close();
       await new Promise<void>((resolve, reject) =>

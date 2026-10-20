@@ -1,900 +1,120 @@
-import { test, expect, chromium } from "@playwright/test";
-import { createServer } from "node:http";
-import { readFile, mkdtemp, mkdir, writeFile, cp } from "node:fs/promises";
-import path from "node:path";
-import os from "node:os";
-test("Brave: settings, mock search, alignment, manual import, overlay and SRT", async () => {
-  const requests: { path: string; body: any }[] = [];
-  let failModels = false;
-  let mockTestReply: string | null = null;
-  let replyDelay = 0;
-  let mockStatus = 200;
-  let mockNonJson: string | null = null;
-  const server = createServer(async (req, res) => {
-    let body = "";
-    for await (const c of req) body += c;
-    res.setHeader("Content-Type", "application/json");
-    requests.push({ path: req.url!, body: body ? JSON.parse(body) : null });
-    if (req.url === "/v1/models") {
-      if (failModels) res.statusCode = 503;
-      res.end(JSON.stringify({ data: [{ id: "test-model" }] }));
-      return;
-    }
-    res.statusCode = mockStatus;
-    if (mockNonJson !== null) {
-      res.end(mockNonJson);
-      return;
-    }
-    const input = JSON.parse(body);
-    const reply = (text: string) =>
-      req.url === "/v1/responses"
-        ? {
-            output: [
-              {
-                type: "web_search_call",
-                status: "completed",
-                action: { sources: [{ url: "https://lrclib.net/test-song" }] },
-              },
-              {
-                type: "message",
-                role: "assistant",
-                content: [{ type: "output_text", text, annotations: [] }],
-              },
-            ],
-          }
-        : { choices: [{ message: { content: text } }] };
-    if (req.url === "/v1/responses") {
-      expect(input.tools).toEqual([{ type: "web_search" }]);
-      expect(input.tool_choice).toEqual({ type: "web_search" });
-    } else expect(input.tools).toBeUndefined();
-    if (mockTestReply !== null) {
-      const text = mockTestReply;
-      if (replyDelay)
-        await new Promise((resolve) => setTimeout(resolve, replyDelay));
-      res.end(JSON.stringify(reply(text)));
-      return;
-    }
-    const search = req.url === "/v1/responses";
-    const payload = search
-      ? {
-          candidates: [
-            {
-              id: "1",
-              title: "合成測試歌曲",
-              artist: "合成演唱者",
-              version: "錄音室",
-              language: "ja",
-              sourceId: "lrclib",
-              url: "https://lrclib.net/test-song",
-              fullText:
-                requests.filter((r) =>
-                  ["/v1/chat/completions", "/v1/responses"].includes(r.path),
-                ).length > 2
-                  ? null
-                  : "合成歌詞第一句\n合成歌詞第二句",
-              syncedLyrics: null,
-              matchReason: "測試用來源匹配",
-            },
-          ],
-        }
-      : {
-          lines: JSON.parse(input.messages[1].content).lines.map(
-            (l: any, i: number) => ({
-              id: l.id,
-              cueIds: [
-                JSON.parse(input.messages[1].content).cues[i]?.id || `c${i}`,
-              ],
-              status: "anchor",
-              translation: `Translation ${i + 1}`,
-            }),
-          ),
-        };
-    res.end(JSON.stringify(reply(JSON.stringify(payload))));
-  });
-  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
-  const address = server.address() as { port: number };
-  const profile = await mkdtemp(path.join(os.tmpdir(), "ai-lyrics-e2e-"));
-  let context;
-  // Test-only localhost grant avoids an unautomatable native permission prompt in headless Brave.
-  const testExtension = path.join(profile, "extension");
-  await cp("dist", testExtension, { recursive: true });
-  const manifest = JSON.parse(
-    await readFile(path.join(testExtension, "manifest.json"), "utf8"),
-  );
-  manifest.host_permissions.push("http://127.0.0.1/*");
-  await writeFile(
-    path.join(testExtension, "manifest.json"),
-    JSON.stringify(manifest),
-  );
-  // Test-only delays reproduce slow initial settings/metadata/captions. The
-  // production bundle is unchanged; every pending callback has a finite delay.
-  const workerPath = path.join(testExtension, "background.js");
-  await writeFile(
-    workerPath,
-    `
-    const originalAdd = chrome.runtime.onMessage.addListener.bind(chrome.runtime.onMessage);
-    const delayed = new Set(); globalThis.__loadingTestPending = new Set();
-    const settingsReadyAt = Date.now() + 6000;
-    chrome.runtime.onMessage.addListener = callback => originalAdd((message,sender,reply) => {
-      const delay = message.type === 'settings-public' ? Math.max(0,settingsReadyAt-Date.now()) : {'inspect':900,'results-list':2000,'read-track':4000}[message.type];
-      if(delay && (message.type === 'settings-public' || !delayed.has(message.type))) {
-        delayed.add(message.type); globalThis.__loadingTestPending.add(message.type);
-        setTimeout(()=>{globalThis.__loadingTestPending.delete(message.type);callback(message,sender,reply);},delay);
-        return true;
-      }
-      return callback(message,sender,reply);
-    });
-  ` + (await readFile(workerPath, "utf8")),
-  );
+import { test, expect } from "@playwright/test";
+import { readFile, mkdir } from "node:fs/promises";
+import { extensionTest, watchFixture } from "./support/extension";
+test("Brave: unconfigured manual/paste, exact source times, save/export and settings modes", async () => {
+  const app = await extensionTest();
+  let manual = true,
+    helpers = 0;
+  const errors: string[] = [];
   try {
-    context = await chromium.launchPersistentContext(profile, {
-      executablePath:
-        process.env.TEST_BROWSER ||
-        "C:/Program Files/BraveSoftware/Brave-Browser/Application/brave.exe",
-      headless: true,
-      args: [
-        `--disable-extensions-except=${testExtension}`,
-        `--load-extension=${testExtension}`,
-        "--no-first-run",
-      ],
-      viewport: { width: 1440, height: 1000 },
-    });
-    context.setDefaultTimeout(15000);
-    console.log(
-      "Browser started; existing workers:",
-      context.serviceWorkers().map((w) => w.url()),
-    );
-    const worker =
-      context.serviceWorkers()[0] ||
-      (await context.waitForEvent("serviceworker", { timeout: 15000 }));
-    const id = new URL(worker.url()).host;
-    console.log("Extension worker ready");
-    await mkdir("artifacts", { recursive: true });
-    let firstWatch = true;
-    await context.route("https://www.youtube.com/watch*", async (route) => {
-      let body = await readFile("tests/fixtures/watch.html", "utf8");
-      if (firstWatch) {
-        firstWatch = false;
-        body = body.replace(
-          "</style>",
-          ".ytp-button{width:48px;height:40px;padding:0}.ytp-button svg{padding:8px 12px}</style>",
-        );
-        body = body.replace(
-          'id="secondary-inner"',
-          'id="pending-secondary-inner"',
-        );
-        body = body.replace(
-          "<button>CC</button><button>⚙</button>",
-          '<div class="ytp-right-controls-left" style="display:flex;align-items:center"><button class="ytp-button ytp-subtitles-button">CC</button></div><div class="ytp-right-controls-right"><button class="ytp-button">⚙</button></div>',
-        );
-      }
+    await app.context.route("https://www.youtube.com/watch*", async (route) => {
+      if (new URL(route.request().url()).searchParams.has("ai-lyrics-audio"))
+        helpers++;
       await route.fulfill({
         contentType: "text/html",
-        body,
+        body: await watchFixture(manual),
       });
     });
-    const welcome = await context.newPage();
-    await welcome.goto("https://www.youtube.com/watch?v=12345678901");
-    const aiButton = welcome.getByRole("button", {
-      name: "AI 歌詞",
-      exact: true,
-    });
-    await expect(aiButton).toHaveAttribute("aria-expanded", "false");
-    await expect(welcome.locator(".panel")).toHaveCount(0);
-    await expect(
-      welcome.locator(".ytp-right-controls-left > [data-ai-lyrics-button]"),
-    ).toHaveCount(1);
-    const aiBox = await aiButton.boundingBox();
-    const nativeBox = await welcome
-      .locator(".ytp-subtitles-button")
-      .boundingBox();
-    expect(Math.abs(aiBox!.height - nativeBox!.height)).toBeLessThanOrEqual(1);
-    expect(Math.abs(aiBox!.y - nativeBox!.y)).toBeLessThanOrEqual(1);
-    const iconBox = await aiButton.locator("svg").boundingBox();
-    expect(Math.abs(iconBox!.width - aiBox!.width)).toBeLessThanOrEqual(1);
-    expect(Math.abs(iconBox!.height - aiBox!.height)).toBeLessThanOrEqual(1);
-    const textBox = await aiButton.locator("text").boundingBox();
-    expect(
-      Math.abs(textBox!.y + textBox!.height / 2 - aiBox!.y - aiBox!.height / 2),
-    ).toBeLessThanOrEqual(1);
-    expect(
-      Math.abs(iconBox!.x + iconBox!.width / 2 - aiBox!.x - aiBox!.width / 2),
-    ).toBeLessThanOrEqual(1);
-    await welcome.getByRole("button", { name: "AI 歌詞", exact: true }).click();
-    expect(await welcome.locator("[data-ai-lyrics-panel]").count()).toBe(0);
-    await welcome.evaluate(() => {
-      (document.querySelector("#secondary") as HTMLElement).style.gridColumn =
-        "1 / -1";
-      document.querySelector("#pending-secondary-inner")!.id =
-        "secondary-inner";
-    });
-    await welcome.evaluate(async () => {
-      for (let i = 0; i < 4; i++) await new Promise(requestAnimationFrame);
-    });
-    await expect(welcome.locator("[data-ai-lyrics-panel]")).toBeHidden();
-    await welcome.evaluate(() => {
-      (document.querySelector("#secondary") as HTMLElement).style.gridColumn =
-        "";
-    });
-    await welcome
-      .getByRole("status", { name: "正在載入 AI 歌詞面板", exact: true })
-      .waitFor();
-    const skeletonBox = await welcome.locator(".panel").boundingBox();
-    await welcome.screenshot({
-      path: "artifacts/loading-skeleton.png",
-      fullPage: true,
-    });
-    await welcome
-      .getByRole("status", { name: "正在載入影片資訊", exact: true })
-      .waitFor();
-    const metadataBox = await welcome.locator(".panel").boundingBox();
-    expect(
-      Math.abs(metadataBox!.height - skeletonBox!.height),
-    ).toBeLessThanOrEqual(1);
-    expect(
-      Math.abs(metadataBox!.width - skeletonBox!.width),
-    ).toBeLessThanOrEqual(1);
-    await welcome
-      .getByRole("status", { name: "正在載入影片資訊", exact: true })
-      .waitFor({ state: "detached" });
-    const loadedBox = await welcome.locator(".panel").boundingBox();
-    expect(
-      Math.abs(loadedBox!.height - skeletonBox!.height),
-    ).toBeLessThanOrEqual(1);
-    expect(Math.abs(loadedBox!.width - skeletonBox!.width)).toBeLessThanOrEqual(
-      1,
-    );
-    expect(Math.abs(loadedBox!.y - skeletonBox!.y)).toBeLessThanOrEqual(1);
-    expect(
-      await worker.evaluate(() =>
-        (globalThis as any).__loadingTestPending.has("read-track"),
-      ),
-    ).toBe(true);
-    await welcome
-      .getByRole("button", { name: "貼上／匯入", exact: true })
-      .click();
-    await expect(welcome.getByLabel("匯入 LRC／SRT")).toBeEnabled();
-    await expect(
-      welcome.getByRole("button", { name: "使用貼上歌詞", exact: true }),
-    ).toBeEnabled();
-    await expect(
-      welcome.getByRole("heading", { name: "AI 歌詞", exact: true }),
-    ).toBeVisible();
-    await expect(
-      welcome.getByRole("button", { name: "搜尋歌詞", exact: true }),
-    ).toHaveCount(0);
-    const welcomePanel = welcome.locator(".panel");
-    const playerBox = await welcome.locator("#movie_player").boundingBox();
-    const panelBox = await welcomePanel.boundingBox();
-    expect(panelBox!.x).toBeGreaterThanOrEqual(playerBox!.x + playerBox!.width);
-    expect(Math.abs(panelBox!.y - playerBox!.y)).toBeLessThanOrEqual(1);
-    expect(Math.abs(panelBox!.height - playerBox!.height)).toBeLessThanOrEqual(
-      1,
-    );
-    await welcome.locator("#movie_player").evaluate((el) => {
-      el.style.height = "540px";
-    });
-    await expect
-      .poll(async () => {
-        const p = await welcome.locator("#movie_player").boundingBox();
-        const panel = await welcomePanel.boundingBox();
-        return Math.abs(panel!.y + panel!.height - p!.y - p!.height);
-      })
-      .toBeLessThanOrEqual(1);
-    await welcome.locator("#movie_player").evaluate((el) => {
-      el.style.height = "";
-    });
-    await expect(
-      welcome.locator("#secondary-inner > [data-ai-lyrics-panel]"),
-    ).toHaveCount(1);
-    expect(await welcome.locator("#related").count()).toBe(1);
-    await expect(
-      welcome.getByRole("region", { name: "字幕編輯與預覽" }),
-    ).toBeHidden();
-    expect(
-      await welcome
-        .locator(".workspace")
-        .evaluate(
-          (el) => getComputedStyle(el).gridTemplateColumns.split(" ").length,
-        ),
-    ).toBe(1);
-    await welcome.getByLabel("歌詞全文").fill("切換模式保留草稿");
-    await welcome.evaluate(() => {
-      document.querySelector("#watch-shell")!.setAttribute("data-theater", "");
-      document.body.prepend(document.querySelector("#player")!);
-    });
-    await expect
-      .poll(async () => {
-        const p = await welcome.locator("#movie_player").boundingBox();
-        const w = await welcomePanel.boundingBox();
-        return w!.y >= p!.y + p!.height;
-      })
-      .toBe(true);
-    await expect(welcome.getByLabel("歌詞全文")).toHaveValue(
-      "切換模式保留草稿",
-    );
-    await welcome.screenshot({
-      path: "artifacts/sidebar-theater.png",
-      fullPage: true,
-    });
-    await welcome.evaluate(() => {
-      document
-        .querySelector("#primary-inner")!
-        .prepend(document.querySelector("#player")!);
-      document.querySelector("#watch-shell")!.removeAttribute("data-theater");
-    });
-    await expect
-      .poll(async () => {
-        const p = await welcome.locator("#movie_player").boundingBox();
-        const w = await welcomePanel.boundingBox();
-        return w!.x >= p!.x + p!.width;
-      })
-      .toBe(true);
-    await expect(welcome.getByLabel("歌詞全文")).toHaveValue(
-      "切換模式保留草稿",
-    );
-    await welcome.getByLabel("歌詞全文").fill("");
-    await welcome.getByRole("button", { name: "← 返回歌詞" }).click();
-    await welcomePanel.scrollIntoViewIfNeeded();
-    await expect(welcomePanel).toHaveCSS(
-      "background-color",
-      "rgb(255, 255, 255)",
-    );
-    await welcome.screenshot({ path: "artifacts/welcome-light.png" });
-    await welcome.evaluate(() =>
-      document.documentElement.setAttribute("dark", ""),
-    );
-    await expect(welcomePanel).toHaveCSS("background-color", "rgb(25, 38, 58)");
-    await welcome.screenshot({ path: "artifacts/welcome-dark.png" });
-    await expect(welcome.locator(".lyrics-preview")).toContainText("測試歌曲");
-    await welcome
-      .getByRole("button", { name: "貼上／匯入", exact: true })
-      .click();
-    await welcome.getByLabel("匯入 LRC／SRT").setInputFiles({
-      name: "before-ai.srt",
-      mimeType: "text/plain",
-      buffer: Buffer.from("1\n00:00:01,000 --> 00:00:02,000\n未設定也可使用\n"),
-    });
-    await welcome
-      .getByText("進階：逐句檢查／手動校時（選用）", { exact: true })
-      .click();
-    await expect(welcome.getByLabel("第 1 句開始秒數")).toHaveValue("1");
-    await expect(
-      welcome.getByRole("button", { name: "對齊／生成譯文", exact: true }),
-    ).toBeDisabled();
-    await welcome
-      .getByRole("button", { name: "套用並保存", exact: true })
-      .click();
-    await welcome.getByText(/已套用並保存在本機/).waitFor();
-    const localDownloadPromise = welcome.waitForEvent("download");
-    await welcome
-      .getByRole("button", { name: "下載 SRT", exact: true })
-      .click();
-    const localDownload = await localDownloadPromise;
-    await localDownload.saveAs("artifacts/unconfigured-import.srt");
-    expect(
-      await readFile("artifacts/unconfigured-import.srt", "utf8"),
-    ).toContain("未設定也可使用");
-    expect(
-      requests.filter((r) =>
-        ["/v1/chat/completions", "/v1/responses"].includes(r.path),
-      ),
-    ).toHaveLength(0);
-    await welcome
-      .getByRole("button", { name: "關閉面板", exact: true })
-      .click();
-    await expect(welcomePanel).toBeHidden();
-    await expect(aiButton).toHaveAttribute("aria-expanded", "false");
-    await welcome.getByRole("button", { name: "AI 歌詞", exact: true }).click();
-    await expect(welcomePanel).toBeVisible();
-    const options = await context.newPage();
-    await options.goto(`chrome-extension://${id}/options.html`);
-    await options
-      .getByText("設定保存在這台電腦", { exact: false })
-      .waitFor({ timeout: 15000 });
-    console.log("Options loaded");
-    await options.emulateMedia({ colorScheme: "light" });
-    await expect(options.locator("body")).toHaveCSS(
-      "background-color",
-      "rgb(255, 255, 255)",
-    );
-    await options.screenshot({ path: "artifacts/options-light.png" });
-    await options.emulateMedia({ colorScheme: "dark" });
-    await expect(options.locator("body")).toHaveCSS(
-      "background-color",
-      "rgb(25, 38, 58)",
-    );
-    await options
-      .getByLabel("Base URL（通常包含 /v1）")
-      .fill(`http://127.0.0.1:${address.port}/v1`);
-    await options
-      .getByLabel("API Token", { exact: true })
-      .fill("test-only-token");
-    await expect(options.getByLabel("模型名稱", { exact: true })).toHaveCount(
-      0,
-    );
-    const aiSection = options.getByRole("region", {
-      name: "AI 服務",
-      exact: true,
-    });
-    const credentialsBox = await options
-      .getByLabel("API Token", { exact: true })
-      .boundingBox();
-    const cfBox = await options
-      .getByText("Cloudflare Access（選填，ID 與 Secret 成對）", {
-        exact: true,
-      })
-      .boundingBox();
-    expect(cfBox!.y).toBeGreaterThanOrEqual(
-      credentialsBox!.y + credentialsBox!.height,
-    );
-    await welcome.bringToFront();
-    await expect(welcome.getByText(/^先在設定頁填入/)).toBeVisible();
-    await options.bringToFront();
-    failModels = true;
-    await options
-      .getByRole("button", { name: "載入模型", exact: true })
-      .click();
-    await expect(aiSection.getByRole("alert")).toContainText("503");
-    await expect(
-      options.getByRole("combobox", { name: "模型清單" }),
-    ).toHaveCount(0);
-    expect(
-      await worker.evaluate(
-        async () =>
-          (await chrome.storage.local.get("settings")).settings?.provider ??
-          null,
-      ),
-    ).toBeNull();
-    await options.screenshot({
-      path: "artifacts/options-model-error.png",
-      fullPage: true,
-    });
-    failModels = false;
-    await options
-      .getByRole("button", { name: "載入模型", exact: true })
-      .click();
-    await expect(aiSection.getByRole("alert")).toHaveCount(0);
-    await options
-      .getByRole("combobox", { name: "模型清單", exact: true })
-      .selectOption("test-model");
-    expect(
-      await worker.evaluate(
-        async () =>
-          (await chrome.storage.local.get("settings")).settings?.provider ??
-          null,
-      ),
-    ).toBeNull();
-    await options.screenshot({
-      path: "artifacts/options-unsaved-models.png",
-      fullPage: true,
-    });
-    await options
-      .getByRole("button", { name: "儲存設定", exact: true })
-      .click();
-    await options.getByText("已儲存設定。搜尋能力需另外測試。").waitFor();
-    await welcome.bringToFront();
-    await expect(welcome.getByText(/^先在設定頁填入/)).toHaveCount(0);
-    await expect(
-      welcome.getByRole("button", { name: "搜尋歌詞", exact: true }),
-    ).toBeVisible();
-    await expect(welcome.getByLabel("第 1 句開始秒數")).toHaveValue("1");
-    await expect(
-      welcome.getByRole("textbox", { name: "原文", exact: true }),
-    ).toHaveValue("未設定也可使用");
-    await welcome.close();
-    await options
-      .getByRole("button", { name: "載入模型", exact: true })
-      .click();
-    await options
-      .getByText("連線成功，取得 1 個模型。搜尋尚未驗證。")
-      .waitFor();
-    await mkdir("artifacts", { recursive: true });
-    await options.screenshot({
-      path: "artifacts/settings.png",
-      fullPage: true,
-    });
-    failModels = true;
-    const page = await context.newPage();
-    await context.route("https://www.youtube.com/watch*", async (route) =>
-      route.fulfill({
-        contentType: "text/html",
-        body: await readFile("tests/fixtures/watch.html", "utf8"),
-      }),
-    );
-    await context.route("https://www.youtube.com/api/timedtext*", (route) =>
+    await app.context.route("https://www.youtube.com/api/timedtext*", (route) =>
       route.fulfill({
         contentType: "application/json",
         body: JSON.stringify({
           events: [
             {
-              tStartMs: 1000,
+              tStartMs: 1250,
               dDurationMs: 2000,
-              segs: [{ utf8: "合成歌詞第一句" }],
-            },
-            {
-              tStartMs: 4000,
-              dDurationMs: 2000,
-              segs: [{ utf8: "合成歌詞第二句" }],
+              segs: [{ utf8: "人工字幕原時間" }],
             },
           ],
         }),
       }),
     );
+    const page = await app.context.newPage();
+    page.on("pageerror", (e) => errors.push(e.message));
     await page.goto("https://www.youtube.com/watch?v=12345678901");
-    await expect(
-      page.getByRole("button", { name: "AI 歌詞", exact: true }),
-    ).toHaveCount(1);
-    await expect(
-      page.getByRole("heading", { name: "歡迎使用 AI 歌詞" }),
-    ).toHaveCount(0);
     await page.getByRole("button", { name: "AI 歌詞", exact: true }).click();
-    await page
-      .getByRole("button", { name: "AI 尋找歌詞", exact: true })
-      .click();
-    await page.getByText("已讀取 2 段字幕，可用來對齊歌詞").waitFor();
-    expect(
-      requests.filter((x) =>
-        ["/v1/chat/completions", "/v1/responses"].includes(x.path),
-      ),
-    ).toHaveLength(0);
-    await page.getByRole("button", { name: "搜尋歌詞", exact: true }).click();
+    const panel = page.getByRole("region", { name: "AI 歌詞工作面板" });
     await expect(
-      page.getByRole("button", { name: "開始搜尋", exact: true }),
+      panel.getByRole("button", { name: "AI 找字幕", exact: true }),
+    ).toBeDisabled();
+    await expect(panel.locator('input[type="file"]')).toHaveCount(0);
+    const yt = panel.getByRole("button", { name: "YT 字幕", exact: true });
+    await expect(yt).toHaveClass(/yt-manual/);
+    await yt.click();
+    await expect(panel.getByLabel("第 1 句開始秒數")).toHaveValue("1.25");
+    await expect(panel.getByLabel("人工 YT 字幕軌")).toBeVisible();
+    await panel
+      .getByRole("button", { name: "套用並保存", exact: true })
+      .click();
+    await expect(
+      panel.getByText("已套用並保存至本機。", { exact: true }),
     ).toBeVisible();
-    expect(
-      requests.filter((x) =>
-        ["/v1/chat/completions", "/v1/responses"].includes(x.path),
-      ),
-    ).toHaveLength(0);
-    await page
-      .getByRole("button", { name: "開始搜尋", exact: true })
-      .evaluate((el) => (el as HTMLElement).click());
-    await page.waitForTimeout(150);
-    expect(
-      requests.filter((x) =>
-        ["/v1/chat/completions", "/v1/responses"].includes(x.path),
-      ),
-    ).toHaveLength(0);
-    await page.getByRole("button", { name: "開始搜尋", exact: true }).click();
-    await page.getByRole("button", { name: "使用這個版本" }).click();
-    if ((await page.locator(".manual-timing").getAttribute("open")) === null) {
-      await page
-        .getByText("進階：逐句檢查／手動校時（選用）", { exact: true })
-        .click();
-    }
-    await page.getByRole("checkbox", { name: /生成譯文/ }).check();
-    await page
-      .getByRole("button", { name: "對齊／生成譯文", exact: true })
+    await panel.getByRole("button", { name: "貼入字幕", exact: true }).click();
+    await panel
+      .getByLabel("字幕全文")
+      .fill("1\n00:00:04,000 --> 00:00:06,000\n貼入全文\n保留換行");
+    await panel
+      .getByRole("button", { name: "使用貼入字幕", exact: true })
       .click();
-    await page
-      .getByRole("button", { name: "開始對齊／翻譯", exact: true })
+    await expect(
+      panel.getByRole("textbox", { name: "原文", exact: true }),
+    ).toHaveValue("貼入全文\n保留換行");
+    await panel
+      .getByRole("button", { name: "套用並保存", exact: true })
       .click();
-    await expect(page.getByLabel("第 1 句開始秒數")).toHaveValue("1");
-    // A newly chosen candidate without text must clear the previous draft; recovery is explicit.
-    await page.getByRole("button", { name: "搜尋歌詞", exact: true }).click();
-    await page.getByRole("button", { name: "開始搜尋", exact: true }).click();
-    await page.getByRole("button", { name: "使用這個版本" }).click();
-    await expect(page.getByLabel("第 1 句開始秒數")).toHaveCount(0);
-    await page.getByRole("button", { name: "返回上一份草稿" }).click();
-    if ((await page.locator(".manual-timing").getAttribute("open")) === null) {
-      await page
-        .getByText("進階：逐句檢查／手動校時（選用）", { exact: true })
-        .click();
-    }
-    await expect(page.getByLabel("第 1 句開始秒數")).toHaveValue("1");
-    await page.getByRole("button", { name: "套用並保存" }).click();
-    await page.getByText(/已套用並保存在本機/).waitFor();
-    const downloadPromise = page.waitForEvent("download");
-    await page.getByRole("button", { name: "下載 SRT" }).click();
-    const download = await downloadPromise;
-    await download.saveAs("artifacts/synthetic-lyrics.srt");
-    expect(await readFile("artifacts/synthetic-lyrics.srt", "utf8")).toContain(
-      "00:00:01,000 --> 00:00:03,000",
-    );
-    await page.screenshot({ path: "artifacts/player.png", fullPage: true });
+    const download = page.waitForEvent("download");
+    await panel.getByRole("button", { name: "下載 SRT", exact: true }).click();
+    const file = await download;
+    await mkdir("artifacts/subtitle-sources", { recursive: true });
+    await file.saveAs("artifacts/subtitle-sources/pasted.srt");
     expect(
-      requests.filter((x) =>
-        ["/v1/chat/completions", "/v1/responses"].includes(x.path),
-      ),
-    ).toHaveLength(3);
-    // No secret is injected into the page or model messages.
-    expect(await page.content()).not.toContain("test-only-token");
-    for (const r of requests.filter((x) => x.body))
-      expect(JSON.stringify(r.body)).not.toContain("test-only-token");
-    await page.getByRole("button", { name: "關閉面板" }).click();
+      await readFile("artifacts/subtitle-sources/pasted.srt", "utf8"),
+    ).toContain("00:00:04,000 --> 00:00:06,000\n貼入全文\n保留換行");
+    expect(helpers).toBe(0);
+    await page.screenshot({
+      path: "artifacts/subtitle-sources/editor.png",
+      fullPage: true,
+    });
+    await panel
+      .getByRole("button", { name: "← 返回歌詞", exact: true })
+      .click();
+    await page.screenshot({
+      path: "artifacts/subtitle-sources/three-actions.png",
+      fullPage: true,
+    });
+    const options = await app.context.newPage();
+    await options.goto(app.optionsUrl);
+    for (const [name, value] of [
+      ["播放中背景校時", "background"],
+      ["整首校完再使用", "complete-before-use"],
+      ["先緩衝再播放", "buffer-before-play"],
+    ]) {
+      await options.getByRole("radio", { name: new RegExp(name) }).check();
+      await options
+        .getByRole("button", { name: "儲存顯示與校時設定", exact: true })
+        .click();
+      await expect
+        .poll(() =>
+          app.worker.evaluate(
+            async () =>
+              (await chrome.storage.local.get("settings")).settings.preferences
+                .alignmentMode,
+          ),
+        )
+        .toBe(value);
+    }
+    await options.screenshot({
+      path: "artifacts/subtitle-sources/settings.png",
+      fullPage: true,
+    });
+    manual = false;
+    await page.reload();
     await page.getByRole("button", { name: "AI 歌詞", exact: true }).click();
     await expect(
-      page.getByRole("region", { name: "AI 歌詞工作面板", exact: true }),
-    ).toBeVisible();
-    const badImport = "1\n00:00:01,000 --> 00:00:02,000\n匯入測試\n";
-    await page.getByLabel("匯入 LRC／SRT").setInputFiles({
-      name: "local.srt",
-      mimeType: "text/plain",
-      buffer: Buffer.from(badImport),
-    });
-    await expect(page.getByLabel("第 2 句開始秒數")).toHaveCount(0);
-    await expect(page.getByLabel("第 1 句開始秒數")).toHaveValue("1");
-    await page
-      .getByRole("button", { name: "對齊／生成譯文", exact: true })
-      .click();
-    await page
-      .getByRole("button", { name: "開始對齊／翻譯", exact: true })
-      .click();
-    await page.getByText(/AI 對齊完成，已套用字幕並保存/).waitFor();
-    if ((await page.locator(".manual-timing").getAttribute("open")) === null)
-      await page.locator(".manual-timing summary").click();
-    await expect(
-      page.getByRole("textbox", { name: "譯文", exact: true }),
-    ).toHaveValue("Translation 1");
-    await expect(page.getByLabel("第 1 句結束秒數")).toHaveValue("2");
-    expect(
-      requests.filter((x) =>
-        ["/v1/chat/completions", "/v1/responses"].includes(x.path),
-      ),
-    ).toHaveLength(4);
-    const longLyrics = Array.from(
-      { length: 60 },
-      (_, i) => `完整歌詞第 ${i + 1} 句`,
-    ).join("\n");
-    await page.getByLabel("歌詞全文").fill(longLyrics);
-    await page
-      .getByRole("button", { name: "使用貼上歌詞", exact: true })
-      .click();
-    await expect(page.locator(".lyrics-preview .lyric-line")).toHaveCount(60);
-    const editBox = await page.locator(".panel").boundingBox();
-    await page.getByRole("button", { name: "← 返回歌詞" }).click();
-    const lyricsBox = await page.locator(".panel").boundingBox();
-    expect(Math.abs(editBox!.height - lyricsBox!.height)).toBeLessThanOrEqual(
-      1,
-    );
-    await page.locator(".lyrics-preview").evaluate((el) => {
-      el.scrollTop = 500;
-    });
-    const savedScroll = await page
-      .locator(".lyrics-preview")
-      .evaluate((el) => el.scrollTop);
-    expect(savedScroll).toBeGreaterThan(0);
-    await page.getByRole("button", { name: "製作／編輯" }).click();
-    await expect(page.getByLabel("歌詞全文")).toHaveValue(longLyrics);
-    await page.getByRole("button", { name: "← 返回歌詞" }).click();
-    expect(
-      await page.locator(".lyrics-preview").evaluate((el) => el.scrollTop),
-    ).toBe(savedScroll);
-    await page.locator(".lyrics-preview").evaluate((el) => {
-      el.scrollTop = 0;
-    });
-    await page.locator(".panel").scrollIntoViewIfNeeded();
-    await page.screenshot({
-      path: "artifacts/below-player-lyrics.png",
-      fullPage: true,
-    });
-    await page.evaluate(() =>
-      document.documentElement.setAttribute("dark", ""),
-    );
-    await expect(page.locator(".panel")).toHaveCSS(
-      "background-color",
-      "rgb(25, 38, 58)",
-    );
-    await page.screenshot({
-      path: "artifacts/below-player-lyrics-dark.png",
-      fullPage: true,
-    });
-    mockTestReply = Array.from(
-      { length: 20 },
-      (_, i) => `AI 原文回覆第 ${i + 1} 行；這是非 JSON 的搜尋測試回答。`,
-    ).join("\n");
-    await options.bringToFront();
-    options.on("dialog", (dialog) => dialog.accept());
-    await options
-      .getByRole("button", { name: "測試搜尋（使用額度）", exact: true })
-      .click();
-    const editor = options.getByRole("textbox", { name: "Request body" });
-    await expect(editor).toBeVisible();
-    const countBefore = requests.length;
-    const edited = JSON.parse(await editor.inputValue());
-    edited.input = "user edited search test";
-    await editor.fill(JSON.stringify(edited, null, 2));
-    expect(requests.length).toBe(countBefore);
-    await options.getByRole("button", { name: "搜尋", exact: true }).click();
-    const replyRegion = options.getByRole("region", {
-      name: "完整 API 回應",
-      exact: true,
-    });
-    await expect(
-      options.getByText("Response · HTTP 200", { exact: true }),
-    ).toBeVisible();
-    const replyText = replyRegion.locator("pre");
-    const statusBadge = options.locator(".http-status-2xx");
-    await expect(statusBadge).toHaveText("Response · HTTP 200");
-    const buttonBox = (await options
-      .getByRole("button", { name: "再次搜尋", exact: true })
-      .boundingBox())!;
-    const badgeBox = (await statusBadge.boundingBox())!;
-    expect(badgeBox.x).toBeGreaterThan(buttonBox.x + buttonBox.width);
-    expect(
-      Math.abs(
-        badgeBox.y + badgeBox.height / 2 - buttonBox.y - buttonBox.height / 2,
-      ),
-    ).toBeLessThanOrEqual(1);
-    const fullReply = JSON.parse((await replyText.textContent())!);
-    expect(fullReply.output[1].content[0].text).toBe(mockTestReply);
-    expect(await replyText.textContent()).toBe(
-      JSON.stringify(fullReply, null, 2),
-    );
-    expect(requests.at(-1)!.body).toEqual(edited);
-    expect((await replyText.boundingBox())!.height).toBe(180);
-    await expect(replyRegion.getByRole("button")).toHaveCount(0);
-    await options
-      .getByRole("button", { name: "測試搜尋（使用額度）", exact: true })
-      .click();
-    await expect(editor).toBeHidden();
-    await options
-      .getByRole("button", { name: "測試搜尋（使用額度）", exact: true })
-      .click();
-    await expect(editor).toHaveValue(JSON.stringify(edited, null, 2));
-    await expect(replyRegion).toBeVisible();
-    await options.screenshot({
-      path: "artifacts/options-search-test-dark.png",
-      fullPage: true,
-    });
-    await options.emulateMedia({ colorScheme: "light" });
-    await options.screenshot({
-      path: "artifacts/options-search-test-light.png",
-      fullPage: true,
-    });
-    mockTestReply = "第二次測試的 AI 回覆";
-    replyDelay = 1500;
-    await options
-      .getByRole("button", { name: "再次搜尋", exact: true })
-      .click();
-    await expect(replyRegion).toHaveCount(0);
-    await expect(replyRegion).toBeVisible();
-    expect(
-      JSON.parse((await replyText.textContent())!).output[1].content[0].text,
-    ).toBe(mockTestReply);
-    mockStatus = 403;
-    mockNonJson = "<html>Access denied</html>";
-    await options
-      .getByRole("button", { name: "再次搜尋", exact: true })
-      .click();
-    await expect(
-      options.getByText("Response · HTTP 403", { exact: true }),
-    ).toBeVisible();
-    await expect(replyText).toHaveText(mockNonJson);
-    await expect(options.locator(".http-status-4xx")).toHaveText(
-      "Response · HTTP 403",
-    );
-    await expect(replyRegion.locator("html")).toHaveCount(0);
-    mockStatus = 200;
-    mockNonJson = null;
-    await page.bringToFront();
-    await page.getByRole("button", { name: "製作／編輯", exact: true }).click();
-    mockTestReply = JSON.stringify(
-      {
-        candidates: [],
-        error: "目前無法搜尋這個 live 版本的歌詞，請提供來源。".repeat(8),
-      },
-      null,
-      2,
-    );
-    replyDelay = 0;
-    await page.getByRole("button", { name: "搜尋歌詞", exact: true }).click();
-    await page.getByRole("button", { name: "開始搜尋", exact: true }).click();
-    const panelReply = page.getByRole("region", {
-      name: "AI 實際回覆",
-      exact: true,
-    });
-    await expect(panelReply).toBeVisible();
-    expect(await panelReply.locator("pre").textContent()).toBe(mockTestReply);
-    expect(
-      (await panelReply.locator("pre").boundingBox())!.height,
-    ).toBeLessThanOrEqual(80);
-    await panelReply.getByRole("button", { name: "展開", exact: true }).click();
-    expect(
-      (await panelReply.locator("pre").boundingBox())!.height,
-    ).toBeGreaterThan(80);
-    await panelReply.getByRole("button", { name: "收合", exact: true }).click();
-    await expect(
-      page.getByRole("button", { name: "使用這個版本" }),
-    ).toHaveCount(0);
-    await expect(page.getByLabel("歌詞全文")).toHaveValue(longLyrics);
-    await page.locator(".operations").evaluate((el) => {
-      el.scrollTop = 0;
-    });
-    await page.screenshot({
-      path: "artifacts/panel-ai-reply.png",
-      fullPage: true,
-    });
-    mockTestReply = "目前沒有網頁搜尋工具。\n請貼上歌詞或提供來源連結。";
-    replyDelay = 1500;
-    await page.getByRole("button", { name: "搜尋歌詞", exact: true }).click();
-    await page.getByRole("button", { name: "開始搜尋", exact: true }).click();
-    await expect(panelReply).toHaveCount(0);
-    await expect(panelReply).toBeVisible();
-    expect(await panelReply.locator("pre").textContent()).toBe(mockTestReply);
-    await expect(page.getByLabel("歌詞全文")).toHaveValue(longLyrics);
-    // Empty timedtext must recover through the native transcript, then align and
-    // inject pasted lyrics without touching any manual time input.
-    mockTestReply = null;
-    replyDelay = 0;
-    const fallback = await context.newPage();
-    await fallback.route("https://www.youtube.com/api/timedtext*", (route) =>
-      route.fulfill({ contentType: "application/json", body: "" }),
-    );
-    await fallback.route("https://www.youtube.com/watch*", async (route) => {
-      const body = (
-        await readFile("tests/fixtures/watch.html", "utf8")
-      ).replace(
-        "</body>",
-        `<button aria-label="顯示轉錄稿" onclick="document.querySelector('#native-transcript').setAttribute('visibility','ENGAGEMENT_PANEL_VISIBILITY_EXPANDED')">顯示轉錄稿</button><ytd-engagement-panel-section-list-renderer id="native-transcript" target-id="PAmodern_transcript_view" visibility="ENGAGEMENT_PANEL_VISIBILITY_HIDDEN"><transcript-segment-view-model><div class="ytwTranscriptSegmentViewModelTimestamp">0:01</div><span role="text">合成歌詞第一句</span></transcript-segment-view-model><transcript-segment-view-model><div class="ytwTranscriptSegmentViewModelTimestamp">0:04</div><span role="text">合成歌詞第二句</span></transcript-segment-view-model></ytd-engagement-panel-section-list-renderer></body>`,
-      );
-      await route.fulfill({ contentType: "text/html", body });
-    });
-    await fallback.goto("https://www.youtube.com/watch?v=12345678901");
-    await fallback
-      .getByRole("button", { name: "AI 歌詞", exact: true })
-      .click();
-    await fallback
-      .getByRole("button", { name: "貼上／匯入", exact: true })
-      .click();
-    await fallback.getByText(/已讀取 2 段YouTube 轉錄稿/).waitFor();
-    await fallback
-      .getByLabel("歌詞全文")
-      .fill("合成歌詞第一句\n合成歌詞第二句");
-    await fallback
-      .getByRole("button", { name: "使用貼上歌詞", exact: true })
-      .click();
-    await expect(fallback.locator(".manual-timing")).not.toHaveAttribute(
-      "open",
-      "",
-    );
-    await fallback
-      .getByRole("button", { name: "開始對齊／翻譯", exact: true })
-      .click();
-    await fallback.getByText(/AI 對齊完成，已套用字幕並保存/).waitFor();
-    await fallback
-      .getByText("AI 校時診斷（原始回覆與判定）", { exact: true })
-      .click();
-    await expect(fallback.locator(".alignment-diagnostics pre")).toContainText(
-      "第 1 批 AI 原始回覆",
-    );
-    await expect(fallback.locator(".alignment-diagnostics pre")).toContainText(
-      "逐句判定",
-    );
-    await expect(fallback.getByLabel("第 1 句開始秒數")).toHaveValue("1");
-    await expect(fallback.getByLabel("第 2 句開始秒數")).toHaveValue("4");
-    await fallback.getByRole("button", { name: "← 返回歌詞" }).click();
-    await expect(fallback.locator(".lyric-line")).toHaveCount(2);
-    await fallback.locator("video").evaluate((video) => {
-      (video as HTMLVideoElement).currentTime = 1.5;
-      video.dispatchEvent(new Event("timeupdate"));
-    });
-    await expect(fallback.locator(".lyric-line[aria-current=true]")).toHaveText(
-      "合成歌詞第一句",
-    );
-    await fallback.screenshot({
-      path: "artifacts/transcript-ai-aligned.png",
-      fullPage: true,
-    });
-    await writeFile(
-      "artifacts/browser-verification.json",
-      JSON.stringify(
-        {
-          browser: context.browser()?.version(),
-          profile,
-          apiRequests: requests.length,
-          chatRequests: requests.filter((x) =>
-            ["/v1/chat/completions", "/v1/responses"].includes(x.path),
-          ).length,
-          kind: "synthetic fixture and local mock AI; not real YouTube/API validation",
-        },
-        null,
-        2,
-      ),
-    );
+      page.getByRole("button", { name: "YT 字幕", exact: true }),
+    ).toBeDisabled();
+    expect(errors).toEqual([]);
   } finally {
-    await context?.close();
-    await new Promise<void>((r) => server.close(() => r()));
+    await app.close();
   }
 });

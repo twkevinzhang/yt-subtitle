@@ -1,222 +1,113 @@
-import { test, expect, chromium } from "@playwright/test";
-import { createServer } from "node:http";
-import {
-  access,
-  cp,
-  mkdir,
-  mkdtemp,
-  readFile,
-  writeFile,
-  rm,
-} from "node:fs/promises";
-import path from "node:path";
-import os from "node:os";
-
-test("AI revised subtitles + real WASM fills only missing timing (mock YouTube audio transport)", async () => {
+import { test, expect } from "@playwright/test";
+import { readFile, mkdir, writeFile } from "node:fs/promises";
+import { extensionTest, watchFixture } from "./support/extension";
+test("Brave: pasted partial times through progressive codec, background upload and real WASM (fixture transport)", async () => {
   test.setTimeout(180000);
-  const models = path.resolve(
-      ".tools/browser-models/onnx-community/whisper-base_timestamped",
-    ),
-    speech = path.resolve("artifacts/browser-probe/jfk.wav");
+  const app = await extensionTest(true);
+  let helpers = 0;
   try {
-    await access(models);
-    await access(speech);
-  } catch {
-    test.skip(
-      true,
-      "Local real model/audio unavailable; not an inference pass",
-    );
-    return;
-  }
-  const bytes = (await readFile(speech)).toString("base64");
-  const text =
-    "And so my fellow Americans ask not what your country can do for you ask what you can do for your country";
-  let aiCalls = 0,
-    helpers = 0;
-  const server = createServer(async (req, res) => {
-    let raw = "";
-    for await (const chunk of req) raw += chunk;
-    res.setHeader("Content-Type", "application/json");
-    if (!raw) {
-      res.end(JSON.stringify({ data: [{ id: "m" }] }));
-      return;
-    }
-    aiCalls++;
-    res.end(
-      JSON.stringify({
-        choices: [
-          {
-            message: {
-              content: JSON.stringify({
-                lines: [
-                  { text: "AI supplied text stays", startMs: 0, endMs: 100 },
-                  { text, startMs: null, endMs: null, cueIds: ["c0"] },
-                ],
-              }),
-            },
-          },
-        ],
-      }),
-    );
-  });
-  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-  const folder = await mkdtemp(path.join(os.tmpdir(), "ai-lyrics-revised-")),
-    extension = path.join(folder, "extension");
-  let browser;
-  try {
-    await cp("dist", extension, { recursive: true });
-    await mkdir(path.join(extension, "models/onnx-community"), {
-      recursive: true,
-    });
-    await cp(
-      models,
-      path.join(extension, "models/onnx-community/whisper-base_timestamped"),
-      { recursive: true },
-    );
-    const manifest = JSON.parse(
-      await readFile(path.join(extension, "manifest.json"), "utf8"),
-    );
-    manifest.host_permissions.push("http://127.0.0.1/*");
-    await writeFile(
-      path.join(extension, "manifest.json"),
-      JSON.stringify(manifest),
-    );
-    browser = await chromium.launchPersistentContext(
-      path.join(folder, "profile"),
-      {
-        executablePath:
-          "C:/Program Files/BraveSoftware/Brave-Browser/Application/brave.exe",
-        headless: true,
-        ignoreDefaultArgs: ["--disable-extensions"],
-        args: [
-          `--disable-extensions-except=${extension}`,
-          `--load-extension=${extension}`,
-        ],
-      },
-    );
-    const worker =
-      browser.serviceWorkers()[0] ??
-      (await browser.waitForEvent("serviceworker"));
-    await worker.evaluate(
-      async (baseUrl) => {
-        await chrome.storage.local.set({
-          settings: {
-            provider: {
-              schemaVersion: 1,
-              baseUrl,
-              apiToken: "local-test-token",
-              model: "m",
-            },
-            sources: [],
-            preferences: {
-              mode: "original",
-              targetLanguage: "en",
-              fontSize: 28,
-              position: "bottom",
-            },
-            revision: 1,
-          },
+    const options = await app.context.newPage();
+    await options.goto(app.optionsUrl);
+    const bytes = await options.evaluate(
+      async (base64) => {
+        const ctx = new AudioContext({ sampleRate: 48000 }),
+          decoded = await ctx.decodeAudioData(
+            Uint8Array.from(atob(base64), (c) => c.charCodeAt(0)).buffer,
+          );
+        const padded = ctx.createBuffer(1, Math.ceil(12.5 * 48000), 48000);
+        padded.copyToChannel(decoded.getChannelData(0), 0);
+        const source = ctx.createBufferSource(),
+          dest = ctx.createMediaStreamDestination();
+        source.buffer = padded;
+        source.connect(dest);
+        const rec = new MediaRecorder(dest.stream, {
+            mimeType: "audio/webm;codecs=opus",
+          }),
+          chunks: Blob[] = [];
+        const result = new Promise<string>((resolve, reject) => {
+          rec.ondataavailable = (e) => chunks.push(e.data);
+          rec.onerror = reject;
+          rec.onstop = async () => {
+            const bytes = new Uint8Array(await new Blob(chunks).arrayBuffer());
+            let text = "";
+            for (const b of bytes) text += String.fromCharCode(b);
+            resolve(btoa(text));
+          };
         });
+        source.onended = () => rec.stop();
+        await ctx.resume();
+        rec.start();
+        source.start();
+        try {
+          return await result;
+        } finally {
+          dest.stream.getTracks().forEach((t) => t.stop());
+          await ctx.close();
+        }
       },
-      `http://127.0.0.1:${(server.address() as any).port}/v1`,
+      (await readFile("artifacts/browser-probe/jfk.wav")).toString("base64"),
     );
-    await browser.route("https://www.youtube.com/watch*", async (route) => {
-      const url = new URL(route.request().url()),
-        nonce = url.searchParams.get("ai-lyrics-audio");
+    await app.context.route("https://www.youtube.com/watch*", async (route) => {
+      const nonce = new URL(route.request().url()).searchParams.get(
+        "ai-lyrics-audio",
+      );
       if (nonce) {
         helpers++;
-        expect(aiCalls).toBe(1);
         await route.fulfill({
           contentType: "text/html",
-          body: `<!doctype html><script>const data=Uint8Array.from(atob(${JSON.stringify(bytes)}),c=>c.charCodeAt(0)).buffer;parent.postMessage({tag:'ai-lyrics-audio',nonce:${JSON.stringify(nonce)},type:'chunk',data},'https://www.youtube.com');parent.postMessage({tag:'ai-lyrics-audio',nonce:${JSON.stringify(nonce)},type:'complete',bytes:data.byteLength,durationMs:11000},'https://www.youtube.com');</script>`,
+          body: `<!doctype html><script>let sent=false;addEventListener('message',e=>{if(e.data.action!=='range'||sent)return;sent=true;const bytes=Uint8Array.from(atob(${JSON.stringify(bytes)}),c=>c.charCodeAt(0));let sequence=0;for(let at=0;at<bytes.length;at+=8192){const seq=sequence++;parent.postMessage({tag:'ai-lyrics-audio',nonce:${JSON.stringify(nonce)},type:'chunk',generation:0,sequence:seq,init:seq===0,mime:'audio/webm;codecs=opus',data:bytes.slice(at,at+8192).buffer},'https://www.youtube.com');}});</script>`,
         });
         return;
       }
-      const html = (await readFile("tests/fixtures/watch.html", "utf8"))
-        .replace("lengthSeconds:'10'", "lengthSeconds:'11'")
-        .replace("value:10", "value:11");
-      await route.fulfill({ contentType: "text/html", body: html });
+      await route.fulfill({
+        contentType: "text/html",
+        body: (await watchFixture())
+          .replace("lengthSeconds:'10'", "lengthSeconds:'12'")
+          .replace("value:10", "value:12"),
+      });
     });
-    await browser.route("https://www.youtube.com/api/timedtext*", (route) =>
-      route.fulfill({
-        contentType: "application/json",
-        body: JSON.stringify({
-          events: [{ tStartMs: 0, dDurationMs: 11000, segs: [{ utf8: text }] }],
-        }),
-      }),
-    );
-    const page = await browser.newPage();
+    const page = await app.context.newPage();
     await page.goto("https://www.youtube.com/watch?v=12345678901");
     await page.getByRole("button", { name: "AI 歌詞", exact: true }).click();
-    await page.getByRole("button", { name: "貼上歌詞", exact: true }).click();
+    await page.getByRole("button", { name: "貼入字幕", exact: true }).click();
+    const text =
+      "And so my fellow Americans ask not what your country can do for you ask what you can do for your country";
     await page
-      .getByLabel("歌詞全文")
-      .fill("user input is not the returned subtitle");
+      .getByLabel("字幕全文")
+      .fill(`[00:00.000]source stays\n[00:00.100]${text}`);
     await page
-      .getByRole("button", { name: "使用貼上歌詞", exact: true })
+      .getByRole("button", { name: "使用貼入字幕", exact: true })
       .click();
     await expect(
-      page.getByText("AI 對齊完成，請檢查後套用並保存。", { exact: true }),
-    ).toBeVisible({ timeout: 120000 });
-    expect(aiCalls).toBe(1);
+      page.getByRole("button", { name: "套用並保存", exact: true }),
+    ).toBeEnabled({ timeout: 120000 });
     expect(helpers).toBe(1);
-    const resultPanel=page.getByRole("tabpanel",{name:"歌詞結果",exact:true});
-    await expect(resultPanel).toContainText("AI supplied text stays");
-    await expect(resultPanel).toContainText(text);
+    await expect(page.getByLabel("第 1 句開始秒數")).toHaveValue("0");
+    await expect(page.getByLabel("第 1 句結束秒數")).toHaveValue("0.1");
+    await expect(page.getByLabel("第 2 句開始秒數")).toHaveValue("0.1");
+    expect(
+      Number(await page.getByLabel("第 2 句結束秒數").inputValue()),
+    ).toBeGreaterThan(1);
     await page.getByRole("button", { name: "套用並保存", exact: true }).click();
-    await expect(page.locator(".lyrics-preview .lyric-line")).toHaveCount(2);
-    const saved = await worker.evaluate(async () => {
-      const db = await new Promise<IDBDatabase>((resolve, reject) => {
-        const r = indexedDB.open("ai-lyrics");
-        r.onsuccess = () => resolve(r.result);
-        r.onerror = () => reject(r.error);
-      });
-      try {
-        return await new Promise<any[]>((resolve, reject) => {
-          const r = db.transaction("results").objectStore("results").getAll();
-          r.onsuccess = () => resolve(r.result);
-          r.onerror = () => reject(r.error);
-        });
-      } finally {
-        db.close();
-      }
-    });
-    expect(saved[0].lines[0]).toMatchObject({
-      original: "AI supplied text stays",
-      startMs: 0,
-      endMs: 100,
-    });
-    expect(saved[0].lines[1].original).toBe(text);
-    expect(saved[0].lines[1].endMs).toBeGreaterThan(saved[0].lines[1].startMs);
+    await expect(
+      page.getByText("已套用並保存至本機。", { exact: true }),
+    ).toBeVisible();
+    await expect(page.locator('iframe[src*="ai-lyrics-audio"]')).toHaveCount(0);
     await mkdir("artifacts/progressive-alignment", { recursive: true });
     await writeFile(
-      "artifacts/progressive-alignment/revised-real-wasm.json",
+      "artifacts/progressive-alignment/partial-native.json",
       JSON.stringify(
         {
-          kind: "mock AI and audio transport, actual MV3 WASM and save",
-          aiCalls,
+          kind: "real native codec + local WASM; fixture YouTube transport, no AI",
           helpers,
-          lines: saved[0].lines,
+          firstEnd: await page.getByLabel("第 1 句結束秒數").inputValue(),
+          secondEnd: await page.getByLabel("第 2 句結束秒數").inputValue(),
         },
         null,
         2,
       ),
     );
   } finally {
-    await browser?.close();
-    server.closeAllConnections();
-    await new Promise<void>((resolve) => server.close(() => resolve()));
-    const target = path.resolve(folder);
-    if (
-      path.dirname(target) !== path.resolve(os.tmpdir()) ||
-      !path.basename(target).startsWith("ai-lyrics-revised-")
-    )
-      throw new Error("Unsafe cleanup target");
-    await rm(target, {
-      recursive: true,
-      force: true,
-      maxRetries: 3,
-      retryDelay: 100,
-    });
+    await app.close();
   }
 });

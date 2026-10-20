@@ -44,7 +44,7 @@ export class WorkerClient implements AcousticBackend {
         () => {
           this.terminate();
         },
-        type === "initialize" ? 180000 : 30000,
+        type === "initialize" ? 120000 : 30000,
       );
       this.waiting.set(id, { resolve, reject, timer });
       try {

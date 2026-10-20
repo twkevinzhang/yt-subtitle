@@ -10,11 +10,17 @@ export function authorizeSender(
   // Options can be opened in a tab, too; exact extension URL remains the trust boundary.
   const ownOptions =
     options || sender.url === `chrome-extension://${extensionId}/options.html`;
-  if (ownOptions && (type.startsWith("audio-") || type === "acoustic-position"))
+  if (
+    ownOptions &&
+    (type.startsWith("audio-") ||
+      type.startsWith("local-model") ||
+      type === "acoustic-position")
+  )
     throw new Error("音訊操作僅限 YouTube 主頁面");
   const privileged = [
     "settings-edit",
     "settings-save",
+    "preferences-save",
     "clear-credentials",
     "models",
     "search-test",

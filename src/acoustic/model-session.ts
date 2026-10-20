@@ -21,7 +21,7 @@ export interface AcousticBackend {
 }
 export interface RecognitionInput {
   pcm: Float32Array;
-  language: "en" | "ja" | "zh";
+  language: "en" | "ja" | "zh" | "auto";
 }
 export class ModelSession {
   state: ModelState = "unloaded";

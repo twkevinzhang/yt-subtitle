@@ -1,48 +1,50 @@
 import React, { useEffect, useRef, useState } from "react";
 import type {
   AlignedLine,
+  AlignmentMode,
   CaptionTrack,
   Cue,
+  DisplayMode,
   LyricCandidate,
   PlayerBinding,
   PublicSettings,
-  RunState,
-  LyricSearchResult,
   SavedResult,
+  SubtitleLine,
+  SubtitleSource,
   VideoContext,
 } from "../shared/types";
 import { request } from "../shared/messages";
 import { hashInput } from "../background/results";
-import { parseLyrics, validateTiming } from "../lyrics/formats";
+import type {
+  SearchGroupSnapshot,
+  SearchRoute,
+} from "../background/search-group";
+import type { AlignmentProgress } from "../acoustic/alignment-policy";
+import { normalizeSubtitle } from "../lyrics/subtitle-source";
+import { lockTiming } from "../lyrics/timing-locks";
+import { validateTiming } from "../lyrics/formats";
 import { toSrt, safeFilename } from "../lyrics/export";
-import { alignmentBodySchema } from "../shared/schemas";
-import { Candidates } from "./Candidates";
+import { manualTracks, selectManualTrack } from "../youtube/manual-tracks";
+import type { createOverlay } from "../content/overlay";
+import { useSubtitleWork } from "./use-subtitle-work";
+import { SourceActions } from "./SourceActions";
+import { SearchGroups } from "./SearchGroups";
 import { Editor } from "./Editor";
 import { LyricsPreview } from "./LyricsPreview";
 import { ContentSkeleton } from "./Skeleton";
-import { AiReply } from "./AiReply";
-import type { createOverlay } from "../content/overlay";
-import type { RunRecord } from "../background/runs";
-import {
-  candidateDraft,
-  provenanceOf,
-  type DraftProvenance,
-} from "../lyrics/draft";
 import { isUserAction } from "./user-action";
-import { startOwnedRun } from "./owned-run";
-import type { JobKey } from "../acoustic/contracts";
-import { acquireYouTubeAudio } from "../acoustic/youtube-audio-source";
-import {
-  revisedSubtitleRequest,
-  hasCompleteTime,
-} from "../lyrics/revised-subtitles";
-class WorkCancelled extends Error {}
-type PendingWork = {
-  cancelled: boolean;
-  cancellation?: Promise<void>;
-  controller?: AbortController;
+const modeNames: Record<AlignmentMode, string> = {
+  "buffer-before-play": "先緩衝再播放",
+  background: "播放中背景校時",
+  "complete-before-use": "整首校完再使用",
 };
-type LeaveAction = "return" | "stop" | "close";
+const fallback = {
+  mode: "original" as const,
+  targetLanguage: "zh-Hant" as const,
+  fontSize: 28,
+  position: "bottom" as const,
+  alignmentMode: "buffer-before-play" as const,
+};
 export function Panel({
   binding,
   overlay,
@@ -54,621 +56,301 @@ export function Panel({
   onClose: () => void;
   publicSettings?: PublicSettings;
 }) {
-  const [settings, setSettings] = useState<PublicSettings | undefined>(
-      publicSettings,
-    ),
+  const [settings, setSettings] = useState(publicSettings),
     [video, setVideo] = useState<VideoContext>(),
-    [cues, setCues] = useState<Cue[]>([]);
+    [tracks, setTracks] = useState<CaptionTrack[]>([]),
+    [manualId, setManualId] = useState<string>();
   const [view, setView] = useState<
-    "lyrics" | "search" | "paste" | "import" | "edit" | "saved"
-  >("lyrics");
-  const [reviewTab, setReviewTab] = useState<"result" | "request" | "response">(
-    "result",
-  );
-  const [onlyPending, setOnlyPending] = useState(false);
-  const [leaveAction, setLeaveAction] = useState<LeaveAction | null>(null);
-  const [stopping, setStopping] = useState(false);
-  const [stopError, setStopError] = useState("");
-  const workRef = useRef<PendingWork | undefined>(undefined);
-  const previewKey = useRef<JobKey | undefined>(undefined);
-  const leaveTrigger = useRef<HTMLElement | null>(null);
-  const editPage = useRef<HTMLElement>(null);
-  const lyricsPage = useRef<HTMLElement>(null);
-  const previousView = useRef(view);
-  useEffect(() => {
-    if (previousView.current !== view) {
-      (view !== "lyrics" ? editPage : lyricsPage).current?.focus({
-        preventScroll: true,
-      });
-      previousView.current = view;
-    }
-  }, [view]);
-  const [metadataLoading, setMetadataLoading] = useState(true);
-  const [alignmentReport, setAlignmentReport] = useState("");
-  const [message, setMessage] = useState("正在檢查播放器…"),
-    [error, setError] = useState(""),
-    [busy, setBusy] = useState(false),
-    [candidates, setCandidates] = useState<LyricCandidate[] | null>(null),
-    [searchReply, setSearchReply] = useState<string | null>(null),
-    [selected, setSelected] = useState<LyricCandidate>(),
+      "lyrics" | "paste" | "search" | "edit" | "saved"
+    >("lyrics"),
     [text, setText] = useState(""),
-    [lines, setLines] = useState<AlignedLine[]>([]),
+    [lines, setLines] = useState<SubtitleLine[]>([]);
+  const [error, setError] = useState(""),
+    [notice, setNotice] = useState(""),
+    [reading, setReading] = useState(false),
+    [searching, setSearching] = useState(false),
+    [search, setSearch] = useState<SearchGroupSnapshot>();
+  const [saved, setSaved] = useState<SavedResult[]>([]),
+    [mode, setMode] = useState<DisplayMode>(
+      publicSettings?.preferences.mode ?? "original",
+    ),
     [offset, setOffset] = useState(0),
-    [saved, setSaved] = useState<SavedResult[]>([]),
-    [progress, setProgress] = useState("");
-  const [requestBody, setRequestBody] = useState("");
-  const [responseText, setResponseText] = useState("");
-  const [imported, setImported] = useState<{
-    name: string;
-    lines: AlignedLine[];
-  }>();
-  const [appliedOffset, setAppliedOffset] = useState(0);
-  const [appliedLines, setAppliedLines] = useState<AlignedLine[]>([]);
-  const alignmentInput = useRef<AlignedLine[]>([]);
-  const invalidIds = new Set(
-    video
-      ? validateTiming(lines, video.durationMs, offset)
-          .filter((issue) => issue.severity === "error")
-          .map((issue) => issue.lineId)
-      : [],
+    [position, setPosition] = useState(0),
+    [onlyPending, setOnlyPending] = useState(false);
+  const [runMode, setRunMode] = useState<AlignmentMode>(
+    publicSettings?.preferences.alignmentMode ?? "buffer-before-play",
   );
-  const pending = lines.filter(
-    (line) =>
-      !line.excluded &&
-      (invalidIds.has(line.id) ||
-        line.startMs === undefined ||
-        line.endMs === undefined),
-  );
-  const stamp = (ms: number | undefined) =>
-    ms === undefined
-      ? "待校時"
-      : `${String(Math.floor(ms / 60000)).padStart(2, "0")}:${String(Math.floor(ms / 1000) % 60).padStart(2, "0")}`;
   const live = useRef(true),
-    activeRun = useRef<string | undefined>(undefined);
-  const provenance = useRef<DraftProvenance | undefined>(undefined);
-  useEffect(() => {
-    if (publicSettings) {
-      setSettings(publicSettings);
+    searchId = useRef<string | undefined>(undefined),
+    searchRevision = useRef(0),
+    previewRun = useRef<string | undefined>(undefined),
+    revision = useRef(0),
+    source = useRef<SubtitleSource>({ kind: "paste" }),
+    provenance = useRef<
+      | {
+          targetLanguage: "ja" | "zh-Hant" | "en";
+          model: string;
+          source: SavedResult["source"];
+        }
+      | undefined
+    >(undefined);
+  const prefs = settings?.preferences ?? fallback;
+  const onProgress = (p: AlignmentProgress) => {
+    setLines(p.lines);
+    if (p.error) setNotice(p.error);
+    if (p.phase !== "complete" && (p.mode ?? runMode) === "complete-before-use")
+      return;
+    if (!p.lines.some((l) => l.startMs !== undefined && l.endMs !== undefined))
+      return;
+    if (previewRun.current !== p.key.runId) {
+      overlay.beginDraft(p.key);
+      previewRun.current = p.key.runId;
     }
-  }, [publicSettings?.settingsRevision, publicSettings?.configured]);
-  useEffect(() => {
-    const refresh = () => {
-      void request<PublicSettings>({ type: "settings-public" })
-        .then((s) => {
-          if (live.current) {
-            setSettings(s);
-          }
-        })
-        .catch(() => {});
-    };
-    const visible = () => {
-      if (document.visibilityState === "visible") refresh();
-    };
-    window.addEventListener("focus", refresh);
-    document.addEventListener("visibilitychange", visible);
-    return () => {
-      window.removeEventListener("focus", refresh);
-      document.removeEventListener("visibilitychange", visible);
-    };
-  }, []);
-  useEffect(() => {
-    live.current = true;
-    // These reads are independent: a slow cache or caption endpoint must not
-    // hold up video metadata or local import controls.
-    void (
-      publicSettings
-        ? Promise.resolve(publicSettings)
-        : request<PublicSettings>({ type: "settings-public" })
-    )
-      .then((s) => {
-        if (live.current) {
-          setSettings(s);
-        }
-      })
-      .catch(() => {});
-    void request<SavedResult[]>({
-      type: "results-list",
-      videoId: binding.videoId,
-    })
-      .then((local) => {
-        if (live.current) setSaved(local);
-      })
-      .catch(() => {});
-    void (async () => {
-      try {
-        const ctx = await request<{
-          video: VideoContext;
-          tracks: CaptionTrack[];
-        }>({ type: "inspect" });
-        if (!live.current || ctx.video.videoId !== binding.videoId) return;
-        setVideo(ctx.video);
-        setMetadataLoading(false);
-        const track = ctx.tracks.find((t) => !t.isTranslated);
-        setMessage(
-          track
-            ? "已發現字幕軌，正在讀取內容…"
-            : "尚未發現字幕軌，可嘗試讀取 YouTube 轉錄稿取得對齊時間。",
-        );
-        if (track) {
-          try {
-            const c = await request<Cue[]>({
-              type: "read-track",
-              trackId: track.id,
-            });
-            if (live.current) {
-              setCues(c);
-              setMessage(
-                `已讀取 ${c.length} 段${c.some((cue) => cue.endEstimated) ? "YouTube 轉錄稿（句尾為估算）" : "字幕"}，可用來對齊歌詞`,
-              );
-            }
-          } catch {
-            if (live.current)
-              setMessage(
-                "自動字幕與轉錄稿讀取未完成。請按「讀取 YouTube 轉錄稿」恢復 AI 對齊，不需要逐句輸入時間。",
-              );
-          }
-        }
-      } catch (e) {
-        if (live.current) {
-          setError((e as Error).message);
-          setVideo({
-            schemaVersion: 1,
-            videoId: binding.videoId,
-            title: document.title,
-            channel: "",
-            description: "",
-            durationMs: Math.round(binding.video.duration * 1000) || 0,
-          });
-          setMetadataLoading(false);
-        }
-      }
-    })();
-    return () => {
-      live.current = false;
-      workRef.current?.controller?.abort();
-      void request({ type: "audio-clear" }).catch(() => {});
-      if (activeRun.current)
-        void request({ type: "cancel", runId: activeRun.current }).catch(
-          () => {},
-        );
-    };
-  }, []);
-  const attempt = async (fn: () => Promise<void>) => {
+    overlay.setDraftPreview(
+      {
+        key: p.key,
+        sequence: p.sequence,
+        lines: p.lines,
+        segments: {},
+        modelState: p.phase === "loading" ? "loading" : "ready",
+      },
+      mode,
+      prefs,
+    );
+  };
+  const work = useSubtitleWork(binding, onProgress, setNotice),
+    busy = work.busy || reading || searching;
+  const attempt = async (fn: () => Promise<unknown>) => {
     setError("");
     try {
       await fn();
     } catch (e) {
-      if (live.current && !(e instanceof WorkCancelled))
-        setError((e as Error).message);
+      if (live.current) setError(e instanceof Error ? e.message : String(e));
     }
   };
   useEffect(() => {
-    if (!leaveAction && leaveTrigger.current) {
-      leaveTrigger.current.focus();
-      leaveTrigger.current = null;
-    }
-  }, [leaveAction]);
-  const checkWork = async (work: PendingWork) => {
-    // Wait for cancellation acknowledgement before accepting a concurrent response.
-    await work.cancellation?.catch(() => {});
-    if (work.cancelled) throw new WorkCancelled();
+    if (publicSettings) setSettings(publicSettings);
+  }, [publicSettings?.settingsRevision]);
+  useEffect(() => {
+    live.current = true;
+    const refresh = () => {
+      void request<PublicSettings>({ type: "settings-public" })
+        .then((s) => {
+          if (live.current && s) setSettings(s);
+        })
+        .catch(() => {});
+    };
+    if (!publicSettings) refresh();
+    window.addEventListener("focus", refresh);
+    void request<{
+      video: VideoContext;
+      tracks: CaptionTrack[];
+      selectedTrackId?: string;
+    }>({ type: "inspect" })
+      .then((ctx) => {
+        if (!live.current || ctx.video.videoId !== binding.videoId) return;
+        setVideo(ctx.video);
+        setTracks(ctx.tracks);
+        setManualId(
+          selectManualTrack(
+            ctx.tracks,
+            ctx.selectedTrackId,
+            (publicSettings?.preferences ?? fallback).targetLanguage,
+          )?.id,
+        );
+      })
+      .catch((e) => {
+        if (live.current) setError(e.message);
+      });
+    void request<SavedResult[]>({
+      type: "results-list",
+      videoId: binding.videoId,
+    })
+      .then((results) => {
+        if (live.current) setSaved(results ?? []);
+      })
+      .catch(() => {});
+    const timer = setInterval(
+      () => setPosition(Math.max(0, binding.video.currentTime * 1000)),
+      300,
+    );
+    return () => {
+      live.current = false;
+      searchRevision.current++;
+      clearInterval(timer);
+      window.removeEventListener("focus", refresh);
+      if (searchId.current)
+        void request({ type: "search-cancel", id: searchId.current }).catch(
+          () => {},
+        );
+    };
+  }, [binding.videoId]);
+  const preview = (draft: SubtitleLine[], displayMode = mode) => {
+    const key = {
+      runId: crypto.randomUUID(),
+      tabId: 0,
+      videoId: binding.videoId,
+      draftRevision: ++revision.current,
+    };
+    overlay.beginDraft(key);
+    previewRun.current = key.runId;
+    overlay.setDraftPreview(
+      { key, sequence: 1, lines: draft, segments: {}, modelState: "unloaded" },
+      displayMode,
+      prefs,
+    );
   };
-  const leave = (action: LeaveAction) => {
-    if (action === "return") setView("lyrics");
-    else if (action === "close") onClose();
-  };
-  const requestLeave = (action: LeaveAction) => {
-    if (!busy) {
-      leave(action);
+  const adopt = async (draft: SubtitleLine[], origin: SubtitleSource) => {
+    if (!video) throw new Error("影片資訊尚未就緒");
+    if (!draft.length) throw new Error("請先提供字幕");
+    await work.cancel();
+    source.current = origin;
+    setLines(draft);
+    setMode(prefs.mode);
+    setOffset(0);
+    setOnlyPending(false);
+    setView("edit");
+    setError("");
+    provenance.current = {
+      source: origin.url
+        ? { kind: "network", url: origin.url }
+        : { kind: "user" },
+      targetLanguage: prefs.targetLanguage,
+      model: "local-wasm",
+    };
+    const selectedMode = prefs.alignmentMode ?? "buffer-before-play";
+    setRunMode(selectedMode);
+    if (
+      draft.every(
+        (l) => l.excluded || (l.startMs !== undefined && l.endMs !== undefined),
+      )
+    ) {
+      preview(draft, prefs.mode);
+      setNotice("已保留來源時間碼，可直接使用、保存或下載。");
       return;
     }
-    const root = editPage.current?.getRootNode() as
-      Document | ShadowRoot | undefined;
-    leaveTrigger.current = (root?.activeElement ||
-      document.activeElement) as HTMLElement;
-    setStopError("");
-    setLeaveAction(action);
+    setNotice("字幕已保留，正在本機補齊缺少的時間…");
+    await work.start(draft, selectedMode, video.durationMs);
   };
-  const continueWaiting = () => {
-    setLeaveAction(null);
-  };
-  const confirmStop = async () => {
-    if (!leaveAction || stopping) return;
-    const action = leaveAction,
-      work = workRef.current;
-    setStopping(true);
-    setStopError("");
-    try {
-      if (work) {
-        const runId = activeRun.current;
-        work.cancellation = (async () => {
-          if (runId) await request({ type: "cancel", runId });
-          work.controller?.abort();
-          work.cancelled = true;
-        })();
-        await work.cancellation;
-        if (workRef.current === work) activeRun.current = undefined;
-      }
-      if (!live.current) return;
-      setBusy(false);
-      setProgress("");
-      setMessage("工作已取消，歌詞與已有結果已保留。");
-      leaveTrigger.current = null;
-      setLeaveAction(null);
-      leave(action);
-    } catch (error) {
-      if (live.current)
-        setStopError(
-          `無法確認取消：${(error as Error).message}。請重試或繼續等待。`,
-        );
-    } finally {
-      if (live.current) setStopping(false);
-    }
-  };
-  const poll = async (state: RunState, work: PendingWork): Promise<unknown> => {
-    if (!live.current) {
-      await request({ type: "cancel", runId: state.runId });
-      throw new Error("已離開影片，工作已取消");
-    }
-    await checkWork(work);
-    activeRun.current = state.runId;
-    setBusy(true);
-    try {
-      while (live.current) {
-        const record = await request<RunRecord | null>({
-          type: "run",
-          runId: state.runId,
-        });
-        if (!live.current) {
-          await request({ type: "cancel", runId: state.runId });
-          throw new Error("已離開影片，工作已取消");
-        }
-        await checkWork(work);
-        if (!record) throw new Error("工作已中斷，請重新開始");
-        if (record.responseText !== undefined)
-          setResponseText(record.responseText);
-        if (record.alignmentReport) setAlignmentReport(record.alignmentReport);
-        if (record.acoustic)
-          void request({
-            type: "acoustic-position",
-            runId: state.runId,
-            timeMs: Math.max(0, binding.video.currentTime * 1000),
-          }).catch(() => {});
-        if (record.acoustic && settings) {
-          if (previewKey.current?.runId !== record.acoustic.key.runId) {
-            overlay.beginDraft(record.acoustic.key);
-            previewKey.current = record.acoustic.key;
-          }
-          setLines(record.acoustic.lines);
-          setAppliedLines(record.acoustic.lines);
-          setAppliedOffset(0);
-          overlay.setDraftPreview(
-            record.acoustic,
-            "original",
-            settings.preferences,
-          );
-        }
-        setProgress(
-          record.acoustic
-            ? `本機聲學校時：已完成 ${record.state.completedLineIds.length} 句；模型 ${record.acoustic.modelState}。已完成片段可播放。`
-            : record.timingSource
-              ? "本機補時準備中，不會再送出 AI 請求"
-              : `AI 正在產生新版字幕；已送出 ${record.state.requestCount} 次請求`,
-        );
-        if (record.state.phase === "complete") return record.output;
-        if (
-          ["failed", "interrupted", "cancelled"].includes(record.state.phase)
-        ) {
-          if (Array.isArray(record.partial)) {
-            const partial = record.partial as AlignedLine[];
-            setLines(partial);
-            if (settings)
-              provenance.current = {
-                source: provenance.current?.source || { kind: "user" },
-                targetLanguage: settings.preferences.targetLanguage,
-                model: settings.model,
-              };
-          }
-          throw new Error(record.state.errorCode || "工作已取消");
-        }
-        await new Promise((r) => setTimeout(r, 500));
-      }
-      throw new Error("已離開影片");
-    } finally {
-      if (workRef.current === work) activeRun.current = undefined;
-      if (live.current && workRef.current === work) {
-        setBusy(false);
-        setProgress("");
-      }
-    }
-  };
-  const searchPayload =
-    video && settings
-      ? { video, sources: settings.sources.filter((s) => s.enabled) }
-      : null;
-  const startSearch = () =>
+  const useYT = (trackId = manualId) =>
     attempt(async () => {
-      if (!settings || !searchPayload || busy) return;
-      const work: PendingWork = { cancelled: false };
-      workRef.current = work;
-      setBusy(true);
+      if (!video || !trackId) return;
+      setReading(true);
       try {
-        setSearchReply(null);
-        setCandidates(null);
-        const receipt = {
-          purpose: "search" as const,
-          inputHash: await hashInput(searchPayload),
-          settingsRevision: settings.settingsRevision,
-          confirmedAt: Date.now(),
-        };
-        await checkWork(work);
-        const state = await startOwnedRun(
-          () =>
-            request<RunState>({
-              type: "search",
-              video: searchPayload.video,
-              consent: receipt,
-            }),
-          () => live.current && !work.cancelled,
-          async (id) => {
-            await request({ type: "cancel", runId: id });
-          },
+        const cues = await request<Cue[]>({
+          type: "read-manual-track",
+          trackId,
+        });
+        if (!live.current) return;
+        const draft = cues.map((cue, i) =>
+          lockTiming(
+            {
+              id: `yt-${i}`,
+              original: cue.text,
+              startMs: cue.startMs,
+              endMs: cue.endMs,
+              status: "anchor",
+              excluded: false,
+              cueIds: [cue.id],
+            },
+            video.durationMs,
+          ),
         );
-        const result = (await poll(state, work)) as LyricSearchResult;
-        if (live.current) {
-          setSearchReply(result.text);
-          setCandidates(result.error ? null : result.candidates);
-          setError(result.error || "");
-        }
-      } catch (error) {
-        if (work.cancelled) throw new WorkCancelled();
-        throw error;
+        setReading(false);
+        await adopt(draft, { kind: "youtube", trackId });
+        setManualId(trackId);
       } finally {
-        if (live.current && workRef.current === work) setBusy(false);
+        if (live.current) setReading(false);
       }
     });
-  const startGenerate = (
-    inputLines: AlignedLine[] = alignmentInput.current,
-    editedBody?: string,
-  ) =>
+  const startSearch = () =>
     attempt(async () => {
-      if (!video || !settings || busy) return;
-      setView("edit");
-      if (!settings.configured) {
-        setLines(inputLines);
-        setMessage("歌詞已保留；請先設定 AI 服務，或使用已有時間戳的內容。 ");
-        return;
-      }
-      // Validate edited JSON before any network request or draft changes.
-      let body;
-      if (editedBody !== undefined) {
-        try {
-          body = alignmentBodySchema.parse(JSON.parse(editedBody));
-        } catch {
-          throw new Error(
-            "Request body 必須是有效 JSON，包含 model、messages 與 stream: false（上限 120000 字元）",
-          );
-        }
-      }
-      const work: PendingWork = {
-        cancelled: false,
-        controller: new AbortController(),
-      };
-      workRef.current = work;
-      setBusy(true);
-      setMessage("正在對齊歌詞…");
-      let receivedAi = false;
+      if (!video || !settings?.configured) return;
+      const ownRevision = ++searchRevision.current;
+      setView("search");
+      setSearch(undefined);
+      setSearching(true);
       try {
-        let timing = cues;
-        if (!timing.length) {
-          setMessage("正在讀取 YouTube 轉錄稿…");
-          try {
-            timing = await request<Cue[]>({ type: "read-transcript" });
-          } catch {
-            timing = [];
-          }
-          if (!live.current) return;
-          await checkWork(work);
-          setCues(timing);
-        }
-        const acoustic = true;
-        body ??= alignmentBodySchema.parse(
-          revisedSubtitleRequest(settings.model, inputLines, timing),
-        );
-        if (editedBody === undefined)
-          setRequestBody(JSON.stringify(body, null, 2));
-        alignmentInput.current = inputLines;
-        setAlignmentReport("");
-        await checkWork(work);
         const payload = {
           video,
-          lines: inputLines,
-          cues: timing,
-          targetLanguage: settings.preferences.targetLanguage,
-          translate: false,
-          body,
+          sources: settings.sources.filter((s) => s.enabled),
         };
-        const receipt = {
-          purpose: "generate" as const,
+        const consent = {
+          purpose: "search" as const,
           inputHash: await hashInput(payload),
           settingsRevision: settings.settingsRevision,
           confirmedAt: Date.now(),
         };
-        await checkWork(work);
-        const state = await startOwnedRun(
-          () =>
-            request<RunState>({
-              type: "generate",
-              input: { ...payload, consent: receipt },
-            }),
-          () => live.current && !work.cancelled,
-          async (id) => {
-            await request({ type: "cancel", runId: id });
-          },
-        );
-        let output = (await poll(state, work)) as {
-          lines: AlignedLine[];
-          response: string;
-        };
-        if (!live.current) return;
-        setLines(output.lines);
-        const aiResponse = output.response;
-        receivedAi = true;
-        setResponseText(aiResponse);
-        const aiKey = {
-          runId: state.runId,
-          tabId: 0,
-          videoId: binding.videoId,
-          draftRevision: settings.settingsRevision,
-        };
-        overlay.stop();
-        overlay.beginDraft(aiKey);
-        previewKey.current = aiKey;
-        overlay.setDraftPreview(
-          {
-            key: aiKey,
-            sequence: 1,
-            lines: output.lines,
-            segments: {},
-            modelState: "unloaded",
-          },
-          "original",
-          settings.preferences,
-        );
-        setAppliedLines(output.lines);
-        setAppliedOffset(0);
-        if (output.lines.some((l) => !l.excluded && !hasCompleteTime(l))) {
-          setBusy(true);
-          setMessage("AI 新版字幕已取得；正在補齊缺少的時間…");
-          const audioAssetId = await acquireYouTubeAudio(
-            binding.videoId,
-            video.durationMs,
-            work.controller!.signal,
-            (text) => {
-              if (live.current) setProgress(text);
-            },
-          );
-          await checkWork(work);
-          const fillPayload = {
-            video,
-            lines: output.lines,
-            cues: timing,
-            targetLanguage: settings.preferences.targetLanguage,
-            translate: false,
-            timingOnly: true,
-            audioAssetId,
-            positionMs: Math.max(0, binding.video.currentTime * 1000),
-          };
-          const fillConsent = {
-            purpose: "generate" as const,
-            inputHash: await hashInput(fillPayload),
-            settingsRevision: settings.settingsRevision,
-            confirmedAt: Date.now(),
-          };
-          await checkWork(work);
-          const fillState = await startOwnedRun(
-            () =>
-              request<RunState>({
-                type: "generate",
-                input: { ...fillPayload, consent: fillConsent },
-              }),
-            () => live.current && !work.cancelled,
-            async (id) => {
-              await request({ type: "cancel", runId: id });
-            },
-          );
-          const filled = (await poll(fillState, work)) as {
-            lines: AlignedLine[];
-            response: string;
-          };
-          output = { lines: filled.lines, response: aiResponse };
-          if (!live.current) return;
-          setLines(output.lines);
+        const result = await request<{ id: string }>({
+          type: "search-start",
+          video,
+          consent,
+        });
+        if (!live.current || ownRevision !== searchRevision.current) {
+          await request({ type: "search-cancel", id: result.id });
+          return;
         }
-        setResponseText(output.response);
-        provenance.current = {
-          source: provenance.current?.source || { kind: "user" },
-          targetLanguage: settings.preferences.targetLanguage,
-          model: String(body.model),
-        };
-        const remaining = output.lines.filter(
-          (l) =>
-            !l.excluded && (l.startMs === undefined || l.endMs === undefined),
-        ).length;
-        setMessage(
-          acoustic && remaining
-            ? `已校時 ${output.lines.filter((l) => !l.excluded).length - remaining} 句，另有 ${remaining} 句待處理；已完成片段可播放，完整保存仍需處理待校時句。`
-            : "AI 對齊完成，請檢查後套用並保存。",
-        );
-      } catch (error) {
-        if (work.cancelled) throw new WorkCancelled();
-        setMessage(receivedAi ? "AI 新版字幕已保留；缺時句尚待處理。" : "");
-        throw error;
+        searchId.current = result.id;
+        const deadline = Date.now() + 125000;
+        while (live.current && searchId.current === result.id) {
+          if (Date.now() > deadline)
+            throw new Error("搜尋工作已中斷，請重新搜尋");
+          const snapshot = await request<SearchGroupSnapshot | undefined>({
+            type: "search-group",
+            id: result.id,
+          });
+          if (!live.current || searchId.current !== result.id) return;
+          if (snapshot) {
+            setSearch(snapshot);
+            if (
+              Object.values(snapshot.routes).every((r) => r.phase !== "pending")
+            )
+              break;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 500));
+        }
       } finally {
-        void request({ type: "audio-clear" }).catch(() => {});
-        if (live.current && workRef.current === work) setBusy(false);
+        if (live.current && ownRevision === searchRevision.current)
+          setSearching(false);
       }
     });
-  const submitLyrics = async (
-    draft: AlignedLine[],
-    source?: DraftProvenance["source"],
-  ) => {
-    if (!draft.length) throw new Error("請先提供歌詞");
-    const clean = draft;
-    setReviewTab("result");
-    setOnlyPending(false);
-    setLines(clean);
-    alignmentInput.current = clean;
-    setOffset(0);
-    setRequestBody("");
-    setResponseText("");
-    provenance.current = {
-      source:
-        source ||
-        (selected ? { kind: "user", url: selected.url } : { kind: "user" }),
-      targetLanguage: settings?.preferences.targetLanguage || "ja",
-      model: "",
-    };
-    if (
-      video &&
-      !validateTiming(clean, video.durationMs, 0).some(
-        (issue) => issue.severity === "error",
-      )
-    ) {
-      setView("edit");
-      setMessage("已讀取時間戳，可直接套用並保存。");
-      return;
-    }
-    await startGenerate(clean);
-  };
-  const useCandidate = (c: LyricCandidate) => {
-    setSelected(c);
-    setText(c.fullText || "");
-    setCandidates(null);
-    if (video)
-      void attempt(async () => {
-        const draft = candidateDraft(c, video.durationMs);
-        if (draft.lines.length)
-          await submitLyrics(draft.lines, {
-            kind: "network",
-            url: c.url,
-            version: c.version,
-          });
-        else setView("paste");
-      });
-  };
-  const result = async (resultLines = lines): Promise<SavedResult> => {
-    if (!video || !settings) throw new Error("播放器尚未就緒");
-    const errors = validateTiming(resultLines, video.durationMs, offset).filter(
-      (x) => x.severity === "error",
+  const choose = (candidate: LyricCandidate, route: SearchRoute) =>
+    void attempt(async () => {
+      if (!video) return;
+      searchRevision.current++;
+      if (searchId.current) {
+        const id = searchId.current;
+        searchId.current = undefined;
+        await request({ type: "search-cancel", id });
+      }
+      setSearching(false);
+      await adopt(
+        normalizeSubtitle(
+          candidate.syncedLyrics || candidate.fullText || "",
+          { kind: route, url: candidate.url },
+          video.durationMs,
+        ),
+        { kind: route, url: candidate.url },
+      );
+    });
+  const issues = video ? validateTiming(lines, video.durationMs, offset) : [],
+    pendingIds = new Set(
+      issues.filter((i) => i.severity === "error").map((i) => i.lineId),
     );
-    if (errors.length)
-      throw new Error(`有 ${errors.length} 句未完成校時，請修正或排除`);
-    if (!resultLines.some((l) => !l.excluded))
-      throw new Error("請至少保留一句歌詞");
-    const actual = provenance.current || {
+  const pending = lines.filter((l) => !l.excluded && pendingIds.has(l.id));
+  const result = async (): Promise<SavedResult> => {
+    if (!video || !lines.some((l) => !l.excluded))
+      throw new Error("請先取得字幕");
+    if (issues.some((i) => i.severity === "error"))
+      throw new Error("請先校正或排除缺時及無效時間的句子");
+    if (
+      mode !== "original" &&
+      lines.some((l) => !l.excluded && !l.translation?.trim())
+    )
+      throw new Error("部分譯文尚未生成");
+    const actual = provenance.current ?? {
       source: { kind: "user" as const },
-      targetLanguage: settings.preferences.targetLanguage,
+      targetLanguage: prefs.targetLanguage,
       model: "",
     };
     return {
@@ -677,29 +359,42 @@ export function Panel({
         schemaVersion: 1,
         videoId: video.videoId,
         inputHash: await hashInput({
-          lines: resultLines,
-          targetLanguage: actual.targetLanguage,
+          lines,
           source: actual.source,
-          model: actual.model,
+          targetLanguage: actual.targetLanguage,
         }),
         targetLanguage: actual.targetLanguage,
       },
       videoDurationMs: video.durationMs,
+      subtitleSource: source.current,
       source: actual.source,
-      lines: resultLines,
+      lines,
       offsetMs: offset,
       model: actual.model,
       createdAt: Date.now(),
       updatedAt: Date.now(),
     };
   };
+  const save = () =>
+    attempt(async () => {
+      const value = await result();
+      await request({ type: "results-save", result: value });
+      overlay.setResult(value, mode, prefs);
+      setSaved(
+        (await request<SavedResult[]>({
+          type: "results-list",
+          videoId: binding.videoId,
+        })) ?? [],
+      );
+      setNotice("已套用並保存至本機。");
+    });
   const download = () =>
     attempt(async () => {
-      const r = await result();
-      const srt = toSrt(r.lines, "original", r.offsetMs, r.videoDurationMs);
-      const url = URL.createObjectURL(
-        new Blob([srt], { type: "text/plain;charset=utf-8" }),
-      );
+      const value = await result(),
+        srt = toSrt(value.lines, mode, offset, value.videoDurationMs),
+        url = URL.createObjectURL(
+          new Blob([srt], { type: "text/plain;charset=utf-8" }),
+        );
       const a = document.createElement("a");
       a.href = url;
       a.download = safeFilename(video!.title) + ".srt";
@@ -712,645 +407,354 @@ export function Panel({
       role="region"
       aria-label="AI 歌詞工作面板"
     >
-      <header inert={!!leaveAction}>
+      <header>
         <h2>AI 歌詞</h2>
         <div className="row">
           <button onClick={() => void request({ type: "open-options" })}>
             設定
           </button>
-          <button aria-label="關閉面板" onClick={() => requestLeave("close")}>
+          <button aria-label="關閉面板" onClick={onClose}>
             ×
           </button>
         </div>
       </header>
-      <div className="workspace" inert={!!leaveAction}>
-        <aside
-          ref={editPage}
-          hidden={view === "lyrics"}
-          className={`panel-body operations stack ${view === "edit" ? "review-page" : ""}`}
-          aria-label="歌詞操作與設定"
-          tabIndex={0}
-        >
-          {view !== "edit" && (
+      <div className="workspace">
+        <section className="panel-body stack" aria-label="歌詞操作與設定">
+          {!video ? (
+            <ContentSkeleton label="正在載入影片資訊" />
+          ) : (
             <>
-              <button
-                className="back-button"
-                onClick={() => requestLeave("return")}
-              >
-                ← 返回歌詞
-              </button>
-              {view !== "lyrics" && <h3>{video?.title || "目前影片"}</h3>}
-              <p className="muted" role="status">
-                {message}
+              <p className="muted">
+                {lines.length ? `${lines.length} 句字幕` : "尚未加入字幕"}
               </p>
-              {error && (
-                <p role="alert" className="notice error">
-                  {error}
-                </p>
-              )}
-              {busy && (
-                <div className="notice">
-                  <p>處理中…{progress}</p>
-                  <button onClick={() => requestLeave("stop")}>取消工作</button>
-                </div>
-              )}
+              <strong>{video.title}</strong>
+              <small>
+                {video.channel} · {Math.floor(video.durationMs / 60000)}:
+                {String(Math.floor(video.durationMs / 1000) % 60).padStart(
+                  2,
+                  "0",
+                )}
+              </small>
             </>
           )}
+          {
+            <div hidden={view !== "lyrics"} className="stack">
+              <SourceActions
+                busy={busy || !video}
+                configured={!!settings?.configured}
+                hasManual={!!manualTracks(tracks).length}
+                onAI={(event) => {
+                  if (isUserAction(event)) void startSearch();
+                }}
+                onYT={() => void useYT()}
+                onPaste={() => setView("paste")}
+              />
+              {!settings?.configured && (
+                <p className="muted">
+                  尚未設定 AI 服務；YT 字幕與貼入字幕仍可使用。
+                </p>
+              )}
+              {!!lines.length && (
+                <>
+                  <LyricsPreview
+                    lines={lines}
+                    mode={mode}
+                    video={binding.video}
+                    seek={(ms) => {
+                      binding.video.currentTime = ms / 1000;
+                    }}
+                    offsetMs={offset}
+                  />
+                  <button onClick={() => setView("edit")}>製作／編輯</button>
+                </>
+              )}
+              <button onClick={() => setView("saved")}>
+                本機版本（{saved.length}）
+              </button>
+            </div>
+          }
+          {view !== "lyrics" && (
+            <button className="back-button" onClick={() => setView("lyrics")}>
+              ← 返回歌詞
+            </button>
+          )}
           {view === "search" && (
-            <section className="section">
-              <h3>AI 尋找歌詞</h3>
-              <p>
-                搜尋來源：
-                {settings?.sources
-                  .filter((s) => s.enabled)
-                  .map((s) => s.name)
-                  .join("、") || "尚未勾選來源"}
-              </p>
+            <>
+              <h3>三路字幕搜尋</h3>
+              <SearchGroups snapshot={search} onSelect={choose} />
+              {searching && (
+                <button
+                  onClick={() =>
+                    void attempt(async () => {
+                      searchRevision.current++;
+                      const id = searchId.current;
+                      searchId.current = undefined;
+                      if (id)
+                        await request({
+                          type: "search-cancel",
+                          id,
+                        });
+                      searchId.current = undefined;
+                      setSearching(false);
+                    })
+                  }
+                >
+                  取消搜尋
+                </button>
+              )}
               <button
-                className="primary"
-                disabled={
-                  busy ||
-                  !settings?.configured ||
-                  !settings.sources.some((s) => s.enabled)
-                }
+                disabled={busy}
                 onClick={(event) => {
                   if (isUserAction(event)) void startSearch();
                 }}
               >
-                開始搜尋
+                重新搜尋
               </button>
-              {searchReply !== null && <AiReply text={searchReply} />}
-              {candidates && (
-                <Candidates candidates={candidates} onSelect={useCandidate} />
-              )}
-              <button disabled={busy} onClick={() => setView("paste")}>
-                改用貼上歌詞
-              </button>
-              <button disabled={busy} onClick={() => setView("import")}>
-                匯入 LRC／SRT
-              </button>
-            </section>
+            </>
           )}
           {view === "paste" && (
             <section className="section">
-              <h3>貼上歌詞</h3>
-              {selected && (
-                <a
-                  href={selected.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
-                  開啟來源並取得全文
-                </a>
-              )}
+              <h3>貼入字幕</h3>
+              <p>貼入純文字或含時間碼的 LRC／SRT 文字；有效時間碼會保留。</p>
               <textarea
-                aria-label="歌詞全文"
-                placeholder="每行一句歌詞"
+                aria-label="字幕全文"
                 value={text}
-                onChange={(e) => setText(e.target.value)}
+                onChange={(event) => setText(event.target.value)}
+                placeholder="每行一句字幕"
               />
               <button
-                disabled={busy || !video}
-                onClick={(event) =>
-                  (!settings?.configured || isUserAction(event)) &&
-                  attempt(async () => {
+                disabled={!video || busy}
+                onClick={() =>
+                  void attempt(async () => {
                     if (video)
-                      await submitLyrics(
-                        parseLyrics(
-                          new TextEncoder().encode(text),
-                          "txt",
+                      await adopt(
+                        normalizeSubtitle(
+                          text,
+                          { kind: "paste" },
                           video.durationMs,
                         ),
+                        { kind: "paste" },
                       );
                   })
                 }
               >
-                使用貼上歌詞
+                使用貼入字幕
               </button>
-            </section>
-          )}
-          {view === "import" && (
-            <section className="section">
-              <h3>匯入 LRC／SRT</h3>
-              <label>
-                匯入 LRC／SRT
-                <input
-                  type="file"
-                  accept=".lrc,.srt"
-                  disabled={busy || !video}
-                  onChange={(e) => {
-                    const file = e.target.files?.[0];
-                    e.target.value = "";
-                    setImported(undefined);
-                    if (file)
-                      void attempt(async () => {
-                        if (file.size > 2097152)
-                          throw new Error("檔案超過 2 MiB");
-                        const ext = file.name.toLowerCase().split(".").at(-1);
-                        if (ext !== "lrc" && ext !== "srt")
-                          throw new Error("請選擇 LRC 或 SRT 檔案");
-                        const bytes = new Uint8Array(await file.arrayBuffer());
-                        if (video) {
-                          const draft = parseLyrics(
-                            bytes,
-                            ext,
-                            video.durationMs,
-                          );
-                          if (!draft.length)
-                            throw new Error("檔案沒有可用歌詞");
-                          setImported({ name: file.name, lines: draft });
-                        }
-                      });
-                  }}
-                />
-              </label>
-              {imported && (
-                <>
-                  <p>
-                    {imported.name} · {imported.lines.length} 句
-                  </p>
-                  <pre>
-                    {imported.lines
-                      .map(
-                        (l) =>
-                          `${l.startMs === undefined ? "未校時" : (l.startMs / 1000).toFixed(3)} → ${l.endMs === undefined ? "未校時" : (l.endMs / 1000).toFixed(3)}  ${l.original}`,
-                      )
-                      .join("\n")}
-                  </pre>
-                  <button
-                    disabled={busy}
-                    onClick={(event) => {
-                      if (settings?.configured && !isUserAction(event)) return;
-                      setSelected(undefined);
-                      void attempt(() =>
-                        submitLyrics(imported.lines, { kind: "user" }),
-                      );
-                    }}
-                  >
-                    確認並開始對齊
-                  </button>
-                </>
-              )}
-            </section>
-          )}
-          {view === "saved" && (
-            <section>
-              <h3>本機保存的版本</h3>
-              {saved.map((r) => (
-                <div key={r.key.inputHash}>
-                  <p>{r.lines.length} 句</p>
-                  <button
-                    onClick={() => {
-                      setLines(r.lines.map(({ translation, ...l }) => l));
-                      provenance.current = provenanceOf(r);
-                      setOffset(r.offsetMs);
-                      alignmentInput.current = [];
-                      setRequestBody("");
-                      setResponseText("");
-                      setMessage("已載入本機結果，不會呼叫 AI");
-                      setView("edit");
-                    }}
-                  >
-                    載入
-                  </button>
-                </div>
-              ))}
             </section>
           )}
           {view === "edit" && (
             <>
-              <div className="review-heading">
-                <div className="review-back">
-                  <button onClick={() => requestLeave("return")}>
-                    ← 返回歌詞
-                  </button>
-                  <strong>對齊結果</strong>
-                </div>
-                <p className="review-title" title={video?.title}>
-                  {video?.title || "目前影片"}
-                </p>
-                <p className="review-count" role="status">
-                  {busy
-                    ? `處理中…${progress}`
-                    : `已對齊 ${lines.filter((l) => !l.excluded).length - pending.length} 句`}
-                  {!busy && pending.length > 0 && (
-                    <span>{pending.length} 句待處理</span>
-                  )}
-                </p>
-                <span className="visually-hidden">{message}</span>
-                {busy && (
-                  <button onClick={() => requestLeave("stop")}>取消工作</button>
-                )}
-              </div>
-              <div
-                className="review-tabs"
-                role="tablist"
-                aria-label="對齊工作區"
-                onKeyDown={(e) => {
-                  const tabs = ["result", "request", "response"] as const;
-                  const next =
-                    e.key === "ArrowRight"
-                      ? (tabs.indexOf(reviewTab) + 1) % 3
-                      : e.key === "ArrowLeft"
-                        ? (tabs.indexOf(reviewTab) + 2) % 3
-                        : -1;
-                  if (next >= 0) {
-                    e.preventDefault();
-                    setReviewTab(tabs[next]);
-                    (e.currentTarget.children[next] as HTMLElement).focus();
-                  }
-                }}
-              >
-                {(
-                  [
-                    ["result", "歌詞結果"],
-                    ["request", "請求內容"],
-                    ["response", "原始回覆"],
-                  ] as const
-                ).map(([id, label]) => (
-                  <button
-                    key={id}
-                    id={`review-tab-${id}`}
-                    role="tab"
-                    aria-selected={reviewTab === id}
-                    aria-controls={`review-${id}`}
-                    tabIndex={reviewTab === id ? 0 : -1}
-                    onClick={() => setReviewTab(id)}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
-              <div className="review-content">
-                {error && (
-                  <p role="alert" className="review-error">
-                    {error}
-                  </p>
-                )}
-                {!settings?.configured && (
-                  <p className="notice">
-                    先在設定頁填入你的 AI 服務；貼上、匯入與預覽仍可使用。
-                    <button
-                      onClick={() => void request({ type: "open-options" })}
-                    >
-                      前往設定
-                    </button>
-                  </p>
-                )}
-                <div
-                  role="tabpanel"
-                  id="review-result"
-                  aria-labelledby="review-tab-result"
-                  hidden={reviewTab !== "result"}
-                >
-                  <div className="review-filter">
-                    <span>{onlyPending ? "待處理歌詞" : "全部歌詞"}</span>
-                    <button
-                      aria-pressed={onlyPending}
-                      onClick={() => setOnlyPending((v) => !v)}
-                    >
-                      {onlyPending
-                        ? "顯示全部"
-                        : `只看待處理 ${pending.length}`}
-                    </button>
-                  </div>
-                  <div aria-label="逐句時間戳" className="review-lines">
-                    {lines
-                      .filter(
-                        (l) =>
-                          !onlyPending || pending.some((p) => p.id === l.id),
-                      )
-                      .map((l) => (
-                        <details
-                          key={l.id}
-                          className={`review-line ${pending.some((p) => p.id === l.id) ? "pending" : ""} ${l.excluded ? "excluded" : ""}`}
-                        >
-                          <summary>
-                            <small>
-                              {l.excluded
-                                ? "已排除"
-                                : `${stamp(l.startMs)}–${stamp(l.endMs)}`}
-                            </small>
-                            <span>{l.original}</span>
-                          </summary>
-                          {l.startMs !== undefined && (
-                            <button
-                              onClick={() => {
-                                binding.video.currentTime =
-                                  Math.max(0, l.startMs! + offset) / 1000;
-                                void binding.video.play().catch(() => {});
-                              }}
-                            >
-                              播放這句
-                            </button>
-                          )}
-                          <Editor
-                            disabled={busy}
-                            lines={[l]}
-                            lineOffset={lines.indexOf(l)}
-                            onChange={(edited) => {
-                              const updated = lines.map((item) =>
-                                item.id === l.id ? edited[0] : item,
-                              );
-                              setLines(updated);
-                              alignmentInput.current = updated;
-                              setRequestBody("");
-                              previewKey.current = undefined;
-                              overlay.stop();
-                              setAppliedLines([]);
-                            }}
-                            currentMs={() =>
-                              Math.round(binding.video.currentTime * 1000)
-                            }
-                            seek={(ms) => {
-                              binding.video.currentTime = ms / 1000;
-                            }}
-                          />
-                        </details>
-                      ))}
-                    {onlyPending && !pending.length && (
-                      <p>所有歌詞都已有時間。</p>
-                    )}
-                  </div>
-                </div>
-                <div
-                  role="tabpanel"
-                  id="review-request"
-                  aria-labelledby="review-tab-request"
-                  hidden={reviewTab !== "request"}
-                  className="review-request"
-                >
-                  <label>
-                    Request body
-                    <textarea
-                      aria-label="Request body"
-                      spellCheck={false}
-                      rows={16}
-                      value={requestBody}
-                      disabled={busy}
-                      onChange={(e) => setRequestBody(e.target.value)}
-                    />
-                  </label>
-                  <button
-                    disabled={busy || !settings?.configured || !lines.length}
-                    onClick={(event) =>
-                      isUserAction(event) &&
-                      startGenerate(
-                        alignmentInput.current.length
-                          ? alignmentInput.current
-                          : lines,
-                        requestBody || undefined,
-                      )
-                    }
-                  >
-                    重新請求
-                  </button>
-                </div>
-                <div
-                  role="tabpanel"
-                  id="review-response"
-                  aria-labelledby="review-tab-response"
-                  hidden={reviewTab !== "response"}
-                >
-                  <pre className="review-response">
-                    {responseText || "尚未收到 AI 回覆。"}
-                  </pre>
-                  {alignmentReport && (
-                    <details className="alignment-diagnostics">
-                      <summary>AI 校時診斷（原始回覆與判定）</summary>
-                      <pre>{alignmentReport}</pre>
-                    </details>
-                  )}
-                </div>
-                <details
-                  className="review-offset"
-                  hidden={reviewTab !== "result"}
-                >
-                  <summary>整體時間偏移與匯出</summary>
-                  <label>
-                    整體偏移（秒，正數為延後）
-                    <input
-                      type="number"
-                      step="0.1"
-                      value={offset / 1000}
-                      onChange={(e) =>
-                        setOffset(Math.round(Number(e.target.value) * 1000))
-                      }
-                    />
-                  </label>
-                  <button disabled={busy} onClick={download}>
-                    下載 SRT
-                  </button>
-                </details>
-              </div>
-              <div className="review-footer">
-                {pending.length > 0 ? (
-                  <div className="review-pending">
-                    <span>尚有 {pending.length} 句待處理</span>
-                    <button
-                      onClick={() => {
-                        setReviewTab("result");
-                        setOnlyPending(true);
-                      }}
-                    >
-                      檢查問題
-                    </button>
-                  </div>
-                ) : (
-                  <span className="muted">
-                    {busy ? "正在處理歌詞" : "確認後才會套用到影片"}
-                  </span>
-                )}
+              <div className="row">
                 <button
-                  className="primary"
-                  disabled={busy || !lines.length || pending.length > 0}
+                  disabled={busy}
+                  onClick={(event) => {
+                    if (isUserAction(event)) void startSearch();
+                  }}
+                >
+                  AI 找字幕
+                </button>
+                <button
+                  disabled={busy || !manualTracks(tracks).length}
+                  onClick={() => void useYT()}
+                >
+                  YT 字幕
+                </button>
+                <button disabled={busy} onClick={() => setView("paste")}>
+                  貼入字幕
+                </button>
+              </div>
+              {!!manualTracks(tracks).length && (
+                <label>
+                  人工 YT 字幕軌
+                  <select
+                    aria-label="人工 YT 字幕軌"
+                    value={manualId ?? ""}
+                    disabled={busy}
+                    onChange={(event) => void useYT(event.target.value)}
+                  >
+                    {manualTracks(tracks).map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {t.label || t.language}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
+              <label>
+                本次校時模式
+                <select
+                  aria-label="本次校時模式"
+                  value={runMode}
+                  disabled={reading || searching}
+                  onChange={(event) => {
+                    const next = event.target.value as AlignmentMode;
+                    void attempt(async () => {
+                      await work.cancel();
+                      setRunMode(next);
+                      if (video)
+                        await work.start(lines, next, video.durationMs);
+                    });
+                  }}
+                >
+                  {Object.entries(modeNames).map(([value, label]) => (
+                    <option key={value} value={value}>
+                      {label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <p className="muted">
+                本次切換不會變更設定頁的預設模式。有效時間碼保留，只補缺時部分。
+              </p>
+              {work.busy && (
+                <>
+                  <p role="status">
+                    {modeNames[runMode]}：
+                    {work.progress?.phase === "loading"
+                      ? "模型載入中"
+                      : `已完成 ${lines.filter((l) => !l.excluded && l.startMs !== undefined && l.endMs !== undefined).length}／${lines.filter((l) => !l.excluded).length} 句`}
+                  </p>
+                  <button onClick={() => void attempt(() => work.cancel())}>
+                    取消補時
+                  </button>
+                </>
+              )}
+              <p>待處理 {pending.length} 句</p>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={onlyPending}
+                  onChange={(event) => setOnlyPending(event.target.checked)}
+                />
+                只看待處理
+              </label>
+              <Editor
+                lines={
+                  onlyPending
+                    ? lines.filter((l) => pendingIds.has(l.id))
+                    : lines
+                }
+                disabled={work.busy}
+                onChange={(updated) => {
+                  if (!video) return;
+                  const map = new Map(updated.map((l) => [l.id, l]));
+                  setLines(
+                    lines.map((l) =>
+                      lockTiming(map.get(l.id) ?? l, video.durationMs),
+                    ),
+                  );
+                }}
+                currentMs={() => binding.video.currentTime * 1000}
+                seek={(ms) => {
+                  binding.video.currentTime = ms / 1000;
+                }}
+              />
+              <label>
+                顯示方式
+                <select
+                  aria-label="顯示方式"
+                  value={mode}
+                  onChange={(event) =>
+                    setMode(event.target.value as DisplayMode)
+                  }
+                >
+                  <option value="original">原文</option>
+                  <option value="bilingual">雙語</option>
+                  <option value="translation">僅譯文</option>
+                </select>
+              </label>
+              <label>
+                整體偏移（秒）
+                <input
+                  aria-label="整體偏移（秒）"
+                  type="number"
+                  step="0.1"
+                  value={offset / 1000}
+                  onChange={(event) =>
+                    setOffset(Number(event.target.value) * 1000)
+                  }
+                />
+              </label>
+              {issues.some((i) => i.severity === "warning") && (
+                <p className="muted">
+                  部分字幕時間重疊，請聆聽確認；來源時間不會自動更改。
+                </p>
+              )}
+              <div className="row">
+                <button
+                  disabled={busy || !!pending.length}
+                  onClick={() => void save()}
+                >
+                  套用並保存
+                </button>
+                <button
+                  disabled={busy || !!pending.length}
+                  onClick={() => void download()}
+                >
+                  下載 SRT
+                </button>
+                <button
+                  disabled={busy || !pending.length}
                   onClick={() =>
-                    attempt(async () => {
-                      const r = await result();
-                      await request({ type: "results-save", result: r });
-                      if (!live.current) return;
-                      overlay.setResult(r, "original", settings?.preferences);
-                      setAppliedLines(r.lines);
-                      setAppliedOffset(r.offsetMs);
-                      setSaved((previous) => [
-                        r,
-                        ...previous.filter(
-                          (item) => item.key.inputHash !== r.key.inputHash,
-                        ),
-                      ]);
-                      setMessage(
-                        "已套用並保存在本機。如與原生字幕重疊，請關閉 YouTube CC。",
-                      );
-                      setView("lyrics");
+                    void attempt(async () => {
+                      if (video)
+                        await work.start(lines, runMode, video.durationMs);
                     })
                   }
                 >
-                  套用並保存
+                  重新補時
                 </button>
               </div>
             </>
           )}
-        </aside>
-        <section
-          ref={lyricsPage}
-          hidden={view !== "lyrics"}
-          className="lyrics-preview"
-          aria-label="字幕編輯與預覽"
-          tabIndex={0}
-        >
-          {appliedLines.length > 0 && (
-            <div className="lyrics-toolbar">
-              <h3>{video?.title || "目前影片"}</h3>
-              <div className="row">
-                <button onClick={() => setView("edit")}>製作／編輯</button>
-                <button onClick={() => setView("paste")}>貼上歌詞</button>
-                <button onClick={() => setView("import")}>匯入 LRC／SRT</button>
-                {settings?.configured && (
-                  <button onClick={() => setView("search")}>AI 尋找歌詞</button>
-                )}
-              </div>
-            </div>
-          )}
-          {appliedLines.length > 0 ? (
-            <LyricsPreview
-              lines={appliedLines}
-              mode="original"
-              offsetMs={appliedOffset}
-              video={binding.video}
-              seek={(ms) => {
-                binding.video.currentTime = ms / 1000;
-                void binding.video.play().catch(() => {});
-              }}
-            />
-          ) : metadataLoading ? (
-            <ContentSkeleton label="正在載入影片資訊" />
-          ) : (
-            <div className="empty-preview">
-              <p className="muted">尚未加入歌詞</p>
-              <h3>{video?.title || "目前影片"}</h3>
-              <p className="muted">
-                {video?.channel}
-                {video?.durationMs
-                  ? ` · ${Math.floor(video.durationMs / 60000)}:${String(Math.floor(video.durationMs / 1000) % 60).padStart(2, "0")}`
-                  : ""}
-              </p>
-              {!settings?.configured ? (
-                <>
-                  <p className="notice">
-                    先在設定頁填入你自己的 AI 服務，即可使用 AI 搜尋與對齊。
-                  </p>
+          {view === "saved" && (
+            <section>
+              <h3>本機版本</h3>
+              {!saved.length && <p>尚無保存版本</p>}
+              {saved.map((value) => (
+                <article key={value.key.inputHash}>
                   <p>
-                    貼上、匯入及手動校時現在就能使用。請使用「貼上歌詞」或「匯入
-                    LRC／SRT」加入 LRC／SRT，歌詞會完整顯示在這裡。
+                    {value.lines.length} 句／{value.key.targetLanguage}
                   </p>
                   <button
-                    className="primary"
-                    onClick={() => void request({ type: "open-options" })}
+                    disabled={busy}
+                    onClick={() => {
+                      if (!video) return;
+                      const draft = value.lines.map((l) =>
+                        lockTiming(l, video.durationMs),
+                      );
+                      setLines(draft);
+                      setOffset(value.offsetMs);
+                      source.current = value.subtitleSource ?? {
+                        kind: "legacy",
+                      };
+                      provenance.current = {
+                        source: value.source,
+                        targetLanguage: value.key.targetLanguage,
+                        model: value.model,
+                      };
+                      overlay.setResult(value, mode, prefs);
+                      setView("edit");
+                    }}
                   >
-                    前往設定
+                    載入這份版本
                   </button>
-                  <p className="muted">
-                    設定 API 網址、API Token
-                    與模型名稱並儲存後，返回影片即可啟用 AI。
-                  </p>
-                </>
-              ) : (
-                <p className="muted">
-                  貼上、匯入或使用 AI
-                  尋找歌詞。每一句會顯示在這裡，點擊已校時的歌詞可跳至該句。
-                </p>
-              )}
-              <div className="empty-actions">
-                {settings?.configured && (
-                  <button
-                    className="primary"
-                    disabled={!video}
-                    onClick={() => setView("search")}
-                  >
-                    AI 尋找歌詞
-                  </button>
-                )}
-                <button disabled={!video} onClick={() => setView("paste")}>
-                  貼上歌詞
-                </button>
-                <button disabled={!video} onClick={() => setView("import")}>
-                  匯入 LRC／SRT
-                </button>
-                {lines.length > 0 && (
-                  <button onClick={() => setView("edit")}>繼續編輯草稿</button>
-                )}
-                {saved.length > 0 && (
-                  <button onClick={() => setView("saved")}>
-                    本機保存的版本
-                  </button>
-                )}
-              </div>
-              {view === "lyrics" && error && (
-                <p role="alert" className="notice error">
-                  {error}
-                </p>
-              )}
-            </div>
+                </article>
+              ))}
+            </section>
+          )}
+          {!!notice && (
+            <p role="status" className="notice">
+              {notice}
+            </p>
+          )}
+          {!!error && (
+            <p role="alert" className="error">
+              {error}
+            </p>
           )}
         </section>
       </div>
-      {leaveAction && (
-        <div className="stop-backdrop">
-          <section
-            className="stop-dialog"
-            role="alertdialog"
-            aria-modal="true"
-            aria-labelledby="stop-title"
-            aria-describedby="stop-description"
-            onKeyDown={(event) => {
-              if (event.key === "Escape" && !stopping) {
-                event.preventDefault();
-                continueWaiting();
-              }
-              if (event.key === "Tab") {
-                const buttons = Array.from(
-                  event.currentTarget.querySelectorAll<HTMLButtonElement>(
-                    "button:not(:disabled)",
-                  ),
-                );
-                const first = buttons[0],
-                  last = buttons.at(-1);
-                if (event.shiftKey && event.target === first) {
-                  event.preventDefault();
-                  last?.focus();
-                } else if (!event.shiftKey && event.target === last) {
-                  event.preventDefault();
-                  first?.focus();
-                }
-              }
-            }}
-          >
-            <h3 id="stop-title">要取消目前的工作嗎？</h3>
-            <p id="stop-description">
-              字幕工作仍在處理中。取消後會保留歌詞、請求內容與已有結果。
-            </p>
-            {stopError && (
-              <p role="alert" className="error notice">
-                {stopError}
-              </p>
-            )}
-            <div className="stop-actions">
-              <button autoFocus disabled={stopping} onClick={continueWaiting}>
-                繼續等待
-              </button>
-              <button disabled={stopping} onClick={() => void confirmStop()}>
-                {stopping
-                  ? "正在取消…"
-                  : leaveAction === "return"
-                    ? "取消工作並返回"
-                    : leaveAction === "close"
-                      ? "取消工作並關閉"
-                      : "取消工作"}
-              </button>
-            </div>
-          </section>
-        </div>
-      )}
     </div>
   );
 }

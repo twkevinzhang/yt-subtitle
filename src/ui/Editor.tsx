@@ -31,7 +31,14 @@ export function Editor({
                 : undefined,
           };
         }
-        return { ...l, ...patch };
+        const changesTime =
+          Object.prototype.hasOwnProperty.call(patch, "startMs") ||
+          Object.prototype.hasOwnProperty.call(patch, "endMs");
+        return {
+          ...l,
+          ...patch,
+          ...(changesTime ? { timing: undefined } : {}),
+        };
       }),
     );
   };

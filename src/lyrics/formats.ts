@@ -48,7 +48,7 @@ export function parseLyrics(
     }
   } else {
     if (/<\d+:\d+/.test(text))
-      throw new Error("首版不支援逐字 LRC，請匯入逐句 LRC");
+      throw new Error("首版不支援逐字 LRC，請貼入逐句 LRC");
     const offset = Number(text.match(/\[offset:([+-]?\d+)\]/i)?.[1] || 0);
     for (const row of text.split("\n")) {
       const stamps = [...row.matchAll(/\[(\d+):(\d{2})(?:[.:](\d{1,3}))?\]/g)];

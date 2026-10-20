@@ -372,22 +372,8 @@ if (
         player.seekTo?.(requested.startMs / 1000, true);
         return;
       }
-      const available = Array.from(
-        { length: audioBuffer!.buffered.length },
-        (_, i) => [
-          audioBuffer!.buffered.start(i),
-          audioBuffer!.buffered.end(i),
-        ],
-      ).find(
-        (r) =>
-          r[0] <= requested!.startMs / 1000 + 0.04 &&
-          r[1] >= requested!.endMs / 1000 - 0.04,
-      );
-      if (available) {
-        parked = true;
-        player.pauseVideo?.();
-        return;
-      }
+      // Native buffered coverage is not decoded PCM coverage. Only the receiver
+      // may park us after its requested PCM has actually arrived.
     }
     if (capturingCurrent && seekStart) {
       seekStart = false;

@@ -124,3 +124,10 @@ export async function clearCredentials() {
   record.revision++;
   await chrome.storage.local.set({ settings: record });
 }
+export async function savePreferences(preferences: unknown) {
+  const record = await getSettings();
+  record.preferences = preferencesSchema.parse(preferences);
+  record.revision++;
+  await chrome.storage.local.set({ settings: record });
+  return publicSettings(record);
+}

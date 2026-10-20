@@ -19,6 +19,10 @@ beforeEach(() => {
   requestMock.mockImplementation(async (m) => {
     if (m.type === "settings-edit") return structuredClone(record);
     if (m.type === "results-list") return [];
+    if (m.type === "preferences-save") {
+      record.preferences = m.preferences;
+      return {};
+    }
     if (m.type === "settings-save") {
       record = {
         provider: structuredClone(m.provider),
@@ -33,6 +37,27 @@ beforeEach(() => {
   vi.stubGlobal("chrome", {
     permissions: { request: vi.fn(async () => true) },
   });
+});
+it("saves all three timing defaults without configuring AI or requesting permissions", async () => {
+  render(<Options />);
+  const first = await screen.findByRole("radio", { name: /先緩衝再播放/ });
+  expect((first as HTMLInputElement).checked).toBe(true);
+  for (const label of [/播放中背景校時/, /整首校完再使用/, /先緩衝再播放/]) {
+    fireEvent.click(screen.getByRole("radio", { name: label }));
+    fireEvent.click(screen.getByRole("button", { name: "儲存顯示與校時設定" }));
+  }
+  await waitFor(() =>
+    expect(
+      requestMock.mock.calls.filter(([m]) => m.type === "preferences-save"),
+    ).toHaveLength(3),
+  );
+  expect(
+    requestMock.mock.calls
+      .filter(([m]) => m.type === "preferences-save")
+      .map(([m]) => m.preferences.alignmentMode),
+  ).toEqual(["background", "complete-before-use", "buffer-before-play"]);
+  expect(chrome.permissions.request).not.toHaveBeenCalled();
+  expect(record.provider).toBeNull();
 });
 afterEach(() => {
   cleanup();

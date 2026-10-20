@@ -93,7 +93,19 @@ export function inspectPage() {
       : response?.captions?.playerCaptionsTracklistRenderer?.captionTracks ||
         [];
   const video = document.querySelector("video");
+  const selected = p?.getOption?.("captions", "track");
+  const selectedIndex = selected
+    ? tracks.findIndex(
+        (t: any) =>
+          t.vssId === selected.vss_id ||
+          t.vssId === selected.vssId ||
+          (!selected.vss_id &&
+            !selected.vssId &&
+            t.languageCode === selected.languageCode),
+      )
+    : -1;
   return {
+    selectedTrackId: selectedIndex >= 0 ? String(selectedIndex) : undefined,
     video: {
       schemaVersion: 1,
       videoId: id,

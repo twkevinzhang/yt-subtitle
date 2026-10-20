@@ -77,6 +77,27 @@ body {
 button.primary {
   color: var(--primary-text);
 }
+.yt-manual,
+.yt-manual:hover {
+  background: #c62828;
+  color: #fff;
+  border-color: #c62828;
+}
+.source-actions {
+  width: 100%;
+}
+.source-actions button {
+  width: 100%;
+}
+.mode-choice {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 6px 10px;
+  margin: 12px 0;
+}
+.mode-choice small {
+  grid-column: 2;
+}
 :host {
   font:
     14px/1.5 "Segoe UI",

@@ -386,7 +386,7 @@ it("observes ad state before processing changeType even before the next timer ti
   expect(send.mock.calls.some((c) => c[0].type === "error")).toBe(false);
   expect(send.mock.calls.some((c) => c[0].state === "waiting-ad")).toBe(true);
 });
-it("bounds a streaming session, pauses after a requested range, and never marks the whole stream complete", async () => {
+it("waits for decoded-range acknowledgement before parking a streaming helper", async () => {
   (location as any).href += "&ai-lyrics-stream=1";
   await import("../../src/youtube/audio-helper");
   const { video, player } = playerState();
@@ -409,6 +409,19 @@ it("bounds a streaming session, pauses after a requested range, and never marks 
     }),
   );
   vi.advanceTimersByTime(400);
+  expect(pauseVideo).not.toHaveBeenCalled();
+  window.dispatchEvent(
+    new MessageEvent("message", {
+      source: parent,
+      origin: "https://www.youtube.com",
+      data: {
+        tag: "ai-lyrics-control",
+        nonce: "00000000-0000-0000-0000-000000000001",
+        action: "pause",
+      },
+    }),
+  );
+  vi.advanceTimersByTime(200);
   expect(pauseVideo).toHaveBeenCalled();
   expect(send.mock.calls.some((c) => c[0].type === "complete")).toBe(false);
   vi.advanceTimersByTime(20000);

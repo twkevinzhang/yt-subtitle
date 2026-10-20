@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { jobKeySchema, segmentSchema } from "../acoustic/contracts";
 const time = z.number().finite().nonnegative();
 const endpoint = z.object({
   valueMs: time,
@@ -129,7 +130,29 @@ export const alignmentBodySchema = z
     (body) => JSON.stringify(body).length <= 120000,
     "Request body 超過 120000 字元",
   );
+export const localInferenceSchema = z.object({
+  key: jobKeySchema,
+  operation: z.enum(["prepare", "transcribe", "align"]),
+  assetId: z.string().optional(),
+  language: z.enum(["ja", "zh", "en", "auto"]).optional(),
+  segment: segmentSchema.optional(),
+  lines: z.array(lineSchema).max(10000).optional(),
+});
 const msg = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("local-model"), input: localInferenceSchema }),
+  z.object({ type: z.literal("local-model-cancel"), key: jobKeySchema }),
+  z.object({
+    type: z.literal("preferences-save"),
+    preferences: preferencesSchema,
+  }),
+  z.object({
+    type: z.literal("search-start"),
+    video: videoSchema,
+    consent: consentSchema,
+  }),
+  z.object({ type: z.literal("search-group"), id: z.string() }),
+  z.object({ type: z.literal("search-cancel"), id: z.string() }),
+  z.object({ type: z.literal("read-manual-track"), trackId: z.string() }),
   z.object({ type: z.literal("audio-begin") }),
   z.object({
     type: z.literal("audio-chunk"),
