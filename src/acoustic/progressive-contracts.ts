@@ -1,0 +1,18 @@
+export interface AudioChunk {
+  generation: number;
+  sequence: number;
+  mime: string;
+  data: ArrayBuffer;
+  init: boolean;
+}
+export interface PcmRange {
+  generation: number;
+  startMs: number;
+  sampleRate: 16000;
+  pcm: Float32Array;
+}
+export interface ProgressiveDecoder {
+  push(chunk: AudioChunk): Promise<void>;
+  reset(generation: number): void;
+  dispose(): void;
+}

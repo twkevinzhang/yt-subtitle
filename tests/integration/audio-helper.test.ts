@@ -12,6 +12,25 @@ class MediaSourceMock {
 }
 const originalAddSourceBuffer = MediaSourceMock.prototype.addSourceBuffer;
 const send = vi.fn();
+it("emits MIME, generation and chunk sequence for incremental decoding", async () => {
+  await import("../../src/youtube/audio-helper");
+  const source = new MediaSourceMock();
+  document.querySelector("video")!.src = URL.createObjectURL(source as any);
+  const buffer = source.addSourceBuffer('audio/webm; codecs="opus"');
+  buffer.appendBuffer(new Uint8Array([1]));
+  buffer.appendBuffer(new Uint8Array([2]));
+  expect(send.mock.calls[0][0]).toMatchObject({
+    mime: 'audio/webm; codecs="opus"',
+    generation: 0,
+    sequence: 0,
+    init: true,
+  });
+  expect(send.mock.calls[1][0]).toMatchObject({
+    generation: 0,
+    sequence: 1,
+    init: false,
+  });
+});
 let index = 0;
 beforeEach(() => {
   vi.resetModules();

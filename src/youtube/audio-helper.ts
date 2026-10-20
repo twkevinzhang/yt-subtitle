@@ -19,6 +19,7 @@ if (
   let audioBuffer: SourceBuffer | undefined;
   let audioSource: MediaSource | undefined;
   let resets = 0,
+    sequence = 0,
     seekStart = false;
   const sources = new Map<string, MediaSource>();
   const createObjectURL = URL.createObjectURL;
@@ -72,10 +73,11 @@ if (
           }
           coverage = new AudioCoverage();
           bytes = 0;
+          sequence = 0;
           lastSeek = 0;
           lastProgress = performance.now();
           seekStart = true;
-          send({ type: "reset" });
+          send({ type: "reset", generation: resets });
         }
         audioBuffer = buffer;
         audioSource = source;
@@ -91,7 +93,17 @@ if (
         return append.call(this, data);
       }
       const result = append.call(this, data);
-      send({ type: "chunk", data: copy.buffer }, [copy.buffer]);
+      send(
+        {
+          type: "chunk",
+          data: copy.buffer,
+          mime,
+          generation: resets,
+          sequence,
+          init: sequence++ === 0,
+        },
+        [copy.buffer],
+      );
       return result;
     };
     buffer.addEventListener("updateend", () => {
