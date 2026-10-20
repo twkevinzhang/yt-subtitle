@@ -19,7 +19,7 @@ export async function acquireYouTubeAudio(
     if (signal.aborted) throw new Error("工作已取消");
     const nonce = crypto.randomUUID(),
       frame = document.createElement("iframe");
-    frame.src = `https://www.youtube.com/watch?v=${videoId}&ai-lyrics-audio=${nonce}&autoplay=1&mute=1`;
+    frame.src = `https://www.youtube.com/watch?v=${videoId}&ai-lyrics-audio=${nonce}&ai-lyrics-duration=${durationMs}&autoplay=1&mute=1`;
     frame.allow = "autoplay";
     frame.setAttribute("aria-hidden", "true");
     frame.tabIndex = -1;
@@ -27,7 +27,10 @@ export async function acquireYouTubeAudio(
       "position:fixed;top:0;left:0;width:480px;height:270px;opacity:0;pointer-events:none;z-index:-1";
     const chunks: Uint8Array[] = [];
     let bytes = 0,
-      resets = 0;
+      resets = 0,
+      generation = 0,
+      nextSequence = 0,
+      waitingAd = false;
     const compressed = await new Promise<Uint8Array>((resolve, reject) => {
       const cleanup = () => {
         clearTimeout(timer);
@@ -54,13 +57,37 @@ export async function acquireYouTubeAudio(
           return;
         const m = event.data;
         if (m.type === "reset") {
-          if (++resets > 2) {
+          if (
+            m.generation !== undefined &&
+            (!Number.isSafeInteger(m.generation) || m.generation <= generation)
+          )
+            return;
+          if (m.reason !== "ad-start" && ++resets > 2) {
             fail("音訊來源持續切換，歌詞已保留");
             return;
           }
+          generation = m.generation ?? generation + 1;
+          nextSequence = 0;
+          waitingAd = m.reason === "ad-start";
           bytes = 0;
           chunks.length = 0;
-          progress("音訊來源已更換，正在重新讀取完整音訊…");
+          progress(
+            waitingAd
+              ? "廣告播放中，暫停收音；90 秒總上限不變…"
+              : "音訊來源已更換，正在重新讀取完整音訊…",
+          );
+          return;
+        }
+        if (m.generation !== undefined && m.generation !== generation) return;
+        if (m.type === "status") {
+          waitingAd = m.state !== "content";
+          progress(
+            m.state === "waiting-ad"
+              ? "廣告播放中，暫停收音；90 秒總上限不變…"
+              : m.state === "awaiting-content"
+                ? "廣告已結束，正在確認正片音源與初始化資料…"
+                : "已確認正片音源，繼續讀取音訊…",
+          );
           return;
         }
         if (m.type === "error") {
@@ -68,12 +95,18 @@ export async function acquireYouTubeAudio(
           return;
         }
         if (m.type === "coverage") {
+          if (waitingAd) return;
           progress(
             `正在讀取影片音訊 ${Math.floor(m.edge)}／${Math.ceil(durationMs / 1000)} 秒…`,
           );
           return;
         }
         if (m.type === "chunk") {
+          if (waitingAd) return;
+          if (m.sequence !== undefined && m.sequence !== nextSequence) {
+            fail("音訊區塊順序不連續");
+            return;
+          }
           if (!(m.data instanceof ArrayBuffer)) {
             fail("音訊區塊格式錯誤");
             return;
@@ -84,8 +117,10 @@ export async function acquireYouTubeAudio(
             return;
           }
           chunks.push(new Uint8Array(m.data));
+          nextSequence++;
         }
         if (m.type === "complete") {
+          if (waitingAd) return;
           if (
             m.bytes !== bytes ||
             !bytes ||

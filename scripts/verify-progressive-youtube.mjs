@@ -3,6 +3,7 @@ import { chromium } from "@playwright/test";
 import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
+import { beforeDeadline } from "./probe-deadline.mjs";
 
 const started = Date.now();
 const folder = await mkdtemp(
@@ -22,6 +23,9 @@ const report = {
   pcmEndMs: 0,
   mainPaused: false,
   errors: [],
+  states: [],
+  diagnostics: [],
+  resets: [],
   complete: false,
 };
 let browser;
@@ -59,9 +63,13 @@ try {
     );
   });
   const page = await browser.newPage();
-  let finish;
+  let finish,
+    finished = false;
   const done = new Promise((resolve) => {
-    finish = resolve;
+    finish = () => {
+      finished = true;
+      resolve();
+    };
   });
   stopTimer = setTimeout(
     () => {
@@ -72,10 +80,29 @@ try {
   );
   let serial = Promise.resolve();
   await page.exposeBinding("receiveAudioProbe", (_source, message) => {
+    if (finished) return;
     serial = serial
       .then(async () => {
+        if (finished) return;
+        if (message.type === "status") {
+          report.states.push({
+            state: message.state,
+            generation: message.generation,
+            atMs: Date.now() - started,
+          });
+          return;
+        }
+        if (message.type === "diagnostic") {
+          report.diagnostics.push({
+            code: message.code,
+            message: message.message,
+          });
+          return;
+        }
         if (message.type === "error") {
-          report.errors.push(message.message);
+          report.errors.push(
+            `${message.code ?? "unknown"}: ${message.message}`,
+          );
           finish();
           return;
         }
@@ -85,10 +112,16 @@ try {
           return;
         }
         if (message.type === "reset") {
-          await probe.evaluate(
-            (generation) => globalThis.codecProbe.reset(generation),
-            message.generation,
-          );
+          report.resets.push({
+            reason: message.reason,
+            generation: message.generation,
+          });
+          report.pcmRanges = 0;
+          report.pcmEndMs = 0;
+          await probe.evaluate((generation) => {
+            globalThis.codecProbe.reset(generation);
+            globalThis.codecReport = { ranges: 0, endMs: 0, errors: [] };
+          }, message.generation);
           return;
         }
         if (message.type !== "chunk") return;
@@ -129,6 +162,9 @@ try {
   await page.locator("video").waitFor({ state: "attached", timeout: 15000 });
   report.mainPaused = await page.evaluate(() => {
     const v = document.querySelector("video");
+    // YouTube may issue its autoplay after initial metadata. Keep the *main*
+    // player paused throughout this probe; the helper is a separate document.
+    v.addEventListener("play", () => v.pause());
     v.pause();
     return v.paused;
   });
@@ -136,7 +172,10 @@ try {
   await page.evaluate(
     ({ videoId, nonce }) => {
       const frame = document.createElement("iframe");
-      frame.src = `https://www.youtube.com/watch?v=${videoId}&ai-lyrics-audio=${nonce}&autoplay=1&mute=1`;
+      const durationMs = Math.round(
+        document.querySelector("video").duration * 1000,
+      );
+      frame.src = `https://www.youtube.com/watch?v=${videoId}&ai-lyrics-audio=${nonce}&ai-lyrics-duration=${durationMs}&autoplay=1&mute=1`;
       frame.allow = "autoplay";
       frame.style.cssText =
         "position:fixed;opacity:0;pointer-events:none;width:480px;height:270px";
@@ -162,7 +201,11 @@ try {
             sequence: m.sequence,
             init: m.init,
           });
-        } else if (["reset", "error", "complete"].includes(m.type))
+        } else if (
+          ["reset", "error", "complete", "status", "diagnostic"].includes(
+            m.type,
+          )
+        )
           void window.receiveAudioProbe({ ...m, data: undefined });
       });
       document.documentElement.append(frame);
@@ -170,6 +213,9 @@ try {
     { videoId: report.videoId, nonce },
   );
   await done;
+  // Drain the in-flight decoder push before disposing; don't interpret our own
+  // close() as a codec failure or keep processing queued chunks after success.
+  await beforeDeadline(serial, started + 90000);
   report.mainPaused =
     report.mainPaused &&
     (await page
