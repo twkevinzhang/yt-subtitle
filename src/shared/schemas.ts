@@ -1,5 +1,32 @@
 import { z } from "zod";
 const time = z.number().finite().nonnegative();
+const endpoint = z.object({
+  valueMs: time,
+  origin: z.enum(["source", "manual", "model"]),
+  locked: z.boolean(),
+});
+export const timingSchema = z.object({
+  start: endpoint.optional(),
+  end: endpoint.optional(),
+  rejected: z
+    .object({ startMs: z.number().optional(), endMs: z.number().optional() })
+    .optional(),
+  warning: z.string().optional(),
+});
+export const subtitleSourceSchema = z
+  .object({
+    kind: z.enum([
+      "configured",
+      "comments",
+      "web",
+      "youtube",
+      "paste",
+      "legacy",
+    ]),
+    url: z.string().url().optional(),
+    trackId: z.string().optional(),
+  })
+  .strict();
 export const cueSchema = z
   .object({
     id: z.string(),
@@ -14,6 +41,7 @@ export const cueSchema = z
   })
   .refine((c) => c.endMs > c.startMs, "結束必須晚於開始");
 export const lineSchema = z.object({
+  timing: timingSchema.optional(),
   id: z.string(),
   original: z.string(),
   alignmentText: z.string().optional(),
@@ -45,6 +73,9 @@ export const sourceSchema = z.object({
   enabled: z.boolean(),
 });
 export const preferencesSchema = z.object({
+  alignmentMode: z
+    .enum(["buffer-before-play", "background", "complete-before-use"])
+    .default("buffer-before-play"),
   mode: z.enum(["original", "bilingual", "translation"]),
   targetLanguage: z.enum(["ja", "zh-Hant", "en"]),
   fontSize: z.number().min(14).max(64),
@@ -163,4 +194,5 @@ const msg = z.discriminatedUnion("type", [
 export function validateMessage(value: unknown) {
   return msg.parse(value);
 }
-export type ExtensionMessage = z.infer<typeof msg>;
+// Callers send schema input; validation supplies defaults at the receiving boundary.
+export type ExtensionMessage = z.input<typeof msg>;

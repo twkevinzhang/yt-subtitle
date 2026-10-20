@@ -1,4 +1,23 @@
 import { it, expect } from "vitest";
+import { preferencesSchema } from "../../src/shared/schemas";
+it("migrates missing alignment mode and preserves explicit choices", () => {
+  const preferences = {
+    mode: "original",
+    targetLanguage: "zh-Hant",
+    fontSize: 28,
+    position: "bottom",
+  };
+  expect(preferencesSchema.parse(preferences).alignmentMode).toBe(
+    "buffer-before-play",
+  );
+  expect(
+    preferencesSchema.parse({ ...preferences, alignmentMode: "background" })
+      .alignmentMode,
+  ).toBe("background");
+  expect(() =>
+    preferencesSchema.parse({ ...preferences, alignmentMode: "invalid" }),
+  ).toThrow();
+});
 import {
   normalizeProvider,
   publicSettings,

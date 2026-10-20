@@ -10,6 +10,7 @@ export function parseLyrics(
   bytes: Uint8Array,
   format: "txt" | "lrc" | "srt",
   durationMs: number,
+  options: { allowPartial?: boolean } = {},
 ): AlignedLine[] {
   if (bytes.byteLength > 2097152) throw new Error("檔案超過 2 MiB");
   let text: string;
@@ -52,7 +53,16 @@ export function parseLyrics(
     for (const row of text.split("\n")) {
       const stamps = [...row.matchAll(/\[(\d+):(\d{2})(?:[.:](\d{1,3}))?\]/g)];
       const lyric = row.replace(/\[[^\]]*\]/g, "").trim();
-      if (!stamps.length || !lyric) continue;
+      if (!stamps.length || !lyric) {
+        if (options.allowPartial && lyric)
+          lines.push({
+            ...blank(lyric, lines.length),
+            ...(/\[\d+:/.test(row)
+              ? { timing: { warning: "無法解析時間碼，請補時或手動校正" } }
+              : {}),
+          });
+        continue;
+      }
       for (const m of stamps)
         lines.push({
           ...blank(lyric, lines.length),
@@ -63,16 +73,26 @@ export function parseLyrics(
             offset,
         });
     }
-    lines.sort((a, b) => a.startMs! - b.startMs!);
+    if (!options.allowPartial) lines.sort((a, b) => a.startMs! - b.startMs!);
     lines = lines.map((l, i) => ({
       ...l,
       id: `l${i}`,
-      endMs: lines[i + 1]?.startMs ?? durationMs,
+      endMs: options.allowPartial
+        ? lines
+            .slice(i + 1)
+            .find(
+              (next) =>
+                next.startMs !== undefined &&
+                next.startMs > (l.startMs ?? Infinity) &&
+                next.startMs <= durationMs,
+            )?.startMs
+        : (lines[i + 1]?.startMs ?? durationMs),
     }));
   }
   if (!lines.length) throw new Error("找不到有效歌詞");
   if (lines.length > 10000) throw new Error("超過 10,000 句上限");
   if (
+    !options.allowPartial &&
     format !== "txt" &&
     validateTiming(lines, durationMs, 0).some((x) => x.severity === "error")
   )

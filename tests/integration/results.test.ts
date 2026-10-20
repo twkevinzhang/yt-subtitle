@@ -37,6 +37,16 @@ it("preserves independent results and excludes credentials", async () => {
   await saveResult(base);
   await saveResult({ ...base, key: { ...base.key, inputHash: "b" } });
   expect(await listResults(base.key.videoId)).toHaveLength(2);
+  const loaded = (await listResults(base.key.videoId))[0];
+  expect(loaded.subtitleSource).toEqual({ kind: "legacy" });
+  expect(loaded.lines[0]).toMatchObject({
+    startMs: 0,
+    endMs: 1000,
+    timing: {
+      start: { valueMs: 0, locked: true },
+      end: { valueMs: 1000, locked: true },
+    },
+  });
   await expect(
     saveResult({ ...base, apiToken: "leak" } as any),
   ).rejects.toThrow();

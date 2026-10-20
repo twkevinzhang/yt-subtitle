@@ -1,6 +1,32 @@
 export type Language = "ja" | "zh" | "en";
 export type TargetLanguage = "ja" | "zh-Hant" | "en";
 export type DisplayMode = "original" | "bilingual" | "translation";
+export type AlignmentMode =
+  "buffer-before-play" | "background" | "complete-before-use";
+export interface SubtitleSource {
+  kind: "configured" | "comments" | "web" | "youtube" | "paste" | "legacy";
+  url?: string;
+  trackId?: string;
+}
+export interface TimingEndpoint {
+  valueMs: number;
+  origin: "source" | "manual" | "model";
+  locked: boolean;
+}
+export interface LineTiming {
+  start?: TimingEndpoint;
+  end?: TimingEndpoint;
+  rejected?: { startMs?: number; endMs?: number };
+  warning?: string;
+}
+export interface SubtitleLine extends AlignedLine {
+  timing: LineTiming;
+}
+export interface SubtitleDraft {
+  revision: number;
+  source: SubtitleSource;
+  lines: SubtitleLine[];
+}
 export interface Cue {
   tokens?: { text: string; startMs: number }[];
   endEstimated?: boolean;
@@ -10,6 +36,7 @@ export interface Cue {
   text: string;
 }
 export interface AlignedLine {
+  timing?: LineTiming;
   id: string;
   original: string;
   // Spoken text when original also contains an adjacent, unsung translation.
@@ -57,6 +84,8 @@ export interface SourceSettings {
   enabled: boolean;
 }
 export interface Preferences {
+  // Optional only at legacy in-memory call sites; storage schema always defaults it.
+  alignmentMode?: AlignmentMode;
   mode: DisplayMode;
   targetLanguage: TargetLanguage;
   fontSize: number;
@@ -132,6 +161,7 @@ export interface ResultKey {
   schemaVersion: 1;
 }
 export interface SavedResult {
+  subtitleSource?: SubtitleSource;
   schemaVersion: 1;
   key: ResultKey;
   videoDurationMs: number;
