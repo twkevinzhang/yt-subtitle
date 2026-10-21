@@ -26,6 +26,10 @@ globalThis.onmessage = async ({ data }) => {
       });
       postMessage({ id: data.id, lines: text });
       return;
+    } else if (data.type === "readings") {
+      const readings = await adapter.readings(data.input.texts);
+      postMessage({ id: data.id, lines: readings });
+      return;
     } else if (data.type === "dispose") await adapter.dispose();
     else throw new Error("未知模型操作");
     postMessage({ id: data.id });

@@ -7,7 +7,65 @@ const normalize = (text: string) =>
   text
     .normalize("NFKC")
     .toLowerCase()
+    .replace(/[ァ-ヶ]/gu, (c) => String.fromCharCode(c.charCodeAt(0) - 0x60))
     .replace(/[^\p{L}\p{N}]/gu, "");
+/** Semi-global edit distance: arbitrary ASR context is free, lyric edits are not. */
+function transcriptAnchors(
+  text: string,
+  observed: string,
+  maxEdits = 0.25,
+  minimumLength = 10,
+) {
+  if (!text.length || !observed.length) return [];
+  const exact: { at: number; end: number }[] = [];
+  for (
+    let at = observed.indexOf(text);
+    at >= 0;
+    at = observed.indexOf(text, at + text.length)
+  )
+    exact.push({ at, end: at + text.length });
+  if (exact.length) return exact;
+  if (
+    text.length < minimumLength ||
+    text.length > 4000 ||
+    observed.length > 4000
+  )
+    return [];
+  let costs = new Uint16Array(observed.length + 1);
+  let starts = Uint16Array.from({ length: observed.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= text.length; i++) {
+    const next = new Uint16Array(observed.length + 1);
+    const nextStarts = new Uint16Array(observed.length + 1);
+    next[0] = i;
+    for (let j = 1; j <= observed.length; j++) {
+      const substitution =
+        costs[j - 1] + (text[i - 1] === observed[j - 1] ? 0 : 1);
+      const deletion = costs[j] + 1,
+        insertion = next[j - 1] + 1;
+      next[j] = Math.min(substitution, deletion, insertion);
+      nextStarts[j] =
+        next[j] === substitution
+          ? starts[j - 1]
+          : next[j] === deletion
+            ? starts[j]
+            : nextStarts[j - 1];
+    }
+    costs = next;
+    starts = nextStarts;
+  }
+  const matches = Array.from(costs, (cost, end) => ({
+    cost,
+    at: starts[end],
+    end,
+  })).filter((m) => m.end > m.at && m.cost / text.length <= maxEdits);
+  const hits: typeof matches = [];
+  for (const match of matches) {
+    const previous = hits.at(-1);
+    if (!previous || match.at >= previous.end) hits.push(match);
+    else if (match.cost < previous.cost) hits[hits.length - 1] = match;
+  }
+  return hits;
+}
 export const lyricLanguage = (text: string): "en" | "ja" | "zh" =>
   /[ぁ-ヿ]/u.test(text)
     ? "ja"
@@ -16,20 +74,70 @@ export const lyricLanguage = (text: string): "en" | "ja" | "zh" =>
       ? "en"
       : "zh";
 export interface LocationResult {
-  contexts?: Record<string, { leadingText: string; trailingText: string }>;
+  recognitions?: { text: string; language: RecognitionInput["language"] }[];
+  contexts?: Record<
+    string,
+    {
+      leadingText: string;
+      trailingText: string;
+      alignmentLines?: SubtitleLine[];
+    }
+  >;
+  fallbacks?: Record<string, Segment[]>;
   segments: Segment[];
   checked: TimeRange[];
   ambiguousLineIds: string[];
   silent: TimeRange[];
+}
+function windowEligibility(lines: SubtitleLine[], range: TimeRange) {
+  return lines.map((line, index) => {
+    const before = lines
+      .slice(0, index)
+      .reverse()
+      .find((l) => !l.excluded && l.endMs !== undefined);
+    const after = lines
+      .slice(index + 1)
+      .find((l) => !l.excluded && l.startMs !== undefined);
+    return (
+      (before?.endMs ?? 0) < range.endMs &&
+      (after?.startMs ?? Infinity) > range.startMs &&
+      (line.startMs ?? 0) < range.endMs &&
+      (line.endMs ?? Infinity) > range.startMs
+    );
+  });
 }
 /** Match ordered whole passages; repeated text alone is insufficient evidence. */
 export function matchLyricWindow(
   lines: SubtitleLine[],
   observed: string,
   range: TimeRange,
+  joint = false,
 ): LocationResult {
   const obs = normalize(observed),
     texts = lines.map((l) => normalize(l.alignmentText ?? l.original));
+  // Source order plus existing endpoints rules out occurrences outside this
+  // window. Text elsewhere in the song must not make a bounded repeat ambiguous.
+  const possible = windowEligibility(lines, range);
+  const pending = lines.flatMap((l, i) =>
+    possible[i] &&
+    !l.excluded &&
+    (l.startMs === undefined || l.endMs === undefined)
+      ? [i]
+      : [],
+  );
+  const gapBefore = lines
+    .slice(0, pending[0])
+    .reverse()
+    .find((l) => !l.excluded && l.endMs !== undefined);
+  const gapAfter = lines
+    .slice((pending.at(-1) ?? lines.length) + 1)
+    .find((l) => !l.excluded && l.startMs !== undefined);
+  const bounded =
+    range.endMs - range.startMs <= 10000 &&
+    gapBefore?.endMs === range.startMs &&
+    gapAfter?.startMs === range.endMs;
+  const anchorsFor = (text: string) =>
+    transcriptAnchors(text, obs, bounded ? 0.4 : 0.25, bounded ? 6 : 10);
   const candidates: {
     from: number;
     to: number;
@@ -39,6 +147,7 @@ export function matchLyricWindow(
   for (let from = 0; from < lines.length; from++) {
     if (
       lines[from].excluded ||
+      !possible[from] ||
       (lines[from].startMs !== undefined && lines[from].endMs !== undefined)
     )
       continue;
@@ -46,15 +155,24 @@ export function matchLyricWindow(
     for (let to = from; to < Math.min(lines.length, from + 40); to++) {
       if (
         lines[to].excluded ||
+        !possible[to] ||
         (lines[to].startMs !== undefined && lines[to].endMs !== undefined)
       )
         break;
       text += texts[to];
-      if (text.length > 4000 || text.length > obs.length * 1.25) break;
+      if (
+        text.length > 4000 ||
+        text.length > obs.length * (bounded ? 1.75 : 1.25)
+      )
+        break;
       if (text.length < 2) continue;
       const coverage = transcriptCoverage(text, obs),
         precision = transcriptCoverage(obs, text);
-      if (coverage >= 0.8 && precision >= 0.45)
+      if (
+        coverage >= (bounded ? 0.65 : 0.8) &&
+        precision >= 0.45 &&
+        texts.slice(from, to + 1).every((t) => anchorsFor(t).length > 0)
+      )
         candidates.push({ from, to, text, score: coverage * precision });
     }
   }
@@ -66,7 +184,7 @@ export function matchLyricWindow(
     ambiguousLineIds: [],
     silent: [],
   };
-  if (!best) {
+  const findAnchors = () => {
     // A noisy passage need not invalidate a whole, uniquely recognized line.
     // Only exact, nontrivial anchors qualify here; neighbors receive no time.
     const anchors = texts.flatMap((text, index) => {
@@ -74,16 +192,29 @@ export function matchLyricWindow(
       const cjk = /[\p{Script=Han}ぁ-ヿ]/u.test(text);
       if (
         line.excluded ||
+        !possible[index] ||
         (line.startMs !== undefined && line.endMs !== undefined) ||
         text.length < (cjk ? 6 : 24) ||
         (!cjk &&
           ((line.alignmentText ?? line.original).match(/\p{L}+/gu) ?? [])
-            .length < 4) ||
-        texts.filter((other) => other.includes(text)).length !== 1
+            .length < 4)
       )
         return [];
-      const at = obs.indexOf(text);
-      if (at < 0 || obs.indexOf(text, at + 1) >= 0) return [];
+      const occurrences = texts.flatMap((other, i) =>
+        other.includes(text) &&
+        possible[i] &&
+        (lines[i].startMs === undefined ||
+          lines[i].endMs === undefined ||
+          (lines[i].startMs! < range.endMs && lines[i].endMs! > range.startMs))
+          ? [i]
+          : [],
+      );
+      const matches = anchorsFor(text);
+      // Every possible occurrence must be accounted for. A single repeated
+      // phrase still cannot identify which chorus was heard.
+      if (matches.length !== occurrences.length) return [];
+      const match = matches[occurrences.indexOf(index)];
+      if (!match) return [];
       const before = [...lines.slice(0, index)]
         .reverse()
         .find((l) => l.endMs !== undefined);
@@ -92,9 +223,23 @@ export function matchLyricWindow(
       const endMs = Math.min(range.endMs, after?.startMs ?? Infinity);
       // Context was recognized from the entire lookup PCM. Keep that exact
       // window; neighboring source locks are enforced on the inferred result.
-      return endMs > startMs ? [{ index, at, ...range }] : [];
+      return endMs > startMs ? [{ index, ...match, ...range }] : [];
     });
-    if (anchors.some((a, i) => i > 0 && a.at <= anchors[i - 1].at))
+    if (
+      anchors.some((a, i) => {
+        if (!i) return false;
+        const previous = anchors[i - 1];
+        // Edit-distance spans can share a few characters at an ASR word boundary.
+        // Source texts still go through one monotonic acoustic alignment; these
+        // character positions never become timestamps.
+        return (
+          a.at <= previous.at ||
+          a.end <= previous.end ||
+          previous.end - a.at >
+            Math.min(previous.end - previous.at, a.end - a.at) * 0.25
+        );
+      })
+    )
       return result;
     const positions: number[] = [];
     let offset = 0;
@@ -120,11 +265,53 @@ export function matchLyricWindow(
       const a = anchors[i];
       result.contexts[result.segments[i].id] = {
         leadingText: observed.slice(0, positions[a.at]),
-        trailingText: observed.slice(positions[a.at + texts[a.index].length]),
+        trailingText: observed.slice(positions[a.end]),
       };
     }
+    if (joint && anchors.length > 1) {
+      const singles = result.segments;
+      const id = `joint-${singles[0].id}`;
+      const inserts = new Map<string, SubtitleLine>();
+      for (let i = 1; i < anchors.length; i++) {
+        const text = observed.slice(
+          positions[anchors[i - 1].end],
+          positions[anchors[i].at],
+        );
+        if (!text.trim()) continue;
+        let contextId = `__recognized-${id}-${i}`;
+        while (lines.some((l) => l.id === contextId)) contextId += "_";
+        inserts.set(lines[anchors[i].index].id, {
+          id: contextId,
+          original: text,
+          excluded: false,
+          status: "unaligned",
+          cueIds: [],
+          timing: {},
+        });
+      }
+      result.contexts[id] = {
+        leadingText: result.contexts[singles[0].id].leadingText,
+        trailingText: result.contexts[singles.at(-1)!.id].trailingText,
+        alignmentLines: lines.flatMap((l) =>
+          inserts.has(l.id) ? [inserts.get(l.id)!, l] : [l],
+        ),
+      };
+      result.segments = [
+        {
+          ...singles[0],
+          id,
+          lineIds: singles.flatMap((s) => s.lineIds),
+          contextLineIds: [...inserts.values()].map((l) => l.id),
+          language: lyricLanguage(
+            anchors.map((a) => lines[a.index].original).join(" "),
+          ),
+        },
+      ];
+      result.fallbacks = { [id]: singles };
+    }
     return result;
-  }
+  };
+  if (!best) return findAnchors();
   // Completed passages still explain speech heard inside this lookup window.
   // Removing them from competition can turn a later chorus into a false unique hit.
   for (let from = 0; from < lines.length; from++) {
@@ -151,7 +338,7 @@ export function matchLyricWindow(
         result.ambiguousLineIds = lines
           .slice(best.from, best.to + 1)
           .map((l) => l.id);
-        return result;
+        return findAnchors();
       }
     }
   }
@@ -168,7 +355,7 @@ export function matchLyricWindow(
         ),
       ),
     ];
-    return result;
+    return findAnchors();
   }
   const before = [...lines.slice(0, best.from)]
       .reverse()
@@ -194,12 +381,59 @@ export function matchLyricWindow(
   });
   return result;
 }
+function combineLocations(
+  locations: LocationResult[],
+  range: TimeRange,
+): LocationResult {
+  const result: LocationResult = {
+    segments: [],
+    contexts: {},
+    fallbacks: {},
+    checked: [range],
+    silent: [],
+    ambiguousLineIds: [],
+  };
+  const owned = new Set<string>();
+  const entries = locations
+    .flatMap((location) => [
+      ...location.segments.map((segment) => ({ segment, location })),
+      ...Object.values(location.fallbacks ?? {})
+        .flat()
+        .map((segment) => ({ segment, location })),
+    ])
+    .sort((a, b) => b.segment.lineIds.length - a.segment.lineIds.length);
+  for (const { segment, location } of entries) {
+    if (segment.lineIds.some((id) => owned.has(id))) continue;
+    result.segments.push(segment);
+    segment.lineIds.forEach((id) => owned.add(id));
+    if (location.contexts?.[segment.id])
+      result.contexts![segment.id] = location.contexts[segment.id];
+    const fallbacks = location.fallbacks?.[segment.id];
+    if (fallbacks) {
+      result.fallbacks![segment.id] = fallbacks;
+      for (const fallback of fallbacks)
+        if (location.contexts?.[fallback.id])
+          result.contexts![fallback.id] = location.contexts[fallback.id];
+    }
+  }
+  result.ambiguousLineIds = [
+    ...new Set(locations.flatMap((l) => l.ambiguousLineIds)),
+  ].filter((id) => !owned.has(id));
+  return result;
+}
 export async function locateLyrics(
   lines: SubtitleLine[],
   range: TimeRange,
   audio: RangeAudioSource,
-  recognizer: { transcribe(input: RecognitionInput): Promise<string> },
+  recognizer: {
+    transcribe(input: RecognitionInput): Promise<string>;
+    readings?(texts: string[]): Promise<string[]>;
+  },
   signal: AbortSignal,
+  cache?: {
+    generation: number;
+    recognitions: NonNullable<LocationResult["recognitions"]>;
+  },
 ): Promise<LocationResult> {
   await audio.ensure(range, signal);
   if (signal.aborted) throw new Error("工作已取消");
@@ -209,31 +443,95 @@ export async function locateLyrics(
   const rms = Math.sqrt(
     pcm.reduce((n, v) => n + v * v, 0) / Math.max(1, pcm.length),
   );
-  let text = await recognizer.transcribe({ pcm, language: "auto" });
-  if (signal.aborted) throw new Error("工作已取消");
-  let result = matchLyricWindow(lines, text, range);
-  // Music can make automatic language detection transcribe Japanese as repeated
-  // English. Recheck once with a script hint, still recognizing audio alone.
-  const language = lyricLanguage(
+  const recognitions: NonNullable<LocationResult["recognitions"]> = [];
+  const recognize = async (language: RecognitionInput["language"]) => {
+    const cached =
+      cache?.generation === generation
+        ? cache.recognitions.find((r) => r.language === language)
+        : undefined;
+    const text =
+      cached?.text ?? (await recognizer.transcribe({ pcm, language }));
+    recognitions.push({ text, language });
+    return text;
+  };
+  // In pinned Transformers.js 3.8.1, omitted language defaults to English;
+  // automatic detection is a TODO. Choose from source text and time bounds.
+  const hint = lyricLanguage(
     lines
-      .filter(
-        (l) =>
-          !l.excluded && (l.startMs === undefined || l.endMs === undefined),
-      )
+      .filter((l) => !l.excluded)
       .map((l) => l.alignmentText ?? l.original)
       .join(" "),
   );
+  const possible = windowEligibility(lines, range);
+  const languages = [
+    ...new Set(
+      lines.flatMap((l, i) => {
+        if (
+          !possible[i] ||
+          l.excluded ||
+          (l.startMs !== undefined && l.endMs !== undefined)
+        )
+          return [];
+        const language = lyricLanguage(l.alignmentText ?? l.original);
+        return [
+          language === "zh" && hint === "ja" ? ("ja" as const) : language,
+        ];
+      }),
+    ),
+  ].sort((a, b) => Number(b === hint) - Number(a === hint));
+  const locations: LocationResult[] = [];
+  for (const language of languages) {
+    if (generation !== audio.generation) break;
+    const text = await recognize(language);
+    if (signal.aborted) throw new Error("工作已取消");
+    locations.push(matchLyricWindow(lines, text, range, true));
+  }
   if (
-    !result.segments.length &&
-    !result.ambiguousLineIds.length &&
-    language !== "en" &&
-    (text.trim() || rms >= 0.003) &&
+    languages.includes("ja") &&
+    recognizer.readings &&
     generation === audio.generation
   ) {
-    text = await recognizer.transcribe({ pcm, language });
-    if (signal.aborted) throw new Error("工作已取消");
-    result = matchLyricWindow(lines, text, range);
+    const texts = [
+      ...lines.map((l) => l.alignmentText ?? l.original),
+      ...recognitions.map((r) => r.text),
+    ];
+    const pronounced: string[] = [];
+    for (let offset = 0; offset < texts.length; offset += 128) {
+      pronounced.push(
+        ...(await recognizer.readings(texts.slice(offset, offset + 128))),
+      );
+      if (signal.aborted) throw new Error("工作已取消");
+    }
+    if (pronounced.length !== texts.length)
+      throw new Error("本機讀音轉換缺少文字");
+    const phoneticLines = lines.map((l, i) => ({
+      ...l,
+      alignmentText: pronounced[i],
+    }));
+    const originals = new Map(lines.map((l) => [l.id, l]));
+    for (let i = 0; i < recognitions.length; i++) {
+      const location = matchLyricWindow(
+        phoneticLines,
+        pronounced[lines.length + i],
+        range,
+        true,
+      );
+      // Readings aid recognition; alignment keeps the supplied original text.
+      for (const context of Object.values(location.contexts ?? {}))
+        if (context.alignmentLines)
+          context.alignmentLines = context.alignmentLines.map(
+            (l) => originals.get(l.id) ?? l,
+          );
+      locations.push(location);
+    }
   }
-  if (!text.trim() && rms < 0.003) result.silent.push(range);
+  const result = combineLocations(locations, range);
+  const order = new Map(lines.map((line, index) => [line.id, index]));
+  result.segments.sort(
+    (a, b) => (order.get(a.lineIds[0]) ?? 0) - (order.get(b.lineIds[0]) ?? 0),
+  );
+  result.recognitions = recognitions;
+  if (recognitions.every((r) => !r.text.trim()) && rms < 0.003)
+    result.silent.push(range);
   return result;
 }

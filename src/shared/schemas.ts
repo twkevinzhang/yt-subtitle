@@ -131,8 +131,17 @@ export const alignmentBodySchema = z
     "Request body 超過 120000 字元",
   );
 export const localInferenceSchema = z.object({
+  verifyEvidence: z.boolean().optional(),
   key: jobKeySchema,
-  operation: z.enum(["prepare", "transcribe", "align"]),
+  operation: z.enum(["prepare", "transcribe", "align", "readings"]),
+  texts: z
+    .array(z.string().max(4000))
+    .max(256)
+    .refine(
+      (v) => v.reduce((n, s) => n + s.length, 0) <= 200000,
+      "讀音文字超過上限",
+    )
+    .optional(),
   assetId: z.string().optional(),
   language: z.enum(["ja", "zh", "en", "auto"]).optional(),
   leadingText: z.string().max(4000).optional(),

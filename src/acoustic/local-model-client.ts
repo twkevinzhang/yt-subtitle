@@ -54,6 +54,15 @@ export function createLocalModelClient(key: JobKey, signal: AbortSignal) {
       check();
       return result;
     },
+    async readings(texts: string[]) {
+      check();
+      const result = await request<string[]>({
+        type: "local-model",
+        input: { key, operation: "readings", texts },
+      });
+      check();
+      return result;
+    },
     async align(input: AcousticInput) {
       const assetId = await upload(input.pcm);
       const result = await request<AlignedLine[]>({
@@ -61,6 +70,7 @@ export function createLocalModelClient(key: JobKey, signal: AbortSignal) {
         input: {
           key,
           operation: "align",
+          verifyEvidence: input.verifyEvidence,
           leadingText: input.leadingText,
           trailingText: input.trailingText,
           assetId,
@@ -73,6 +83,9 @@ export function createLocalModelClient(key: JobKey, signal: AbortSignal) {
     },
     async cancel() {
       await request({ type: "local-model-cancel", key });
+    },
+    verify(input: AcousticInput) {
+      return this.align({ ...input, verifyEvidence: true });
     },
   };
 }

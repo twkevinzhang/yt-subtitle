@@ -5,6 +5,7 @@ import type { AlignedLine } from "../shared/types";
 interface Session {
   ensureReady(): Promise<void>;
   transcribe(input: RecognitionInput): Promise<string>;
+  readings?(texts: string[]): Promise<string[]>;
   align(input: AcousticInput): Promise<AlignedLine[]>;
   cancel(): void;
 }
@@ -25,6 +26,11 @@ export class LocalModelHost {
         await this.session.ensureReady();
         return null;
       }
+      if (input.operation === "readings") {
+        if (!input.texts || !this.session.readings)
+          throw new Error("缺少本機讀音轉換器或文字");
+        return this.session.readings(input.texts);
+      }
       if (!input.assetId) throw new Error("缺少音訊 asset");
       const pcm = new Float32Array(await this.read(input.assetId));
       if (
@@ -39,6 +45,7 @@ export class LocalModelHost {
       }
       if (!input.segment || !input.lines) throw new Error("缺少逐句校時資料");
       return this.session.align({
+        verifyEvidence: input.verifyEvidence,
         pcm,
         leadingText: input.leadingText,
         trailingText: input.trailingText,

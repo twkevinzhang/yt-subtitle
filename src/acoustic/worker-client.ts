@@ -36,7 +36,7 @@ export class WorkerClient implements AcousticBackend {
   }
   private request(
     type: string,
-    input?: AcousticInput | RecognitionInput,
+    input?: AcousticInput | RecognitionInput | { texts: string[] },
   ): Promise<any> {
     const id = ++this.sequence;
     return new Promise((resolve, reject) => {
@@ -48,13 +48,14 @@ export class WorkerClient implements AcousticBackend {
       );
       this.waiting.set(id, { resolve, reject, timer });
       try {
+        const pcm = input && "pcm" in input ? input.pcm : undefined;
         this.worker.postMessage(
           {
             id,
             type,
-            input: input ? { ...input, pcm: input.pcm.buffer } : undefined,
+            input: pcm ? { ...input, pcm: pcm.buffer } : input,
           },
-          input ? [input.pcm.buffer as ArrayBuffer] : [],
+          pcm ? [pcm.buffer as ArrayBuffer] : [],
         );
       } catch (e) {
         clearTimeout(timer);
@@ -71,6 +72,9 @@ export class WorkerClient implements AcousticBackend {
   }
   transcribe(input: RecognitionInput): Promise<string> {
     return this.request("transcribe", input);
+  }
+  readings(texts: string[]): Promise<string[]> {
+    return this.request("readings", { texts });
   }
   async dispose() {
     await this.request("dispose");

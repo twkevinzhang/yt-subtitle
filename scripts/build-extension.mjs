@@ -1,5 +1,5 @@
 import { build } from "vite";
-import { mkdir, copyFile, readFile } from "node:fs/promises";
+import { mkdir, copyFile, readFile, cp } from "node:fs/promises";
 import path from "node:path";
 await build({
   configFile: false,
@@ -61,6 +61,21 @@ for (const name of [
   });
 }
 await mkdir("dist/vendor", { recursive: true });
+await copyFile(
+  "node_modules/kuromoji/build/kuromoji.js",
+  "dist/vendor/kuromoji.js",
+);
+await cp("node_modules/kuromoji/dict", "dist/vendor/kuromoji-dict", {
+  recursive: true,
+});
+await copyFile(
+  "node_modules/kuromoji/LICENSE-2.0.txt",
+  "dist/vendor/KUROMOJI-LICENSE.txt",
+);
+await copyFile(
+  "node_modules/kuromoji/NOTICE.md",
+  "dist/vendor/KUROMOJI-NOTICE.md",
+);
 for (const file of [
   "transformers.min.js",
   "ort-wasm-simd-threaded.jsep.mjs",

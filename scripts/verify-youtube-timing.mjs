@@ -3,7 +3,20 @@ import { readFile, writeFile, mkdir } from "node:fs/promises";
 import ts from "typescript";
 const startedAtMs = Date.now();
 if (!process.argv[2])
-  throw new Error("Usage: node scripts/verify-youtube-timing.mjs <lyrics.txt>");
+  throw new Error(
+    "Usage: node scripts/verify-youtube-timing.mjs <lyrics.txt> [--exclude-lines=1,3,...]",
+  );
+const excludeOption = process.argv
+  .slice(3)
+  .find((arg) => arg.startsWith("--exclude-lines="));
+const excludeLines = excludeOption
+  ? excludeOption.slice("--exclude-lines=".length).split(",").map(Number)
+  : [];
+if (
+  excludeLines.some((n) => !Number.isInteger(n) || n < 1) ||
+  new Set(excludeLines).size !== excludeLines.length
+)
+  throw new Error("排除行號必須是明確、唯一的正整數");
 await mkdir("artifacts/timing-acceptance", { recursive: true });
 await writeFile(
   "artifacts/timing-acceptance/support.mjs",
@@ -25,7 +38,7 @@ const report = {
   mode: "buffer-before-play",
 };
 console.log("start timing acceptance");
-const app = await extensionTest(true);
+const app = await extensionTest(true, false);
 const hard = setTimeout(
   () => app.context.close().catch(() => {}),
   Math.max(1, 650000 - (Date.now() - startedAtMs)),
@@ -33,16 +46,27 @@ const hard = setTimeout(
 try {
   const page = await app.context.newPage();
   await page.addInitScript(() => {
-    globalThis.audioEvidence = { chunks: 0, bytes: 0, ads: [], errors: [] };
+    globalThis.audioEvidence = {
+      chunks: 0,
+      bytes: 0,
+      ads: [],
+      errors: [],
+      adChunks: 0,
+      state: "content",
+    };
     window.addEventListener("message", (e) => {
       if (e.data?.tag !== "ai-lyrics-audio") return;
       const m = e.data,
         r = globalThis.audioEvidence;
       if (m.type === "chunk") {
+        if (r.state !== "content") r.adChunks++;
         r.chunks++;
         r.bytes += m.data.byteLength;
       }
-      if (m.type === "status") r.ads.push(m.state);
+      if (m.type === "status") {
+        r.ads.push(m.state);
+        r.state = m.state;
+      }
       if (m.type === "error")
         r.errors.push({ code: m.code, message: m.message });
     });
@@ -59,10 +83,36 @@ try {
     v.muted = true;
     v.currentTime = 0;
   });
+  report.durationMs = await page
+    .locator("video")
+    .first()
+    .evaluate((v) => Math.round(v.duration * 1000));
   await page.getByRole("button", { name: "貼入字幕", exact: true }).click();
   const text = await readFile(process.argv[2], "utf8");
   await page.getByLabel("字幕全文").fill(text);
   await page.getByRole("button", { name: "使用貼入字幕", exact: true }).click();
+  const originalRows = await page.locator(".editor-row").evaluateAll((xs) =>
+    xs.map((x) => ({
+      original: x.querySelector("textarea").value,
+      start: x.querySelector('input[aria-label$="開始秒數"]').value,
+      end: x.querySelector('input[aria-label$="結束秒數"]').value,
+    })),
+  );
+  if (excludeLines.some((n) => n > originalRows.length))
+    throw new Error("排除行號超出原文行數");
+  report.originalRows = originalRows;
+  report.excludedLines = excludeLines;
+  if (excludeLines.length) {
+    const cancel = page.getByRole("button", { name: "取消補時", exact: true });
+    if (await cancel.count()) await cancel.click();
+    for (const n of excludeLines)
+      await page
+        .locator(".editor-row")
+        .nth(n - 1)
+        .getByRole("checkbox", { name: "排除這句", exact: true })
+        .setChecked(true);
+    await page.getByRole("button", { name: "重新補時", exact: true }).click();
+  }
   const started = Date.now();
   for (let i = 0; i < 120; i++) {
     const begins = await page
@@ -80,8 +130,8 @@ try {
             {
               index: i,
               original,
-              startMs: Number(begins[i]) * 1000,
-              endMs: Number(ends[i]) * 1000,
+              startMs: Math.round(Number(begins[i]) * 1000),
+              endMs: Math.round(Number(ends[i]) * 1000),
             },
           ]
         : [],
@@ -92,6 +142,7 @@ try {
       alerts: await page.getByRole("alert").allTextContents(),
       aligned: aligned.length,
       total: rows.length,
+      activeTotal: rows.length - excludeLines.length,
       busy: await page
         .getByRole("button", { name: "取消補時", exact: true })
         .count(),
@@ -142,11 +193,41 @@ try {
       });
   }
   report.finishedAt = new Date().toISOString();
+  const alignedByIndex = new Map(
+    (report.aligned ?? []).map((row) => [row.index, row]),
+  );
+  const finalOriginals = await page
+    .getByRole("textbox", { name: "原文", exact: true })
+    .evaluateAll((xs) => xs.map((x) => x.value));
+  report.originalsPreserved =
+    originalRows.length === finalOriginals.length &&
+    originalRows.every((row, i) => finalOriginals[i] === row.original);
+  report.sourceTimesPreserved = originalRows.every((row, i) => {
+    const found = alignedByIndex.get(i);
+    return (
+      (row.start === "" ||
+        found?.startMs === Math.round(Number(row.start) * 1000)) &&
+      (row.end === "" || found?.endMs === Math.round(Number(row.end) * 1000))
+    );
+  });
+  report.wholeSongTimed = originalRows.every(
+    (_, i) =>
+      excludeLines.includes(i + 1) ||
+      (Number.isFinite(alignedByIndex.get(i)?.startMs) &&
+        Number.isFinite(alignedByIndex.get(i)?.endMs) &&
+        alignedByIndex.get(i).startMs >= 0 &&
+        alignedByIndex.get(i).endMs <= report.durationMs &&
+        alignedByIndex.get(i).endMs > alignedByIndex.get(i).startMs),
+  );
   report.passed =
-    report.aligned?.length >= 3 &&
+    originalRows.length > 0 &&
+    report.wholeSongTimed &&
+    report.sourceTimesPreserved &&
+    report.originalsPreserved &&
     !report.alerts.length &&
     !report.errors.length &&
-    !report.audio.errors.length;
+    !report.audio.errors.length &&
+    !report.audio.adChunks;
 } catch (e) {
   report.errors.push(e.message);
   console.log(e.message);

@@ -1,6 +1,28 @@
 import { it, expect, vi } from "vitest";
 import { LocalModelHost } from "../../src/acoustic/local-model-host";
 const key = { tabId: 1, videoId: "12345678901", draftRevision: 1, runId: "a" };
+it("converts bounded Japanese text to readings locally without requesting any audio", async () => {
+  const read = vi.fn();
+  const readings = vi.fn(async () => ["キミノコエ"]);
+  const host = new LocalModelHost(
+    {
+      ensureReady: async () => {},
+      transcribe: async () => "",
+      align: async () => [],
+      cancel: () => {},
+      readings,
+    },
+    read,
+  );
+  expect(
+    await host.infer({ key, operation: "readings", texts: ["君の声"] }),
+  ).toEqual(["キミノコエ"]);
+  expect(read).not.toHaveBeenCalled();
+  expect(readings).toHaveBeenCalledWith(["君の声"]);
+  await expect(
+    host.infer({ key, operation: "readings", texts: ["あ".repeat(4001)] }),
+  ).rejects.toThrow();
+});
 it("runs local inference on bounded PCM, never sends lyrics to an AI client", async () => {
   const session = {
     ensureReady: vi.fn(async () => {}),

@@ -7,6 +7,7 @@ import {
   type Segment,
 } from "./contracts";
 export interface AcousticInput {
+  verifyEvidence?: boolean;
   leadingText?: string;
   trailingText?: string;
   segment: Segment;
@@ -17,6 +18,7 @@ export interface AcousticBackend {
   initialize(): Promise<void>;
   align(input: AcousticInput): Promise<AlignedLine[]>;
   transcribe?(input: RecognitionInput): Promise<string>;
+  readings?(texts: string[]): Promise<string[]>;
   dispose(): Promise<void>;
   terminate(): void;
 }
@@ -99,6 +101,12 @@ export class ModelSession {
     return this.perform((backend) => {
       if (!backend.transcribe) throw new Error("模型不支援缺漏段落辨識");
       return backend.transcribe(input);
+    });
+  }
+  readings(texts: string[]): Promise<string[]> {
+    return this.perform((backend) => {
+      if (!backend.readings) throw new Error("模型不支援本機讀音轉換");
+      return backend.readings(texts);
     });
   }
   private async perform<T>(

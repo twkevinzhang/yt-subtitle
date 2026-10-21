@@ -2,14 +2,14 @@ import { chromium } from "@playwright/test";
 import { cp, readFile, writeFile, mkdtemp, rm, mkdir } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
-export async function extensionTest(models = false) {
+export async function extensionTest(models = false, fixturePermission = true) {
   const root = await mkdtemp(path.join(os.tmpdir(), "lyrics-sources-")),
     ext = path.join(root, "extension");
   await cp("dist", ext, { recursive: true });
   const manifest = JSON.parse(
     await readFile(path.join(ext, "manifest.json"), "utf8"),
   );
-  manifest.host_permissions.push("http://127.0.0.1/*");
+  if (fixturePermission) manifest.host_permissions.push("http://127.0.0.1/*");
   await writeFile(path.join(ext, "manifest.json"), JSON.stringify(manifest));
   if (models) {
     await mkdir(path.join(ext, "models/onnx-community"), { recursive: true });

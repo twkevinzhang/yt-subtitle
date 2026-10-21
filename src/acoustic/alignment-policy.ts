@@ -18,6 +18,40 @@ export interface AlignmentProgress {
     | "cancelled";
   error?: string;
 }
+/** Search actual endpoint-bounded gaps; no lyric duration is guessed. */
+export function missingAudioRanges(
+  lines: SubtitleLine[],
+  durationMs: number,
+): TimeRange[] {
+  const gaps: TimeRange[] = [];
+  let edge = 0,
+    pending = false,
+    startMs = 0;
+  const add = (endMs: number) => {
+    for (let at = startMs; at < endMs; at += 24000)
+      gaps.push({ startMs: at, endMs: Math.min(endMs, at + 26000) });
+  };
+  for (const line of lines) {
+    if (line.excluded) continue;
+    if (line.startMs !== undefined && line.endMs !== undefined) {
+      if (pending) add(Math.min(durationMs, line.startMs));
+      edge = Math.max(edge, line.endMs);
+      pending = false;
+    } else {
+      if (!pending) {
+        startMs = Math.max(edge, line.startMs ?? 0);
+        pending = true;
+      }
+      if (line.endMs !== undefined) {
+        add(Math.min(durationMs, line.endMs));
+        edge = Math.max(edge, line.endMs);
+        pending = false;
+      }
+    }
+  }
+  if (pending) add(durationMs);
+  return gaps;
+}
 export function createAlignmentPolicy(mode: AlignmentMode, durationMs: number) {
   const covered = (range: TimeRange, ready: TimeRange[]) =>
     ready.some((r) => r.startMs <= range.startMs && r.endMs >= range.endMs);
@@ -42,8 +76,7 @@ export function createAlignmentPolicy(mode: AlignmentMode, durationMs: number) {
           mode === "complete-before-use"
             ? a.startMs - b.startMs
             : (a.startMs >= currentStart ? 0 : 1) -
-                (b.startMs >= currentStart ? 0 : 1) ||
-              a.startMs - b.startMs,
+                (b.startMs >= currentStart ? 0 : 1) || a.startMs - b.startMs,
         );
     },
     mayPublish: (progress: AlignmentProgress) =>

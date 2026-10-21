@@ -3,6 +3,299 @@ import { runSubtitleAlignment } from "../../src/acoustic/subtitle-work";
 import { normalizeSubtitle } from "../../src/lyrics/subtitle-source";
 import { RangeAudioSource } from "../../src/acoustic/progressive-audio-source";
 const key = { runId: "a", tabId: 0, videoId: "12345678901", draftRevision: 1 };
+it("can jointly correct a neighboring estimate created in this run when it squeezed a missing vocal, while retaining every incoming endpoint", async () => {
+  const lines = normalizeSubtitle(
+    "before\nmissed vocal\na uniquely recognized independent anchor\nafter",
+    { kind: "paste" },
+    10000,
+  );
+  Object.assign(lines[0], { startMs: 0, endMs: 2000, status: "anchor" });
+  Object.assign(lines[3], { startMs: 6000, endMs: 10000, status: "anchor" });
+  const audio = new RangeAudioSource(10000, () => {});
+  audio.append({
+    generation: 0,
+    startMs: 0,
+    sampleRate: 16000,
+    pcm: new Float32Array(160000).fill(0.1),
+  });
+  const verify = vi.fn(async ({ segment }: any) =>
+    segment.lineIds.includes("l2")
+      ? [
+          { ...lines[1], startMs: 3000, endMs: 4000 },
+          { ...lines[2], startMs: 4000, endMs: 5000 },
+        ]
+      : [],
+  );
+  const result = await runSubtitleAlignment(
+    {
+      key,
+      lines,
+      durationMs: 10000,
+      mode: "background",
+      signal: new AbortController().signal,
+    },
+    {
+      source: () => audio,
+      model: {
+        prepare: async () => {},
+        cancel: async () => {},
+        transcribe: async () => lines[2].original,
+        align: async () => [{ ...lines[2], startMs: 2500, endMs: 5000 }],
+        verify,
+      },
+      positionMs: () => 0,
+      publish: () => {},
+    },
+  );
+  expect(result.phase).toBe("complete");
+  expect(result.lines.map((l) => [l.startMs, l.endMs])).toEqual([
+    [0, 2000],
+    [3000, 4000],
+    [4000, 5000],
+    [6000, 10000],
+  ]);
+  expect(result.ready).toEqual([
+    { startMs: 0, endMs: 2000 },
+    { startMs: 3000, endMs: 5000 },
+    { startMs: 6000, endMs: 10000 },
+  ]);
+  expect(
+    verify.mock.calls.some(([input]) =>
+      input.segment.contextLineIds.includes("l0"),
+    ),
+  ).toBe(true);
+});
+it("uses only readable terminal PCM for acoustic verification without padding codec tail samples", async () => {
+  const lines = normalizeSubtitle(
+    "before\nsung ending",
+    { kind: "paste" },
+    10000,
+  );
+  Object.assign(lines[0], { startMs: 0, endMs: 2000, status: "anchor" });
+  const audio = new RangeAudioSource(10000, () => {});
+  audio.append({
+    generation: 0,
+    startMs: 0,
+    sampleRate: 16000,
+    pcm: new Float32Array(9987 * 16).fill(0.1),
+  });
+  audio.confirmTail(0);
+  const verify = vi.fn(async ({ pcm, segment }: any) => {
+    expect(segment.endMs).toBe(9987);
+    expect(pcm.length).toBe(7987 * 16);
+    return [{ ...lines[1], startMs: 3000, endMs: 8000 }];
+  });
+  const result = await runSubtitleAlignment(
+    {
+      key,
+      lines,
+      durationMs: 10000,
+      mode: "background",
+      signal: new AbortController().signal,
+    },
+    {
+      source: () => audio,
+      model: {
+        prepare: async () => {},
+        cancel: async () => {},
+        transcribe: async () => "unrelated",
+        align: async () => [],
+        verify,
+      },
+      positionMs: () => 0,
+      publish: () => {},
+    },
+  );
+  expect(result.phase).toBe("complete");
+});
+it("discards acoustic gap verification across an ad reset and verifies fresh PCM before publishing", async () => {
+  const lines = normalizeSubtitle(
+    "before\nmisspelled sung line\nafter",
+    { kind: "paste" },
+    10000,
+  );
+  Object.assign(lines[0], { startMs: 0, endMs: 2000, status: "anchor" });
+  Object.assign(lines[2], { startMs: 6000, endMs: 10000, status: "anchor" });
+  const audio = new RangeAudioSource(10000, () => {});
+  const append = () =>
+    audio.append({
+      generation: audio.generation,
+      startMs: 0,
+      sampleRate: 16000,
+      pcm: new Float32Array(160000).fill(0.1),
+    });
+  append();
+  let calls = 0;
+  const verify = vi.fn(async () => {
+    if (calls++ === 0) {
+      audio.reset(1);
+      append();
+      return [{ ...lines[1], startMs: 2100, endMs: 2200 }];
+    }
+    return [{ ...lines[1], startMs: 3000, endMs: 4000 }];
+  });
+  const result = await runSubtitleAlignment(
+    {
+      key,
+      lines,
+      durationMs: 10000,
+      mode: "background",
+      signal: new AbortController().signal,
+    },
+    {
+      source: () => audio,
+      model: {
+        prepare: async () => {},
+        cancel: async () => {},
+        transcribe: async () => "unrelated",
+        align: async () => [],
+        verify,
+      },
+      positionMs: () => 0,
+      publish: () => {},
+    },
+  );
+  expect(verify).toHaveBeenCalledTimes(2);
+  expect(result.lines[1]).toMatchObject({ startMs: 3000, endMs: 4000 });
+  expect(result.generation).toBe(1);
+});
+it("checks unresolved text acoustically inside neighboring endpoint bounds, accepts only verified rows, and keeps the original locks", async () => {
+  const lines = normalizeSubtitle(
+    "before\nsung but ASR misspelled\nunsung control\nafter",
+    { kind: "paste" },
+    10000,
+  );
+  Object.assign(lines[0], { startMs: 0, endMs: 2000, status: "anchor" });
+  Object.assign(lines[3], { startMs: 6000, endMs: 10000, status: "anchor" });
+  const audio = new RangeAudioSource(10000, () => {});
+  audio.append({
+    generation: 0,
+    startMs: 0,
+    sampleRate: 16000,
+    pcm: new Float32Array(160000).fill(0.1),
+  });
+  const verify = vi.fn(async ({ segment }: any) =>
+    segment.lineIds.includes("l1")
+      ? [{ ...lines[1], startMs: 2500, endMs: 4000 }]
+      : [],
+  );
+  const model = {
+    prepare: async () => {},
+    cancel: async () => {},
+    transcribe: async () => "unrelated ASR",
+    align: async () => [],
+    verify,
+  };
+  const result = await runSubtitleAlignment(
+    {
+      key,
+      lines,
+      durationMs: 10000,
+      mode: "background",
+      signal: new AbortController().signal,
+    },
+    { source: () => audio, model, positionMs: () => 0, publish: () => {} },
+  );
+  expect(result.lines[0]).toMatchObject({ startMs: 0, endMs: 2000 });
+  expect(result.lines[1]).toMatchObject({ startMs: 2500, endMs: 4000 });
+  expect(result.lines[2].startMs).toBeUndefined();
+  expect(result.lines[3]).toMatchObject({ startMs: 6000, endMs: 10000 });
+  expect(result.phase).toBe("partial");
+  expect(verify.mock.calls[0][0].segment).toMatchObject({
+    startMs: 2000,
+    endMs: 6000,
+    lineIds: ["l1", "l2"],
+  });
+});
+it("recognizes a missing line inside its actual neighboring endpoint bounds after a coarse lookup fails", async () => {
+  const lines = normalizeSubtitle(
+    "known before\nhello world\nknown after",
+    { kind: "paste" },
+    10000,
+  );
+  Object.assign(lines[0], { startMs: 0, endMs: 2000, status: "anchor" });
+  Object.assign(lines[2], { startMs: 5000, endMs: 10000, status: "anchor" });
+  const audio = new RangeAudioSource(10000, () => {});
+  audio.append({
+    generation: 0,
+    startMs: 0,
+    sampleRate: 16000,
+    pcm: new Float32Array(160000).fill(0.1),
+  });
+  const model = {
+    prepare: async () => {},
+    cancel: async () => {},
+    transcribe: vi.fn(async ({ pcm }: any) =>
+      pcm.length === 48000 ? "hello world" : "unrelated weather",
+    ),
+    align: async () => [{ ...lines[1], startMs: 3000, endMs: 4000 }],
+  };
+  const result = await runSubtitleAlignment(
+    {
+      key,
+      lines,
+      durationMs: 10000,
+      mode: "background",
+      signal: new AbortController().signal,
+    },
+    { source: () => audio, model, positionMs: () => 0, publish: () => {} },
+  );
+  expect(result.phase).toBe("complete");
+  expect(result.lines.map((l) => [l.startMs, l.endMs])).toEqual([
+    [0, 2000],
+    [3000, 4000],
+    [5000, 10000],
+  ]);
+  expect(model.transcribe).toHaveBeenCalledTimes(2);
+});
+it("revisits an ambiguous earlier window after learning a later anchor, without rerunning ASR", async () => {
+  const lines = normalizeSubtitle(
+    "hello world\nunique bridge\nhello world",
+    { kind: "paste" },
+    48000,
+  );
+  const audio = new RangeAudioSource(48000, () => {});
+  const pcm = new Float32Array(48000 * 16).fill(0.1);
+  pcm.fill(0.2, 24000 * 16);
+  audio.append({ generation: 0, startMs: 0, sampleRate: 16000, pcm });
+  const model = {
+    prepare: async () => {},
+    cancel: async () => {},
+    transcribe: vi.fn(async ({ pcm }: any) =>
+      pcm[0] < 0.15 ? "hello world" : "unique bridge",
+    ),
+    align: vi.fn(async ({ segment }: any) =>
+      segment.lineIds.map((id: string) => ({
+        ...lines.find((l) => l.id === id)!,
+        startMs: id === "l1" ? 30000 : 2000,
+        endMs: id === "l1" ? 34000 : 4000,
+      })),
+    ),
+  };
+  const result = await runSubtitleAlignment(
+    {
+      key,
+      lines,
+      durationMs: 48000,
+      mode: "background",
+      signal: new AbortController().signal,
+    },
+    { source: () => audio, model, positionMs: () => 0, publish: () => {} },
+  );
+  expect(result.lines[0]).toMatchObject({ startMs: 2000, endMs: 4000 });
+  expect(result.lines[1]).toMatchObject({ startMs: 30000, endMs: 34000 });
+  expect(result.lines[2].startMs).toBeUndefined();
+  expect(
+    model.transcribe.mock.calls.filter(
+      ([input]) => input.pcm.length >= 24000 * 16,
+    ),
+  ).toHaveLength(2);
+  expect(
+    model.transcribe.mock.calls.filter(
+      ([input]) => input.pcm.length < 24000 * 16,
+    ),
+  ).toHaveLength(1);
+});
 it("does not initialize audio or a model for complete source times", async () => {
   const model = {
     prepare: vi.fn(),
