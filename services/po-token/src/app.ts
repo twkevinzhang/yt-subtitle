@@ -18,8 +18,10 @@ export function createApp(options: {
   generate: Generate;
   authorize: (request: Request) => boolean | Promise<boolean>;
   deadlineMs?: number;
+  maxGenerationsPerMinute?: number;
 }) {
   let busy = false;
+  let generations: number[] = [];
   return async (request: Request): Promise<Response> => {
     const path = new URL(request.url).pathname;
     if (path === "/healthz" && request.method === "GET")
@@ -66,6 +68,11 @@ export function createApp(options: {
       return error(400, "invalid_request");
     if (busy) return error(429, "busy");
     if (request.signal.aborted) return error(499, "cancelled");
+    const now = Date.now();
+    generations = generations.filter((time) => time > now - 60_000);
+    if (generations.length >= (options.maxGenerationsPerMinute ?? 6))
+      return error(429, "generation_limit");
+    generations.push(now);
     busy = true;
     const controller = new AbortController();
     let timedOut = false;

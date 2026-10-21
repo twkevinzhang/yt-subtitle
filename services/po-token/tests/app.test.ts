@@ -13,6 +13,18 @@ const request = (body: unknown = { videoId }) =>
     body: JSON.stringify(body),
   });
 describe("Token HTTP API", () => {
+  it("bounds anonymous generation frequency before starting more workers", async () => {
+    const generate = vi.fn().mockResolvedValue(result);
+    const app = createApp({
+      generate,
+      authorize: () => true,
+      maxGenerationsPerMinute: 2,
+    });
+    expect((await app(request())).status).toBe(200);
+    expect((await app(request())).status).toBe(200);
+    expect((await app(request())).status).toBe(429);
+    expect(generate).toHaveBeenCalledTimes(2);
+  });
   it("does not call the provider for health checks or invalid input", async () => {
     const generate = vi.fn();
     const app = createApp({ generate, authorize: () => true });

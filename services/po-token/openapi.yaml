@@ -6,11 +6,12 @@ paths:
   /healthz:
     get:
       responses:
-        '200':
+        "200":
           description: Process is alive; no upstream calls
   /v1/po-token:
     post:
-      security: [{ googleIdentity: [] }]
+      description: Public anonymous deployment. Private deployments enforce IAM at the Cloud Run gateway.
+      security: []
       requestBody:
         required: true
         content:
@@ -20,9 +21,9 @@ paths:
               additionalProperties: false
               required: [videoId]
               properties:
-                videoId: { type: string, pattern: '^[A-Za-z0-9_-]{11}$' }
+                videoId: { type: string, pattern: "^[A-Za-z0-9_-]{11}$" }
       responses:
-        '200':
+        "200":
           description: Video-bound token; Cache-Control no-store
           content:
             application/json:
@@ -32,10 +33,16 @@ paths:
                 required: [videoId, poToken, expiresAt]
                 properties:
                   videoId: { type: string }
-                  poToken: { type: string, maxLength: 4096, pattern: '^[A-Za-z0-9_-]+={0,2}$' }
+                  poToken:
+                    {
+                      type: string,
+                      maxLength: 4096,
+                      pattern: "^[A-Za-z0-9_-]+={0,2}$",
+                    }
                   expiresAt: { type: string, format: date-time }
         default:
           description: Redacted error with error.code and error.message
 components:
   securitySchemes:
-    googleIdentity: { type: http, scheme: bearer, bearerFormat: Google identity token }
+    googleIdentity:
+      { type: http, scheme: bearer, bearerFormat: Google identity token }

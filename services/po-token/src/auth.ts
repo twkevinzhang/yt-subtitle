@@ -1,4 +1,4 @@
-// Cloud Run's IAM invoker gate authenticates requests before they reach the
-// container. Deployment verification must reject invoker-iam-disabled and public
-// allUsers/allAuthenticatedUsers bindings. Do not expose the container directly.
-export const authorizeIamRequest = () => true;
+// In IAM mode Cloud Run verifies the caller before it reaches the container.
+// Anonymous mode intentionally allows public use; deployment must separately
+// authorize that mode. Neither CORS nor a key embedded in an extension is auth.
+export const authorizeRequest = () => true;

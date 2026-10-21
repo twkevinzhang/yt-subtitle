@@ -11,11 +11,13 @@ Responses are no-store. A single worker handles one request and is terminated
 on cancellation, completion or the 20-second deadline. No persistent token cache,
 no media proxy, no background CPU and no logged tokens.
 
-The container **requires Cloud Run IAM invocation authentication**; IAM is enforced
-before requests reach this application. Do not grant allUsers or
-allAuthenticatedUsers, disable the invoker IAM check, or publicly expose this
-container elsewhere. The caller supplies a short-lived identity token for the
-service audience. No Google account credentials are embedded in the extension.
+The public extension uses anonymous HTTPS invocation (`AUTH_MODE=anonymous`),
+explicitly selected by the owner. No login or shared secret is embedded in the
+extension. Cloud Run's invoker IAM check is disabled for this deployment.
+Private deployments may instead retain the default `AUTH_MODE=iam` and require
+gateway IAM authentication. The application itself does not validate IAM tokens.
+Generation is limited to one active worker and six starts per rolling minute
+per process. This resets on restart and is neither a global quota nor a billing cap.
 
 See `../../infra/cloud-run/po-token/` for safety-gated deployment and inventory.
 Third-party adapted provider code is GPL-3.0-only; see vendor/bgutil.
