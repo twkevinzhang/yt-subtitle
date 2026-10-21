@@ -133,6 +133,86 @@ it("bounds retained compressed packets and clears them on generation reset", asy
   bounded.dispose();
   expect(bounded.bufferedBytes()).toBe(0);
 });
+it.each(["between native appends", "during a native queue wait"])(
+  "decodes retained earlier packets when the window advances %s",
+  async (advanceAt) => {
+    setup().dispose();
+    if (advanceAt === "during a native queue wait") {
+      class QueuedDecoder extends Decoder {
+        decodeQueueSize = 0;
+        events = new EventTarget();
+        addEventListener(type: string, listener: EventListener) {
+          this.events.addEventListener(type, listener);
+        }
+        removeEventListener(type: string, listener: EventListener) {
+          this.events.removeEventListener(type, listener);
+        }
+        decode(packet: any) {
+          this.decodeQueueSize++;
+          queueMicrotask(() => {
+            super.decode(packet);
+            this.decodeQueueSize--;
+            this.events.dispatchEvent(new Event("dequeue"));
+          });
+        }
+      }
+      vi.stubGlobal("AudioDecoder", QueuedDecoder);
+    }
+    let wanted = { startMs: 0, endMs: 1000 };
+    const ranges: { startMs: number; endMs: number }[] = [];
+    const decoder = createProgressiveDecoder(
+      (range) => {
+        const endMs = range.startMs + range.pcm.length / 16;
+        const last = ranges.at(-1);
+        if (last && last.endMs === range.startMs) last.endMs = endMs;
+        else ranges.push({ startMs: range.startMs, endMs });
+        expect(range.pcm.every((sample) => sample === 0.25)).toBe(true);
+        if (advanceAt === "during a native queue wait" && endMs >= 1000)
+          wanted = { startMs: 1000, endMs: 7000 };
+      },
+      (error) => {
+        throw error;
+      },
+      () => wanted,
+    );
+    const middle = Math.floor(fixture.length / 2);
+    await decoder.push(chunk(fixture.slice(0, middle)));
+    expect(decoder.bufferedBytes()).toBeGreaterThan(0);
+    wanted = { startMs: 1000, endMs: 7000 };
+    // Already queued native appends can run before the caller drains retained packets.
+    await decoder.push(chunk(fixture.slice(middle), 1));
+    await decoder.decodeRequested();
+    expect(ranges.filter((range) => range.endMs > 1000)).toEqual([
+      { startMs: 14.5, endMs: 7134.5 },
+    ]);
+    decoder.dispose();
+  },
+);
+it("preserves a real encoded timestamp gap after draining retained packets", async () => {
+  setup().dispose();
+  let wanted = { startMs: 0, endMs: 1000 };
+  const decoder = createProgressiveDecoder(
+    (range) => outputs.push(range),
+    (error) => {
+      throw error;
+    },
+    () => wanted,
+  );
+  await decoder.push(chunk(fixture));
+  wanted = { startMs: 0, endMs: 11000 };
+  // A new Cluster at 10 seconds, beyond the fixture's eight-second audio.
+  const laterCluster = new Uint8Array([
+    0x1f, 0x43, 0xb6, 0x75, 0xff, 0xe7, 0x82, 0x27, 0x10, 0xa3, 0x86, 0x81, 0,
+    0, 0x80, 0xf8, 0xff,
+  ]);
+  await decoder.push(chunk(laterCluster, 1));
+  await decoder.decodeRequested();
+  const previous = outputs.at(-2);
+  expect(previous.startMs + previous.pcm.length / 16).toBeLessThan(8100);
+  expect(outputs.at(-1).startMs).toBe(9993.5);
+  expect(decoders).toHaveLength(2);
+  decoder.dispose();
+});
 it("defers native EOF flush while future packets remain to avoid repeated Opus priming", async () => {
   setup().dispose();
   let wanted = { startMs: 0, endMs: 1000 };

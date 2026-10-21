@@ -319,7 +319,13 @@ export function createProgressiveDecoder(
         await configure;
         if (expected !== token || disposed)
           throw new Error("音訊 generation 已改變");
-        const current = packets;
+        // A window can advance while previously queued native appends are still
+        // draining. Decode their older retained packets before newer input can
+        // advance lastInputEndUs and make those packets look like duplicates.
+        const current = [...retained, ...packets].sort(
+          (a, b) => a.timestampUs - b.timestampUs,
+        );
+        clearRetained();
         packets = [];
         await decodePackets(current, expected);
       });
