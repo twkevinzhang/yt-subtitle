@@ -133,9 +133,12 @@ it("presents route results independently and only adopts the selected candidate"
   const ai = await screen.findByRole("button", { name: "AI 找字幕" });
   await waitFor(() => expect(ai.hasAttribute("disabled")).toBe(false));
   fireEvent.click(ai);
-  const web = await screen.findByRole("region", { name: "全網搜尋" });
+  fireEvent.click(await screen.findByRole("tab", { name: "YouTube 留言區" }));
+  await screen.findByText("留言區不可用");
+  fireEvent.click(screen.getByRole("tab", { name: "全網搜尋" }));
+  const web = await screen.findByRole("tabpanel", { name: "全網搜尋" });
   await within(web).findByText("web — artist");
-  expect(screen.getByText("留言區不可用")).toBeTruthy();
+
   expect(overlay.setDraftPreview).not.toHaveBeenCalled();
   fireEvent.click(within(web).getByRole("button", { name: "使用這個版本" }));
   await waitFor(() =>

@@ -123,6 +123,91 @@ export function createAiClient(
   }
   return {
     completeText,
+    requestBody(
+      messages: ChatMessage[],
+      search: boolean,
+    ): Record<string, unknown> {
+      return search
+        ? {
+            model: provider?.model ?? "",
+            input: messages,
+            tools: [{ type: "web_search" }],
+            tool_choice: { type: "web_search" },
+            include: ["web_search_call.action.sources"],
+            stream: false,
+            store: false,
+          }
+        : { model: provider?.model ?? "", messages, stream: false };
+    },
+    async inspectRequest(
+      endpoint: "responses" | "chat/completions",
+      body: Record<string, unknown>,
+      signal: AbortSignal,
+    ) {
+      if (body.stream === true)
+        throw new Error("目前僅支援 stream: false，請修改後重送");
+      const response = (await call(
+        endpoint,
+        signal,
+        body,
+        true,
+      )) as SearchHttpResult;
+      const data = response.body as any;
+      const text =
+        endpoint === "chat/completions"
+          ? data?.choices?.[0]?.message?.content
+          : (Array.isArray(data?.output) ? data.output : [])
+              .filter((x: any) => x.type === "message")
+              .flatMap((x: any) => x.content ?? [])
+              .filter((x: any) => x.type === "output_text")
+              .map((x: any) => x.text)
+              .join("\n");
+      const calls = (Array.isArray(data?.output) ? data.output : []).filter(
+        (x: any) => x.type === "web_search_call" && x.status === "completed",
+      );
+      const parts = (Array.isArray(data?.output) ? data.output : []).flatMap(
+        (x: any) => x.content ?? [],
+      );
+      const urls = [
+        ...calls.flatMap(
+          (x: any) => x.action?.sources?.map((s: any) => s.url) ?? [],
+        ),
+        ...parts.flatMap(
+          (x: any) =>
+            x.annotations
+              ?.filter((a: any) => a.type === "url_citation")
+              .map((a: any) => a.url) ?? [],
+        ),
+      ].filter((url: unknown): url is string => {
+        try {
+          const u = new URL(String(url));
+          return u.protocol === "https:" && !u.username && !u.password;
+        } catch {
+          return false;
+        }
+      });
+      return {
+        text: typeof text === "string" ? text : "",
+        rawResponse: response.body,
+        httpStatus: response.status,
+        error:
+          response.error ??
+          (response.status === null ||
+          response.status < 200 ||
+          response.status >= 300
+            ? "AI 服務回應 HTTP " + response.status
+            : undefined),
+        evidence: {
+          status: calls.length
+            ? ("verified" as const)
+            : ("unverified" as const),
+          citations: [...new Set<string>(urls)],
+          ...(calls.length
+            ? { toolEvidence: "web_search_call:completed" }
+            : {}),
+        },
+      };
+    },
     async testSearch(
       body: Record<string, unknown>,
       signal: AbortSignal,

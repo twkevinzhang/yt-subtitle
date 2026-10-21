@@ -152,6 +152,19 @@ const msg = z.discriminatedUnion("type", [
     video: videoSchema,
     consent: consentSchema,
   }),
+  z.object({
+    type: z.literal("search-route-retry"),
+    id: z.string(),
+    route: z.enum(["configured", "comments", "web"]),
+    body: z
+      .record(z.unknown())
+      .refine((v) => JSON.stringify(v).length <= 500000, "請求超過 500 KB"),
+  }),
+  z.object({
+    type: z.literal("search-route-cancel"),
+    id: z.string(),
+    route: z.enum(["configured", "comments", "web"]),
+  }),
   z.object({ type: z.literal("search-group"), id: z.string() }),
   z.object({ type: z.literal("search-cancel"), id: z.string() }),
   z.object({ type: z.literal("read-manual-track"), trackId: z.string() }),

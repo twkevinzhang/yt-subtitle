@@ -109,19 +109,21 @@ test("Brave: three independent search requests, route failure isolation and expl
     await page.goto("https://www.youtube.com/watch?v=12345678901");
     await page.getByRole("button", { name: "AI 歌詞", exact: true }).click();
     await page.getByRole("button", { name: "AI 找字幕", exact: true }).click();
-    const configured = page.getByRole("region", {
+    const configured = page.getByRole("tabpanel", {
         name: "設定的歌詞來源",
         exact: true,
       }),
-      web = page.getByRole("region", { name: "全網搜尋", exact: true });
+      web = page.getByRole("tabpanel", { name: "全網搜尋", exact: true });
     await expect(
       configured.getByRole("button", { name: "使用這個版本" }),
     ).toBeVisible();
+    await page.getByRole("tab", { name: "全網搜尋" }).click();
     await expect(
       web.getByRole("button", { name: "使用這個版本" }),
     ).toBeVisible();
+    await page.getByRole("tab", { name: "YouTube 留言區" }).click();
     await expect(
-      page.getByRole("region", { name: "YouTube 留言區" }),
+      page.getByRole("tabpanel", { name: "YouTube 留言區" }),
     ).toContainText("503");
     expect(requests).toHaveLength(3);
     expect(
@@ -131,17 +133,70 @@ test("Brave: three independent search requests, route failure isolation and expl
           (r.messages ? !r.tools : r.tools[0].type === "web_search"),
       ),
     ).toBe(true);
+    await page.getByRole("tab", { name: "全網搜尋" }).click();
+    await web
+      .locator("summary")
+      .filter({ hasText: /^請求內容$/ })
+      .click();
+    await web.getByRole("button", { name: "完整 JSON", exact: true }).click();
+    const editor = web.getByRole("textbox", { name: "完整 API JSON" });
+    const edited = {
+      ...JSON.parse(await editor.inputValue()),
+      temperature: 0.25,
+      custom: { keep: true },
+    };
+    await editor.fill(JSON.stringify(edited, null, 2));
+    await page.getByRole("tab", { name: "設定的歌詞來源" }).click();
+    await page.getByRole("tab", { name: "全網搜尋" }).click();
+    await expect(editor).toHaveValue(JSON.stringify(edited, null, 2));
+    await web.getByRole("button", { name: "重新發送此來源" }).click();
+    await expect(
+      web.getByRole("button", { name: "重新發送此來源" }),
+    ).toBeVisible();
+    expect(requests).toHaveLength(4);
+    expect(requests[3]).toEqual(edited);
+    await web
+      .locator("summary")
+      .filter({ hasText: /^AI 原始回覆$/ })
+      .click();
+    await expect(
+      web
+        .locator("details[open]")
+        .filter({ has: page.locator("summary", { hasText: /^AI 原始回覆$/ }) })
+        .locator("pre"),
+    ).toBeVisible();
+    await page.setViewportSize({ width: 483, height: 850 });
+    await editor.scrollIntoViewIfNeeded();
+    const panel = page.getByRole("region", { name: "AI 歌詞工作面板" });
+    expect(await panel.evaluate((e) => e.scrollWidth <= e.clientWidth)).toBe(
+      true,
+    );
     await mkdir("artifacts/subtitle-sources", { recursive: true });
-    await page.screenshot({
-      path: "artifacts/subtitle-sources/search.png",
-      fullPage: true,
+    await page.evaluate(() =>
+      document.documentElement.setAttribute("dark", ""),
+    );
+    await expect(panel).toHaveCSS("color", "rgb(241, 241, 241)");
+    await editor.fill(JSON.stringify(edited, null, 2));
+    await panel.screenshot({
+      path: "artifacts/subtitle-sources/request-editor.png",
     });
+    await panel.locator(".panel-body").evaluate((e) => {
+      e.scrollTop = 0;
+    });
+    await panel.screenshot({ path: "artifacts/subtitle-sources/search.png" });
+    const currentTab = page.getByRole("tab", { name: "全網搜尋" });
+    await currentTab.focus();
+    await currentTab.press("ArrowLeft");
+    await expect(
+      page.getByRole("tab", { name: "YouTube 留言區" }),
+    ).toBeFocused();
+    await page.getByRole("tab", { name: "全網搜尋" }).click();
     await web.getByRole("button", { name: "使用這個版本" }).click();
     await expect(
       page.getByRole("textbox", { name: "原文", exact: true }),
     ).toHaveValue("web lyrics");
     await expect(page.getByLabel("第 1 句開始秒數")).toHaveValue("2");
-    expect(requests).toHaveLength(3);
+    expect(requests).toHaveLength(4);
   } finally {
     await app.close();
     server.closeAllConnections();

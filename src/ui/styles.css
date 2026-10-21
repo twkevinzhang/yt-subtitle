@@ -896,3 +896,207 @@ html.options-page body {
 .stop-actions button:first-child {
   border-color: var(--link);
 }
+
+/* Search is a source workbench: quiet chrome, explicit request boundaries. */
+.panel-title {
+  flex-wrap: nowrap;
+  min-width: 0;
+}
+.panel-title .back-button {
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  flex-shrink: 0;
+  font-size: 22px;
+}
+.search-workspace,
+.search-route {
+  min-width: 0;
+}
+.search-tabs {
+  display: flex;
+  overflow-x: auto;
+  gap: 0;
+  border-bottom: 1px solid var(--border);
+}
+.search-tabs [role="tab"] {
+  flex: 1 0 auto;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--muted);
+  padding: 10px 9px;
+  border-bottom: 3px solid transparent;
+  white-space: nowrap;
+  font-size: 13px;
+}
+.search-tabs [aria-selected="true"] {
+  color: var(--link);
+  border-bottom-color: var(--link);
+  font-weight: 600;
+}
+.tab-state {
+  display: inline-block;
+  font-size: 11px;
+  margin-left: 5px;
+}
+.tab-state:empty {
+  display: none;
+}
+.search-route {
+  padding-top: 8px;
+}
+.search-route[hidden] {
+  display: none;
+}
+.search-route > details {
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+  margin-top: 16px;
+}
+.search-route summary {
+  font-weight: 600;
+  padding: 4px 0;
+}
+.request-endpoint {
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.editor-switch {
+  gap: 0;
+  margin: 12px 0;
+}
+.editor-switch button {
+  border-radius: 0;
+  flex: 1;
+}
+.editor-switch button:first-child {
+  border-radius: 6px 0 0 6px;
+}
+.editor-switch button:last-child {
+  border-radius: 0 6px 6px 0;
+}
+.editor-switch [aria-pressed="true"] {
+  color: var(--link);
+  background: var(--notice);
+  border-color: var(--link);
+}
+.request-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--muted);
+  margin: 10px 0;
+}
+.request-form input,
+.request-form textarea {
+  color: var(--text);
+  font-size: 14px;
+}
+.request-form textarea {
+  min-height: 140px;
+  line-height: 1.6;
+}
+.request-message {
+  border-left: 2px solid var(--border);
+  padding-left: 12px;
+  margin-top: 18px;
+}
+.request-actions {
+  justify-content: space-between;
+  margin-top: 14px;
+}
+.request-editor > .muted {
+  font-size: 12px;
+}
+.json-tools {
+  margin: 12px 0 8px;
+}
+.json-tools button {
+  padding: 5px 10px;
+  font-size: 12px;
+}
+.json-code {
+  position: relative;
+  height: 320px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--field);
+  overflow: hidden;
+}
+.json-code textarea,
+.json-code .json-highlight {
+  position: absolute;
+  left: 42px;
+  top: 0;
+  width: calc(100% - 42px);
+  height: 100%;
+  min-height: 0;
+  max-height: none;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  padding: 12px;
+  font:
+    13px/21px Consolas,
+    monospace;
+  white-space: pre;
+  overflow-wrap: normal;
+  tab-size: 2;
+  overflow: auto;
+}
+.json-code .json-highlight {
+  pointer-events: none;
+  color: var(--text);
+}
+.json-code textarea {
+  background: transparent;
+  color: transparent;
+  caret-color: var(--text);
+  resize: none;
+}
+.json-code textarea::selection {
+  background: var(--notice);
+  color: var(--text);
+}
+.json-code:focus-within {
+  outline: 2px solid var(--link);
+  outline-offset: 2px;
+}
+.json-code textarea:focus-visible {
+  outline: none;
+}
+.json-lines {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 42px;
+  height: 100%;
+  padding: 12px 7px;
+  font:
+    12px/21px Consolas,
+    monospace;
+  color: var(--muted);
+  text-align: right;
+  overflow: hidden;
+  border-right: 1px solid var(--border);
+  user-select: none;
+}
+.json-key {
+  color: var(--link);
+}
+.json-string {
+  color: var(--success-text);
+}
+.json-value {
+  color: var(--pending);
+}
+@media (forced-colors: active) {
+  .json-code textarea {
+    color: CanvasText;
+  }
+  .json-highlight {
+    visibility: hidden;
+  }
+}

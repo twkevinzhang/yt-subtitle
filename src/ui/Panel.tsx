@@ -408,7 +408,19 @@ export function Panel({
       aria-label="AI 歌詞工作面板"
     >
       <header>
-        <h2>AI 歌詞</h2>
+        <div className="row panel-title">
+          {view !== "lyrics" && (
+            <button
+              className="back-button"
+              aria-label="← 返回歌詞"
+              title="返回歌詞"
+              onClick={() => setView("lyrics")}
+            >
+              ←
+            </button>
+          )}
+          <h2>AI 歌詞</h2>
+        </div>
         <div className="row">
           <button onClick={() => void request({ type: "open-options" })}>
             設定
@@ -483,15 +495,39 @@ export function Panel({
               </button>
             </div>
           }
-          {view !== "lyrics" && (
-            <button className="back-button" onClick={() => setView("lyrics")}>
-              ← 返回歌詞
-            </button>
-          )}
+
           {view === "search" && (
             <>
               <h3>三路字幕搜尋</h3>
-              <SearchGroups snapshot={search} onSelect={choose} />
+              <SearchGroups
+                key={search?.id ?? "loading"}
+                snapshot={search}
+                onSelect={choose}
+                onRetry={async (route, body) => {
+                  if (!search) return;
+                  const id = search.id;
+                  const result = await request<
+                    SearchGroupSnapshot["routes"][SearchRoute]
+                  >({ type: "search-route-retry", id, route, body });
+                  if (live.current)
+                    setSearch((previous) =>
+                      previous?.id === id
+                        ? {
+                            ...previous,
+                            routes: { ...previous.routes, [route]: result },
+                          }
+                        : previous,
+                    );
+                }}
+                onCancel={async (route) => {
+                  if (search)
+                    await request({
+                      type: "search-route-cancel",
+                      id: search.id,
+                      route,
+                    });
+                }}
+              />
               {searching && (
                 <button
                   onClick={() =>

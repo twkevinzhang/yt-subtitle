@@ -39,12 +39,15 @@ const searchGroups = new Map<
     videoId: string;
     controller: AbortController;
     snapshot?: SearchGroupSnapshot;
+    video: import("../shared/types").VideoContext;
+    retries: Map<string, AbortController>;
   }
 >();
 function cancelSearches(tabId: number) {
   for (const [id, group] of searchGroups)
     if (group.tabId === tabId) {
       group.controller.abort();
+      group.retries.forEach((c) => c.abort());
       searchGroups.delete(id);
     }
 }
@@ -191,22 +194,80 @@ export async function handleMessage(
       const id = crypto.randomUUID(),
         group = {
           tabId,
+          video: m.video,
+          retries: new Map<string, AbortController>(),
           videoId: m.video.videoId,
           controller: new AbortController(),
           snapshot: undefined as SearchGroupSnapshot | undefined,
         };
       searchGroups.set(id, group);
+      const finished = new Set<string>();
       void startSearchGroup(
         m.video,
         settings,
         group.controller.signal,
         (snapshot) => {
-          group.snapshot = { ...snapshot, id };
+          if (!group.snapshot) group.snapshot = { ...snapshot, id };
+          for (const route of ["configured", "comments", "web"] as const) {
+            if (finished.has(route)) continue;
+            group.snapshot.routes[route] = snapshot.routes[route];
+            if (snapshot.routes[route].phase !== "pending") finished.add(route);
+          }
         },
         undefined,
         (signal) => readComments(tabId, m.video.videoId, signal),
+        undefined,
+        (route, controller) => {
+          group.retries.set(route, controller);
+          return () => {
+            if (group.retries.get(route) === controller)
+              group.retries.delete(route);
+          };
+        },
       ).catch(() => {});
       return { id };
+    }
+    case "search-route-retry":
+    case "search-route-cancel": {
+      const group = searchGroups.get(m.id);
+      if (
+        !group?.snapshot ||
+        group.tabId !== tabId ||
+        group.videoId !== new URL(sender.url!).searchParams.get("v")
+      )
+        throw new Error("搜尋工作已中斷");
+      if (m.type === "search-route-cancel") {
+        group.retries.get(m.route)?.abort();
+        return;
+      }
+      if (
+        group.retries.has(m.route) ||
+        group.snapshot.routes[m.route].phase === "pending"
+      )
+        throw new Error("此來源仍在處理中");
+      const controller = new AbortController();
+      group.retries.set(m.route, controller);
+      try {
+        const settings = await getSettings();
+        if (searchGroups.get(m.id) !== group || controller.signal.aborted)
+          throw new Error("搜尋工作已中斷");
+        if (!settings.provider?.model) throw new Error("請先設定 AI 服務");
+        await startSearchGroup(
+          group.video,
+          settings,
+          controller.signal,
+          (snapshot) => {
+            if (group.snapshot)
+              group.snapshot.routes[m.route] = snapshot.routes[m.route];
+          },
+          undefined,
+          (signal) => readComments(tabId, group.videoId, signal),
+          { onlyRoute: m.route, body: m.body, previous: group.snapshot },
+        );
+        return group.snapshot.routes[m.route];
+      } finally {
+        group.retries.delete(m.route);
+      }
     }
     case "search-group":
     case "search-cancel": {
@@ -217,7 +278,10 @@ export async function handleMessage(
         group.videoId !== new URL(sender.url!).searchParams.get("v")
       )
         throw new Error("搜尋工作已中斷");
-      if (m.type === "search-cancel") group.controller.abort();
+      if (m.type === "search-cancel") {
+        group.controller.abort();
+        group.retries.forEach((c) => c.abort());
+      }
       return group.snapshot;
     }
     case "read-manual-track":
