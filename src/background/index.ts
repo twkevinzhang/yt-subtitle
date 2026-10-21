@@ -34,6 +34,20 @@ import { startSearchGroup, type SearchGroupSnapshot } from "./search-group";
 import { readManualTrack, readComments } from "../youtube/context";
 import { workspaces, interruptedSearch } from "./workspaces";
 import type { WorkspacePanel } from "../shared/workspace";
+import { createPoTokenClient } from "./po-token-client";
+import { authorizePoTokenRequest } from "./po-token-authorization";
+const poTokenClient = createPoTokenClient();
+const poTokenRequests = new Map<
+  string,
+  { tabId: number; controller: AbortController }
+>();
+function cancelPoTokens(tabId: number) {
+  for (const [id, work] of poTokenRequests)
+    if (work.tabId === tabId) {
+      work.controller.abort();
+      poTokenRequests.delete(id);
+    }
+}
 const searchGroups = new Map<
   string,
   {
@@ -222,6 +236,36 @@ export async function handleMessage(
   await init();
   const tabId = sender.tab?.id ?? -1;
   switch (m.type) {
+    case "po-token-get": {
+      const tabId = authorizePoTokenRequest(
+        m.videoId,
+        sender,
+        chrome.runtime.id,
+      );
+      if (poTokenRequests.has(m.requestId) || poTokenRequests.size >= 10)
+        throw Error("Token 請求已存在或過多");
+      const work = { tabId, controller: new AbortController() };
+      poTokenRequests.set(m.requestId, work);
+      try {
+        return await poTokenClient.get(m.videoId, work.controller.signal);
+      } finally {
+        if (poTokenRequests.get(m.requestId) === work)
+          poTokenRequests.delete(m.requestId);
+      }
+    }
+    case "po-token-cancel": {
+      const tabId = authorizePoTokenRequest(
+        m.videoId,
+        sender,
+        chrome.runtime.id,
+      );
+      const work = poTokenRequests.get(m.requestId);
+      if (work?.tabId === tabId) {
+        work.controller.abort();
+        poTokenRequests.delete(m.requestId);
+      }
+      return null;
+    }
     case "workspace-open": {
       const videoId = new URL(sender.url!).searchParams.get("v")!;
       const groups = [...searchGroups.values()].filter(
@@ -794,6 +838,7 @@ if (typeof chrome !== "undefined" && chrome.runtime?.id) {
     void chrome.runtime.openOptionsPage();
   });
   chrome.tabs.onRemoved.addListener((id) => {
+    cancelPoTokens(id);
     cancelSearches(id);
     void stopLocal(id).catch(() => {});
     runs.cancelTab(id);
@@ -801,6 +846,7 @@ if (typeof chrome !== "undefined" && chrome.runtime?.id) {
   });
   chrome.tabs.onUpdated.addListener((id, change) => {
     if (change.url) {
+      cancelPoTokens(id);
       cancelSearches(id);
       void stopLocal(id).catch(() => {});
       runs.cancelTab(id);

@@ -5,7 +5,7 @@
   "description": "使用自己的 AI 服務，尋找、對齊與顯示 YouTube 歌詞。",
   "minimum_chrome_version": "116",
   "permissions": ["storage", "scripting", "offscreen"],
-  "host_permissions": ["https://www.youtube.com/*"],
+  "host_permissions": ["https://www.youtube.com/*", "https://po-token.example.invalid/*"],
   "optional_host_permissions": [
     "https://*/*",
     "http://localhost/*",

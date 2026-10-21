@@ -2,6 +2,7 @@ import { AudioCoverage } from "../acoustic/audio-coverage";
 import { MAX_AUDIO_BYTES } from "../acoustic/contracts";
 import { inspectAudioInitialization } from "./audio-initialization";
 import { installMediaIntentBridge } from "./media-intent";
+import { installSabrTokenNetwork } from "./sabr-token-network";
 
 if (parent === window && location.hostname === "www.youtube.com")
   installMediaIntentBridge();
@@ -75,7 +76,33 @@ if (
     window.removeEventListener("message", control);
     (document.querySelector("video") as HTMLVideoElement | null)?.pause();
     send({ type: "error", message, code, state, generation });
+    stopNetwork();
   };
+  let tokenPromise: Promise<Uint8Array> | undefined;
+  let resolveToken: ((token: Uint8Array) => void) | undefined;
+  let rejectToken: ((error: Error) => void) | undefined;
+  let tokenTimer: ReturnType<typeof setTimeout> | undefined;
+  const stopNetwork = streaming
+    ? installSabrTokenNetwork(
+        () => {
+          if (stopped)
+            return Promise.reject(new DOMException("已取消", "AbortError"));
+          if (!tokenPromise) {
+            tokenPromise = new Promise((resolve, reject) => {
+              resolveToken = resolve;
+              rejectToken = reject;
+            });
+            tokenTimer = setTimeout(
+              () => rejectToken?.(new Error("Token 服務逾時")),
+              28_000,
+            );
+            send({ type: "token-needed" });
+          }
+          return tokenPromise;
+        },
+        (message) => fail(message, "stream-auth"),
+      )
+    : () => {};
   function control(event: MessageEvent) {
     if (
       !streaming ||
@@ -87,10 +114,32 @@ if (
     )
       return;
     const m = event.data;
+    if (
+      m.action === "po-token" &&
+      m.videoId === url.searchParams.get("v") &&
+      typeof m.poToken === "string" &&
+      m.poToken.length <= 4096 &&
+      /^[A-Za-z0-9_-]+={0,2}$/.test(m.poToken)
+    ) {
+      try {
+        const token = Uint8Array.from(
+          atob(m.poToken.replace(/-/g, "+").replace(/_/g, "/")),
+          (char) => char.charCodeAt(0),
+        );
+        clearTimeout(tokenTimer);
+        resolveToken?.(token);
+      } catch {
+        rejectToken?.(new Error("Token 格式無效"));
+      }
+      return;
+    }
     if (m.action === "stop") {
       stopped = true;
       clearInterval(timer);
       window.removeEventListener("message", control);
+      clearTimeout(tokenTimer);
+      rejectToken?.(new DOMException("已取消", "AbortError"));
+      stopNetwork();
       (document.querySelector("video") as HTMLVideoElement | null)?.pause();
       return;
     }

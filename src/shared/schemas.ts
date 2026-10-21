@@ -203,6 +203,20 @@ const msg = z.discriminatedUnion("type", [
     timeMs: time,
   }),
   z.object({ type: z.literal("settings-public") }),
+  z
+    .object({
+      type: z.literal("po-token-get"),
+      videoId: z.string().regex(/^[\w-]{11}$/),
+      requestId: z.string().uuid(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("po-token-cancel"),
+      videoId: z.string().regex(/^[\w-]{11}$/),
+      requestId: z.string().uuid(),
+    })
+    .strict(),
   z.object({ type: z.literal("settings-edit") }),
   z.object({
     type: z.literal("settings-save"),

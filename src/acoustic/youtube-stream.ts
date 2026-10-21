@@ -3,6 +3,7 @@ import { createProgressiveDecoder } from "./progressive-decoder";
 import type { ProgressiveDecoder } from "./progressive-contracts";
 import type { JobKey, TimeRange } from "./contracts";
 import { MAX_AUDIO_BYTES } from "./contracts";
+import { request } from "../shared/messages";
 
 /** One helper per work, range controlled; no audio ever leaves the extension for AI. */
 export function createProgressiveAudioSource(
@@ -13,6 +14,7 @@ export function createProgressiveAudioSource(
   let frame: HTMLIFrameElement | undefined,
     decoder: ProgressiveDecoder | undefined,
     nonce = "",
+    tokenRequest: string | undefined,
     wanted: TimeRange | undefined;
   let pendingBytes = 0,
     peakCompressedBytes = 0,
@@ -38,6 +40,13 @@ export function createProgressiveAudioSource(
     );
   };
   const release = () => {
+    if (tokenRequest)
+      void request({
+        type: "po-token-cancel",
+        videoId: key.videoId,
+        requestId: tokenRequest,
+      }).catch(() => {});
+    tokenRequest = undefined;
     command("stop");
     frame?.remove();
     frame = undefined;
@@ -150,6 +159,43 @@ export function createProgressiveAudioSource(
       ownDecoder = decoder!;
     if (m.type === "ready") {
       command("range");
+      return;
+    }
+    if (m.type === "token-needed" && !tokenRequest) {
+      const ownNonce = nonce;
+      const requestId = crypto.randomUUID();
+      tokenRequest = requestId;
+      void request<{ videoId: string; poToken: string; expiresAt: string }>({
+        type: "po-token-get",
+        videoId: key.videoId,
+        requestId,
+      })
+        .then((result) => {
+          if (
+            disposed ||
+            frame !== ownFrame ||
+            nonce !== ownNonce ||
+            tokenRequest !== requestId ||
+            result.videoId !== key.videoId
+          )
+            return;
+          ownFrame?.contentWindow?.postMessage(
+            {
+              tag: "ai-lyrics-control",
+              nonce: ownNonce,
+              action: "po-token",
+              videoId: key.videoId,
+              poToken: result.poToken,
+            },
+            "https://www.youtube.com",
+          );
+        })
+        .catch(() => {
+          if (!disposed && frame === ownFrame && nonce === ownNonce) {
+            source.fail(new Error("無法取得串流驗證 Token，請稍後重試"));
+            release();
+          }
+        });
       return;
     }
     if (m.type === "reset") {
