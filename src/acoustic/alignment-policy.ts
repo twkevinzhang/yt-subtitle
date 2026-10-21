@@ -33,6 +33,7 @@ export function createAlignmentPolicy(mode: AlignmentMode, durationMs: number) {
       ),
     nextRanges(positionMs: number, ready: TimeRange[]) {
       const ranges: TimeRange[] = [];
+      const currentStart = Math.floor(positionMs / 24000) * 24000;
       for (let startMs = 0; startMs < durationMs; startMs += 24000)
         ranges.push({ startMs, endMs: Math.min(durationMs, startMs + 26000) });
       return ranges
@@ -40,9 +41,9 @@ export function createAlignmentPolicy(mode: AlignmentMode, durationMs: number) {
         .sort((a, b) =>
           mode === "complete-before-use"
             ? a.startMs - b.startMs
-            : (a.endMs > positionMs ? 0 : 1) - (b.endMs > positionMs ? 0 : 1) ||
-              Math.abs(a.startMs - positionMs) -
-                Math.abs(b.startMs - positionMs),
+            : (a.startMs >= currentStart ? 0 : 1) -
+                (b.startMs >= currentStart ? 0 : 1) ||
+              a.startMs - b.startMs,
         );
     },
     mayPublish: (progress: AlignmentProgress) =>

@@ -20,7 +20,8 @@ if (
   let bytes = 0,
     lastProgress = performance.now(),
     lastSeek = 0,
-    stopped = false;
+    stopped = false,
+    captureStarted = false;
   let audioBuffer: SourceBuffer | undefined;
   let audioSource: MediaSource | undefined;
   let resets = 0,
@@ -298,6 +299,7 @@ if (
         return append.call(this, data);
       }
       const result = append.call(this, data);
+      captureStarted = true;
       initializedGeneration.set(buffer, generation);
       appendGeneration.set(buffer, generation);
       send(
@@ -429,7 +431,7 @@ if (
       send({ type: "eof", generation });
       return;
     }
-    if (performance.now() - lastProgress > 15000) {
+    if (captureStarted && performance.now() - lastProgress > 15000) {
       fail(
         state === "awaiting-content"
           ? "廣告結束後尚無法確認正片音訊初始化與時間軸"
