@@ -329,7 +329,9 @@ if (
         sources.get(video.src || video.currentSrc) !== source
       )
         return;
-      appendGeneration.delete(buffer);
+      // An earlier YouTube updateend listener can already have appended the
+      // next segment. Keep its marker until that in-flight append completes.
+      if (!buffer.updating) appendGeneration.delete(buffer);
       const position = streaming && requested ? requested.startMs / 1000 : 0;
       const previous = coverage.edgeFrom(position);
       coverage.add(

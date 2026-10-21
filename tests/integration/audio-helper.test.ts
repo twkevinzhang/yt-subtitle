@@ -560,6 +560,49 @@ it("reports verified content EOF before idle failure but never reports an ad end
   vi.advanceTimersByTime(400);
   expect(send.mock.calls.filter((c) => c[0].type === "eof")).toHaveLength(1);
 });
+it("keeps the next append pending when YouTube appends inside its earlier updateend listener", async () => {
+  (location as any).href += "&ai-lyrics-stream=1";
+  MediaSourceMock.prototype.addSourceBuffer = function () {
+    const buffer = new BufferMock() as BufferMock & { updating: boolean };
+    buffer.updating = false;
+    buffer.buffered = { length: 1, start: () => 0, end: () => 5 };
+    let next = false;
+    buffer.addEventListener("updateend", () => {
+      if (next) return;
+      next = true;
+      buffer.updating = true;
+      buffer.appendBuffer(new Uint8Array([2]));
+    });
+    return buffer;
+  };
+  await import("../../src/youtube/audio-helper");
+  const { video } = playerState();
+  Object.defineProperty(video, "duration", { value: 10 });
+  const source = new MediaSourceMock();
+  video.src = URL.createObjectURL(source as any);
+  const buffer = source.addSourceBuffer("audio/webm") as BufferMock & {
+    updating: boolean;
+  };
+  buffer.appendBuffer(init);
+  window.dispatchEvent(
+    new MessageEvent("message", {
+      source: parent,
+      origin: "https://www.youtube.com",
+      data: {
+        tag: "ai-lyrics-control",
+        nonce: "00000000-0000-0000-0000-000000000001",
+        action: "range",
+        range: { startMs: 0, endMs: 10000 },
+      },
+    }),
+  );
+  buffer.dispatchEvent(new Event("updateend"));
+  buffer.buffered = { length: 1, start: () => 0, end: () => 10 };
+  buffer.updating = false;
+  buffer.dispatchEvent(new Event("updateend"));
+  vi.advanceTimersByTime(400);
+  expect(send.mock.calls.filter((c) => c[0].type === "tail")).toHaveLength(1);
+});
 it("announces a verified native tail even if YouTube leaves MediaSource open without ended", async () => {
   (location as any).href += "&ai-lyrics-stream=1";
   await import("../../src/youtube/audio-helper");
