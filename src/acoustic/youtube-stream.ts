@@ -4,13 +4,31 @@ import type { ProgressiveDecoder } from "./progressive-contracts";
 import type { JobKey, TimeRange } from "./contracts";
 import { MAX_AUDIO_BYTES } from "./contracts";
 import { request } from "../shared/messages";
+import type { DecodeTimingObserver } from "./timing-diagnostics";
 
 /** One helper per work, range controlled; no audio ever leaves the extension for AI. */
 export function createProgressiveAudioSource(
   key: JobKey,
   durationMs: number,
   onNotice: (text: string) => void = () => {},
+  onDecode?: DecodeTimingObserver,
 ) {
+  const measureDecode = async (work: () => Promise<void>) => {
+    const start = performance.now();
+    let outcome: "ok" | "failed" = "ok";
+    try {
+      await work();
+    } catch (error) {
+      outcome = "failed";
+      throw error;
+    } finally {
+      try {
+        onDecode?.(Math.max(0, performance.now() - start), outcome);
+      } catch {
+        /* diagnostics are optional */
+      }
+    }
+  };
   let frame: HTMLIFrameElement | undefined,
     decoder: ProgressiveDecoder | undefined,
     nonce = "",
@@ -77,7 +95,7 @@ export function createProgressiveAudioSource(
         void chain
           .then(() => {
             if (!disposed && frame === ownFrame)
-              return decoder!.decodeRequested();
+              return measureDecode(() => decoder!.decodeRequested());
           })
           .then(() => {
             if (disposed || frame !== ownFrame || wanted !== range) return;
@@ -271,12 +289,12 @@ export function createProgressiveAudioSource(
             messageEpoch === source.generation &&
             m.generation === helperGeneration
           )
-            await ownDecoder.discontinuity();
+            await measureDecode(() => ownDecoder.discontinuity());
           return;
         }
         if (m.type === "eof") {
           if (messageEpoch !== source.generation) return;
-          await ownDecoder.finish();
+          await measureDecode(() => ownDecoder.finish());
           source.finish(messageEpoch);
           if (messageEpoch === source.generation && wanted) {
             const actual = source.readableRange(wanted);
@@ -296,13 +314,15 @@ export function createProgressiveAudioSource(
           return;
         }
         try {
-          await ownDecoder.push({
-            generation: m.generation,
-            sequence: m.sequence,
-            init: m.init,
-            mime: m.mime,
-            data: m.data,
-          });
+          await measureDecode(() =>
+            ownDecoder.push({
+              generation: m.generation,
+              sequence: m.sequence,
+              init: m.init,
+              mime: m.mime,
+              data: m.data,
+            }),
+          );
           peakCompressedBytes = Math.max(
             peakCompressedBytes,
             pendingBytes + ownDecoder.bufferedBytes(),

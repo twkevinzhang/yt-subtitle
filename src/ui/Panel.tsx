@@ -27,6 +27,7 @@ import { toSrt, safeFilename } from "../lyrics/export";
 import { manualTracks, selectManualTrack } from "../youtube/manual-tracks";
 import type { createOverlay } from "../content/overlay";
 import { useSubtitleWork } from "./use-subtitle-work";
+import { TimingDiagnostics } from "./TimingDiagnostics";
 import { SourceActions } from "./SourceActions";
 import { SearchGroups } from "./SearchGroups";
 import { Editor } from "./Editor";
@@ -1047,6 +1048,9 @@ export function Panel({
                 ／{lines.filter((l) => !l.excluded).length} 句
               </p>
               <p>待處理 {pending.length} 句</p>
+              {work.diagnostics?.videoId === binding.videoId && (
+                <TimingDiagnostics report={work.diagnostics} />
+              )}
               <label>
                 <input
                   type="checkbox"

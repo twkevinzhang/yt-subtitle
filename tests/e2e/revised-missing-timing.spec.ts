@@ -102,6 +102,55 @@ for (const duration of [12, 36])
       await page
         .getByRole("button", { name: "使用貼入字幕", exact: true })
         .click();
+      const checkDiagnostics = async () => {
+        const details = page.locator("details.timing-diagnostics");
+        await details.locator("summary").first().click();
+        await expect(details).toContainText("開始時已有 1 句 · 本次新增 1 句");
+        const downloaded = page.waitForEvent("download");
+        await details.getByRole("button", { name: "下載診斷 JSON" }).click();
+        const file = await downloaded;
+        const report = JSON.parse(await readFile((await file.path())!, "utf8"));
+        expect(report).toMatchObject({
+          schemaVersion: 1,
+          initialTimed: 1,
+          newlyTimed: 1,
+          outcome: duration > 26 ? "partial" : "complete",
+        });
+        expect(report.totals.align.calls).toBeGreaterThan(0);
+        expect(report.totals["audio-wait"].calls).toBeGreaterThan(0);
+        expect(report.decode.calls).toBeGreaterThan(0);
+        expect(report.decode.ms).toBeGreaterThan(0);
+        expect(report.active).toBeUndefined();
+        expect(report.elapsedMs).toBeGreaterThan(0);
+        expect(JSON.stringify(report)).not.toContain(text);
+        expect(JSON.stringify(report)).not.toContain(
+          "UNSUNG_CONTROL_LINE_WITHOUT_AUDIO",
+        );
+        await mkdir("artifacts/timing-diagnostics", { recursive: true });
+        await writeFile(
+          `artifacts/timing-diagnostics/fixture-${duration}s.json`,
+          JSON.stringify(report, null, 2),
+        );
+        await details
+          .locator("summary")
+          .first()
+          .evaluate((element) => element.scrollIntoView({ block: "start" }));
+        await page.screenshot({
+          path: `artifacts/timing-diagnostics/fixture-${duration}s-desktop.png`,
+        });
+        await page.setViewportSize({ width: 390, height: 844 });
+        await details
+          .locator("summary")
+          .first()
+          .evaluate((element) => element.scrollIntoView({ block: "start" }));
+        await expect(
+          details.getByRole("button", { name: "下載診斷 JSON" }),
+        ).toBeVisible();
+        await page.screenshot({
+          path: `artifacts/timing-diagnostics/fixture-${duration}s-narrow.png`,
+        });
+        await page.setViewportSize({ width: 1440, height: 1000 });
+      };
       if (duration > 26) {
         await expect(
           page.getByText("部分句子沒有可靠定位，文字與已完成時間均已保留", {
@@ -123,6 +172,7 @@ for (const duration of [12, 36])
         await expect(
           page.locator('iframe[src*="ai-lyrics-audio"]'),
         ).toHaveCount(0);
+        await checkDiagnostics();
         return;
       }
       await expect(
@@ -135,6 +185,7 @@ for (const duration of [12, 36])
       expect(
         Number(await page.getByLabel("第 2 句結束秒數").inputValue()),
       ).toBeGreaterThan(1);
+      await checkDiagnostics();
       await page
         .getByRole("button", { name: "套用並保存", exact: true })
         .click();

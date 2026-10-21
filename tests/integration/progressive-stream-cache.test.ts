@@ -100,3 +100,55 @@ it("uses retained packets before contacting the helper and requests only the mis
   await next;
   expect((await audio.read(48000, 74000)).pcm).toHaveLength(416000);
 });
+it.each([false, true])(
+  "reports actual decoder pipeline time even on failure (%s)",
+  async (fail) => {
+    let clock = 0;
+    vi.spyOn(performance, "now").mockImplementation(() => clock);
+    const observations: { ms: number; outcome: string }[] = [];
+    m.push.mockImplementation(async () => {
+      clock += 23;
+      if (fail) throw new Error("decode failed");
+      m.onRange({
+        generation: 0,
+        startMs: 0,
+        sampleRate: 16000,
+        pcm: new Float32Array(26000 * 16),
+      });
+    });
+    audio = createProgressiveAudioSource(
+      { videoId: "12345678901" } as any,
+      80000,
+      () => {},
+      (ms, outcome) => observations.push({ ms, outcome }),
+    );
+    const pending = audio.ensure(
+      { startMs: 0, endMs: 26000 },
+      new AbortController().signal,
+    );
+    const frame = document.querySelector("iframe")!;
+    window.dispatchEvent(
+      new MessageEvent("message", {
+        source: frame.contentWindow,
+        origin: "https://www.youtube.com",
+        data: {
+          tag: "ai-lyrics-audio",
+          nonce: new URL(frame.src).searchParams.get("ai-lyrics-audio"),
+          type: "chunk",
+          generation: 0,
+          sequence: 0,
+          init: true,
+          mime: "audio/webm",
+          data: new ArrayBuffer(1),
+        },
+      }),
+    );
+    if (fail) await expect(pending).rejects.toThrow("decode failed");
+    else await pending;
+    await vi.waitFor(() =>
+      expect(observations).toEqual([
+        { ms: 23, outcome: fail ? "failed" : "ok" },
+      ]),
+    );
+  },
+);

@@ -8,6 +8,7 @@ import { createProgressiveAudioSource } from "../acoustic/youtube-stream";
 import { createLocalModelClient } from "../acoustic/local-model-client";
 import { runSubtitleAlignment } from "../acoustic/subtitle-work";
 import type { AlignmentProgress } from "../acoustic/alignment-policy";
+import type { TimingReport } from "../acoustic/timing-diagnostics";
 import { bindPlaybackCoordinator } from "../content/playback-coordinator";
 export function useSubtitleWork(
   binding: PlayerBinding,
@@ -28,6 +29,7 @@ export function useSubtitleWork(
     >(undefined);
   const [busy, setBusy] = useState(false),
     [progress, setProgress] = useState<AlignmentProgress>();
+  const [diagnostics, setDiagnostics] = useState<TimingReport>();
   const live = useRef(true);
   useEffect(() => {
     live.current = true;
@@ -74,6 +76,7 @@ export function useSubtitleWork(
       promise: Promise.resolve() as Promise<unknown>,
     };
     active.current = work;
+    setDiagnostics(undefined);
     setBusy(true);
     let latest: AlignmentProgress | undefined;
     const timer = setTimeout(() => {
@@ -88,10 +91,16 @@ export function useSubtitleWork(
       {
         model: createLocalModelClient(key, controller.signal),
         positionMs: () => Math.max(0, binding.video.currentTime * 1000),
-        source: () =>
-          createProgressiveAudioSource(key, durationMs, (text) =>
-            handlers.current.notice(text),
+        source: (onDecode) =>
+          createProgressiveAudioSource(
+            key,
+            durationMs,
+            (text) => handlers.current.notice(text),
+            onDecode,
           ),
+        onDiagnostics: (report) => {
+          if (live.current && active.current === work) setDiagnostics(report);
+        },
         publish: (progress) => {
           if (!live.current || active.current !== work) return;
           latest = progress;
@@ -117,5 +126,5 @@ export function useSubtitleWork(
       }
     }
   }
-  return { start, cancel, busy, progress };
+  return { start, cancel, busy, progress, diagnostics };
 }

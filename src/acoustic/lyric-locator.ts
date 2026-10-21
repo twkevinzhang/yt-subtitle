@@ -3,6 +3,7 @@ import type { Segment, TimeRange } from "./contracts";
 import type { RangeAudioSource } from "./progressive-audio-source";
 import type { RecognitionInput } from "./model-session";
 import { transcriptCoverage } from "./missing-location";
+import type { TimingDiagnostics } from "./timing-diagnostics";
 const normalize = (text: string) =>
   text
     .normalize("NFKC")
@@ -105,6 +106,19 @@ function windowEligibility(lines: SubtitleLine[], range: TimeRange) {
       (line.endMs ?? Infinity) > range.startMs
     );
   });
+}
+export function pendingLineIdsForWindow(
+  lines: SubtitleLine[],
+  range: TimeRange,
+) {
+  const possible = windowEligibility(lines, range);
+  return lines.flatMap((line, index) =>
+    possible[index] &&
+    !line.excluded &&
+    (line.startMs === undefined || line.endMs === undefined)
+      ? [line.id]
+      : [],
+  );
 }
 /** Match ordered whole passages; repeated text alone is insufficient evidence. */
 export function matchLyricWindow(
@@ -434,11 +448,29 @@ export async function locateLyrics(
     generation: number;
     recognitions: NonNullable<LocationResult["recognitions"]>;
   },
+  diagnostics?: TimingDiagnostics,
 ): Promise<LocationResult> {
-  await audio.ensure(range, signal);
+  await (diagnostics
+    ? diagnostics.measureAsync(
+        "audio-wait",
+        () => audio.ensure(range, signal),
+        range,
+      )
+    : audio.ensure(range, signal));
   if (signal.aborted) throw new Error("工作已取消");
   range = audio.readableRange(range);
-  const { pcm } = await audio.read(range.startMs, range.endMs);
+  const read = () => audio.read(range.startMs, range.endMs);
+  const { pcm } = await (diagnostics
+    ? diagnostics.measureAsync("pcm-read", read, range)
+    : read());
+  const match = (rows: SubtitleLine[], text: string) =>
+    diagnostics
+      ? diagnostics.measure(
+          "match",
+          () => matchLyricWindow(rows, text, range, true),
+          range,
+        )
+      : matchLyricWindow(rows, text, range, true);
   const generation = audio.generation;
   const rms = Math.sqrt(
     pcm.reduce((n, v) => n + v * v, 0) / Math.max(1, pcm.length),
@@ -449,6 +481,7 @@ export async function locateLyrics(
       cache?.generation === generation
         ? cache.recognitions.find((r) => r.language === language)
         : undefined;
+    diagnostics?.cache(cached !== undefined);
     const text =
       cached?.text ?? (await recognizer.transcribe({ pcm, language }));
     recognitions.push({ text, language });
@@ -484,7 +517,7 @@ export async function locateLyrics(
     if (generation !== audio.generation) break;
     const text = await recognize(language);
     if (signal.aborted) throw new Error("工作已取消");
-    locations.push(matchLyricWindow(lines, text, range, true));
+    locations.push(match(lines, text));
   }
   if (
     languages.includes("ja") &&
@@ -510,12 +543,7 @@ export async function locateLyrics(
     }));
     const originals = new Map(lines.map((l) => [l.id, l]));
     for (let i = 0; i < recognitions.length; i++) {
-      const location = matchLyricWindow(
-        phoneticLines,
-        pronounced[lines.length + i],
-        range,
-        true,
-      );
+      const location = match(phoneticLines, pronounced[lines.length + i]);
       // Readings aid recognition; alignment keeps the supplied original text.
       for (const context of Object.values(location.contexts ?? {}))
         if (context.alignmentLines)

@@ -88,3 +88,60 @@ it("only starts the latest mode when two changes wait on the same cancelling inf
   unmount();
   jobs[1].resolve();
 });
+it("keeps terminal diagnostics after cancel, isolates diagnostic ticks from draft publications and ignores old jobs", async () => {
+  const jobs: any[] = [];
+  m.run.mockImplementation(
+    (input, deps) =>
+      new Promise((resolve) => jobs.push({ input, deps, resolve })),
+  );
+  const binding = {
+    video: document.createElement("video"),
+    container: document.body,
+    videoId: "12345678901",
+    isAd: () => false,
+  };
+  const publish = vi.fn();
+  const { result, unmount } = renderHook(() =>
+    useSubtitleWork(binding, publish, () => {}),
+  );
+  await act(async () => {
+    void result.current.start([], "background", 10000);
+  });
+  await act(async () => {
+    jobs[0].deps.onDiagnostics({
+      runId: jobs[0].input.key.runId,
+      outcome: "running",
+      elapsedMs: 4000,
+    });
+  });
+  expect(result.current.diagnostics).toMatchObject({
+    outcome: "running",
+    elapsedMs: 4000,
+  });
+  expect(publish).not.toHaveBeenCalled();
+  await act(async () => {
+    const cancel = result.current.cancel();
+    jobs[0].deps.onDiagnostics({
+      runId: jobs[0].input.key.runId,
+      outcome: "cancelled",
+      elapsedMs: 4100,
+    });
+    jobs[0].resolve();
+    await cancel;
+  });
+  expect(result.current.busy).toBe(false);
+  expect(result.current.diagnostics).toMatchObject({
+    outcome: "cancelled",
+    elapsedMs: 4100,
+  });
+  await act(async () => {
+    void result.current.start([], "background", 10000);
+  });
+  expect(result.current.diagnostics).toBeUndefined();
+  await act(async () => {
+    jobs[0].deps.onDiagnostics({ outcome: "failed" });
+  });
+  expect(result.current.diagnostics).toBeUndefined();
+  unmount();
+  jobs[1].resolve();
+});
