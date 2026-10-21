@@ -4,11 +4,10 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "vitest run",
+    "test": "node build.mjs --package && node --test build.test.mjs",
     "typecheck": "tsc --noEmit",
-    "build": "node scripts/build-extension.mjs",
-    "test:e2e": "playwright test",
-    "package": "node scripts/package.mjs"
+    "build": "node build.mjs",
+    "package": "node build.mjs --package"
   },
   "dependencies": {
     "@huggingface/transformers": "3.8.1",
