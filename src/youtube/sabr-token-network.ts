@@ -25,7 +25,7 @@ export function installSabrTokenNetwork(
     abort = XMLHttpRequest.prototype.abort;
   const state = new WeakMap<
     XMLHttpRequest,
-    { sabr: boolean; cancelled: boolean; epoch: number }
+    { sabr: boolean; cancelled: boolean; sent: boolean; epoch: number }
   >();
   const openHandler = function (
     this: XMLHttpRequest,
@@ -37,6 +37,7 @@ export function installSabrTokenNetwork(
         args[2] !== false &&
         isSabrUrl(String(args[1])),
       cancelled: false,
+      sent: false,
       epoch: (state.get(this)?.epoch ?? 0) + 1,
     });
     return open.apply(this, args);
@@ -46,6 +47,8 @@ export function installSabrTokenNetwork(
     body?: Document | XMLHttpRequestBodyInit | null,
   ) {
     const own = state.get(this);
+    if (own?.sent)
+      throw new DOMException("XHR 請求已送出", "InvalidStateError");
     const bytes =
       body instanceof ArrayBuffer
         ? new Uint8Array(body)
@@ -54,10 +57,14 @@ export function installSabrTokenNetwork(
           : undefined;
     if (!own?.sabr || !bytes || !replaceSabrPoToken(bytes, new Uint8Array([0])))
       return send.call(this, body);
+    // Native send() snapshots BufferSource synchronously and rejects a second
+    // send before a new open(), even while our authorization is still pending.
+    const snapshot = bytes.slice();
+    own.sent = true;
     void getToken()
       .then((token) => {
         if (disposed || own.cancelled || state.get(this) !== own) return;
-        const replaced = replaceSabrPoToken(bytes, token);
+        const replaced = replaceSabrPoToken(snapshot, token);
         if (!replaced) throw Error("invalid SABR");
         send.call(this, replaced.slice().buffer);
       })

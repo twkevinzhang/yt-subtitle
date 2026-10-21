@@ -49,6 +49,11 @@ test("Brave: unconfigured manual/paste, exact source times, save/export and sett
     await expect(
       panel.getByText("已套用並保存至本機。", { exact: true }),
     ).toBeVisible();
+    await expect(
+      panel.getByRole("button", { name: "貼入字幕", exact: true }),
+    ).toBeDisabled();
+    await panel.getByRole("button", { name: "重新載入", exact: true }).click();
+    await page.getByRole("button", { name: "清除並重新搜尋" }).click();
     await panel.getByRole("button", { name: "貼入字幕", exact: true }).click();
     await panel
       .getByLabel("字幕全文")
@@ -110,6 +115,8 @@ test("Brave: unconfigured manual/paste, exact source times, save/export and sett
     manual = false;
     await page.reload();
     await page.getByRole("button", { name: "AI 歌詞", exact: true }).click();
+    await panel.getByRole("button", { name: "重新載入", exact: true }).click();
+    await page.getByRole("button", { name: "清除並重新搜尋" }).click();
     await expect(
       page.getByRole("button", { name: "YT 字幕", exact: true }),
     ).toBeDisabled();

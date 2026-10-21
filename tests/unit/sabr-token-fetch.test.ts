@@ -39,3 +39,48 @@ it("does not send a late media request after cancellation while waiting for toke
   await expect(work).rejects.toThrow();
   expect(native).not.toHaveBeenCalled();
 });
+
+it("rejects immediately on abort even when the shared Token never settles", async () => {
+  const controller = new AbortController();
+  const native = vi.fn();
+  let started!: () => void;
+  const ready = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  const fetcher = createSabrFetch(native, () => {
+    started();
+    return new Promise(() => {});
+  });
+  const work = fetcher("https://rr.example.googlevideo.com/videoplayback", {
+    method: "POST",
+    body,
+    signal: controller.signal,
+  });
+  const outcome = work.then(
+    () => "sent",
+    (error) => error.name,
+  );
+  await ready;
+  controller.abort();
+  // Cancellation must settle without waiting for the provider's deadline.
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  expect(await Promise.race([outcome, Promise.resolve("pending")])).toBe(
+    "AbortError",
+  );
+  expect(native).not.toHaveBeenCalled();
+});
+
+it("does not start Token work for an already aborted SABR request", async () => {
+  const controller = new AbortController();
+  controller.abort();
+  const token = vi.fn().mockResolvedValue(new Uint8Array([3]));
+  const native = vi.fn();
+  await expect(
+    createSabrFetch(native, token)(
+      "https://rr.example.googlevideo.com/videoplayback",
+      { method: "POST", body, signal: controller.signal },
+    ),
+  ).rejects.toMatchObject({ name: "AbortError" });
+  expect(token).not.toHaveBeenCalled();
+  expect(native).not.toHaveBeenCalled();
+});

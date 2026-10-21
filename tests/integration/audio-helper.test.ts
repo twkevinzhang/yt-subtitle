@@ -14,6 +14,25 @@ class MediaSourceMock {
 }
 const originalAddSourceBuffer = MediaSourceMock.prototype.addSourceBuffer;
 const send = vi.fn();
+it("clears a pending Token deadline when the helper fails before authorization", async () => {
+  (location as any).href += "&ai-lyrics-stream=1";
+  const originalFetch = window.fetch;
+  await import("../../src/youtube/audio-helper");
+  const xhr = new XMLHttpRequest();
+  xhr.open("POST", "https://rr.example.googlevideo.com/videoplayback");
+  xhr.send(new Uint8Array([154, 1, 3, 18, 1, 9]));
+  expect(send.mock.calls.some((c) => c[0].type === "token-needed")).toBe(true);
+  const source = new MediaSourceMock();
+  document.querySelector("video")!.src = URL.createObjectURL(source as any);
+  const buffer = source.addSourceBuffer("audio/webm");
+  buffer.appendBuffer(init);
+  buffer.changeType("audio/mp4");
+  await Promise.resolve();
+  await Promise.resolve();
+  expect(send.mock.calls.some((c) => c[0].type === "error")).toBe(true);
+  expect(window.fetch).toBe(originalFetch);
+  expect(vi.getTimerCount()).toBe(0);
+});
 it("does not apply the PCM progress watchdog before initial content exists, but retains its hard range deadline", async () => {
   (location as any).href += "&ai-lyrics-stream=1";
   await import("../../src/youtube/audio-helper");

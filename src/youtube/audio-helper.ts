@@ -73,6 +73,8 @@ if (
     if (stopped) return;
     stopped = true;
     clearInterval(timer);
+    clearTimeout(tokenTimer);
+    rejectToken?.(new DOMException("已取消", "AbortError"));
     window.removeEventListener("message", control);
     (document.querySelector("video") as HTMLVideoElement | null)?.pause();
     send({ type: "error", message, code, state, generation });
