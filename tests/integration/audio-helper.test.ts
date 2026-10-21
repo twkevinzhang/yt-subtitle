@@ -17,17 +17,27 @@ const send = vi.fn();
 it("does not apply the PCM progress watchdog before initial content exists, but retains its hard range deadline", async () => {
   (location as any).href += "&ai-lyrics-stream=1";
   await import("../../src/youtube/audio-helper");
-  Object.assign(document.querySelector("#movie_player")!, { playVideo: vi.fn() });
-  window.dispatchEvent(new MessageEvent("message", {
-    source: parent, origin: "https://www.youtube.com", data: {
-      tag: "ai-lyrics-control", nonce: "00000000-0000-0000-0000-000000000001",
-      action: "range", range: { startMs: 192000, endMs: 218000 },
-    },
-  }));
+  Object.assign(document.querySelector("#movie_player")!, {
+    playVideo: vi.fn(),
+  });
+  window.dispatchEvent(
+    new MessageEvent("message", {
+      source: parent,
+      origin: "https://www.youtube.com",
+      data: {
+        tag: "ai-lyrics-control",
+        nonce: "00000000-0000-0000-0000-000000000001",
+        action: "range",
+        range: { startMs: 192000, endMs: 218000 },
+      },
+    }),
+  );
   vi.advanceTimersByTime(16000);
   expect(send.mock.calls.some((c) => c[0].type === "error")).toBe(false);
   vi.advanceTimersByTime(74000);
-  expect(send.mock.calls.find((c) => c[0].type === "error")?.[0].code).toBe("deadline");
+  expect(send.mock.calls.find((c) => c[0].type === "error")?.[0].code).toBe(
+    "deadline",
+  );
 });
 it("emits MIME, generation and chunk sequence for incremental decoding", async () => {
   await import("../../src/youtube/audio-helper");
@@ -51,14 +61,18 @@ it("emits MIME, generation and chunk sequence for incremental decoding", async (
 it("arms the 15-second watchdog when verified content first arrives after loading", async () => {
   (location as any).href += "&ai-lyrics-stream=1";
   await import("../../src/youtube/audio-helper");
-  Object.assign(document.querySelector("#movie_player")!, { playVideo: vi.fn() });
+  Object.assign(document.querySelector("#movie_player")!, {
+    playVideo: vi.fn(),
+  });
   vi.advanceTimersByTime(20000);
   expect(send.mock.calls.some((c) => c[0].type === "error")).toBe(false);
   const source = new MediaSourceMock();
   document.querySelector("video")!.src = URL.createObjectURL(source as any);
   source.addSourceBuffer("audio/webm").appendBuffer(init);
   vi.advanceTimersByTime(16000);
-  expect(send.mock.calls.find((c) => c[0].type === "error")?.[0].code).toBe("no-progress");
+  expect(send.mock.calls.find((c) => c[0].type === "error")?.[0].code).toBe(
+    "no-progress",
+  );
 });
 let index = 0;
 beforeEach(() => {
@@ -596,6 +610,31 @@ it("forwards parser reset only for the verified attached content buffer", async 
   expect(
     send.mock.calls.filter((c) => c[0].type === "discontinuity"),
   ).toHaveLength(1);
+});
+it("does not remove a partially buffered request while waiting for its new suffix", async () => {
+  (location as any).href += "&ai-lyrics-stream=1";
+  await import("../../src/youtube/audio-helper");
+  const { video, seekTo } = playerState();
+  const source = new MediaSourceMock();
+  video.src = URL.createObjectURL(source as any);
+  const buffer = source.addSourceBuffer("audio/webm");
+  buffer.appendBuffer(init);
+  buffer.dispatchEvent(new Event("updateend"));
+  window.dispatchEvent(
+    new MessageEvent("message", {
+      source: parent,
+      origin: "https://www.youtube.com",
+      data: {
+        tag: "ai-lyrics-control",
+        nonce: "00000000-0000-0000-0000-000000000001",
+        action: "range",
+        range: { startMs: 9900, endMs: 20000 },
+      },
+    }),
+  );
+  vi.advanceTimersByTime(400);
+  expect(buffer.remove).not.toHaveBeenCalled();
+  expect(seekTo).toHaveBeenCalledWith(9.9, true);
 });
 it("refetches an uncaptured nonzero request once instead of seeking over retained native audio", async () => {
   (location as any).href += "&ai-lyrics-stream=1";

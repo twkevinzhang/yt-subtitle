@@ -96,7 +96,8 @@ it("decodes only the requested window plus Opus preroll rather than an entire na
   expect(outputs.at(-1).startMs).toBeLessThan(4150);
   outputs.length = 0;
   wanted = { startMs: 6000, endMs: 7000 };
-  await decoder.push(chunk(fixture, 1));
+  expect(decoder.bufferedBytes()).toBeGreaterThan(0);
+  await decoder.decodeRequested();
   expect(outputs.length).toBeGreaterThan(30);
   expect(outputs.length).toBeLessThan(70);
   expect(outputs[0].startMs).toBeGreaterThanOrEqual(5800);
@@ -104,6 +105,50 @@ it("decodes only the requested window plus Opus preroll rather than an entire na
   const close = vi.fn();
   decoders[0].callbacks.output({ close });
   expect(close).toHaveBeenCalledOnce();
+  decoder.dispose();
+  expect(decoder.bufferedBytes()).toBe(0);
+});
+it("bounds retained compressed packets and clears them on generation reset", async () => {
+  setup().dispose();
+  const decoder = createProgressiveDecoder(
+    () => {},
+    () => {},
+    () => ({ startMs: 0, endMs: 1000 }),
+  );
+  await decoder.push(chunk(fixture));
+  const bytes = decoder.bufferedBytes();
+  expect(bytes).toBeGreaterThan(0);
+  await decoder.push(chunk(fixture, 1));
+  expect(decoder.bufferedBytes()).toBe(bytes);
+  decoder.reset(1);
+  expect(decoder.bufferedBytes()).toBe(0);
+  decoder.dispose();
+  const bounded = createProgressiveDecoder(
+    () => {},
+    () => {},
+    () => ({ startMs: 0, endMs: 1000 }),
+    () => 1,
+  );
+  await expect(bounded.push(chunk(fixture))).rejects.toThrow(/64 MiB/);
+  bounded.dispose();
+  expect(bounded.bufferedBytes()).toBe(0);
+});
+it("defers native EOF flush while future packets remain to avoid repeated Opus priming", async () => {
+  setup().dispose();
+  let wanted = { startMs: 0, endMs: 1000 };
+  const decoder = createProgressiveDecoder(
+    () => {},
+    () => {},
+    () => wanted,
+  );
+  await decoder.push(chunk(fixture));
+  const flush = vi.spyOn(decoders.at(-1), "flush");
+  await decoder.finish();
+  expect(flush).not.toHaveBeenCalled();
+  wanted = { startMs: 1000, endMs: 8000 };
+  await decoder.decodeRequested();
+  expect(decoder.bufferedBytes()).toBe(0);
+  expect(flush).toHaveBeenCalledOnce();
   decoder.dispose();
 });
 it("bounds the native decode queue instead of enqueueing the entire compressed chunk", async () => {

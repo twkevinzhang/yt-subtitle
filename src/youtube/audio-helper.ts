@@ -452,15 +452,15 @@ if (
         // over those bytes and waiting forever for them to be appended again.
         if (requested.startMs > 0 && !rangeCleared && audioBuffer) {
           rangeCleared = true;
-          const overlaps = Array.from(
+          const fullyBuffered = Array.from(
             { length: audioBuffer.buffered.length },
             (_, i) => i,
           ).some(
             (i) =>
-              audioBuffer!.buffered.start(i) < requested!.endMs / 1000 &&
-              audioBuffer!.buffered.end(i) > requested!.startMs / 1000,
+              audioBuffer!.buffered.start(i) <= requested!.startMs / 1000 &&
+              audioBuffer!.buffered.end(i) >= requested!.endMs / 1000,
           );
-          if (overlaps) {
+          if (fullyBuffered) {
             coverage = new AudioCoverage();
             try {
               audioBuffer.remove(

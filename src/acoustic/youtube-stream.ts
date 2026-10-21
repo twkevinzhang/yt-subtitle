@@ -21,11 +21,22 @@ export function createProgressiveAudioSource(
     helperGeneration = 0,
     chain: Promise<void> = Promise.resolve(),
     disposed = false;
-  const command = (action: string) =>
+  const command = (action: string) => {
+    let range = wanted;
+    if (action === "range" && wanted) {
+      const actual = source.readableRange(wanted);
+      const owned = source
+        .availableRanges()
+        .find((r) => r.startMs <= actual.startMs && r.endMs > actual.startMs);
+      if (owned && owned.endMs >= actual.endMs) action = "pause";
+      else if (owned)
+        range = { ...wanted, startMs: Math.floor(owned.endMs * 16) / 16 };
+    }
     frame?.contentWindow?.postMessage(
-      { tag: "ai-lyrics-control", nonce, action, range: wanted },
+      { tag: "ai-lyrics-control", nonce, action, range },
       "https://www.youtube.com",
     );
+  };
   const release = () => {
     command("stop");
     frame?.remove();
@@ -50,7 +61,33 @@ export function createProgressiveAudioSource(
         maximumEnd = 0;
       }
       if (!frame) open();
-      else command("range");
+      else {
+        const ownFrame = frame;
+        // Drain bytes already received before deciding another native fetch is
+        // needed; their future packets may still be waiting in the stream chain.
+        void chain
+          .then(() => {
+            if (!disposed && frame === ownFrame)
+              return decoder!.decodeRequested();
+          })
+          .then(() => {
+            if (disposed || frame !== ownFrame || wanted !== range) return;
+            const actual = source.readableRange(range);
+            if (
+              source
+                .availableRanges()
+                .some(
+                  (r) => r.startMs <= actual.startMs && r.endMs >= actual.endMs,
+                )
+            )
+              pauseIfReady();
+            else command("range");
+          })
+          .catch((e) => {
+            if (!disposed && frame === ownFrame)
+              source.fail(e instanceof Error ? e : new Error(String(e)));
+          });
+      }
     },
     MAX_AUDIO_BYTES,
     () => {
@@ -94,6 +131,7 @@ export function createProgressiveAudioSource(
         if (frame === ownFrame) source.fail(error);
       },
       () => wanted,
+      () => MAX_AUDIO_BYTES - pendingBytes,
     );
     frame.onload = () => command("range");
     document.documentElement.append(frame);
@@ -151,8 +189,9 @@ export function createProgressiveAudioSource(
         return;
       }
       pendingBytes += m.data.byteLength;
-      peakCompressedBytes = Math.max(peakCompressedBytes, pendingBytes);
-      if (pendingBytes > MAX_AUDIO_BYTES) {
+      const compressedBytes = pendingBytes + (decoder?.bufferedBytes() ?? 0);
+      peakCompressedBytes = Math.max(peakCompressedBytes, compressedBytes);
+      if (compressedBytes > MAX_AUDIO_BYTES) {
         source.fail(new Error("壓縮音訊超過 64 MiB"));
         return;
       }
@@ -218,6 +257,10 @@ export function createProgressiveAudioSource(
             mime: m.mime,
             data: m.data,
           });
+          peakCompressedBytes = Math.max(
+            peakCompressedBytes,
+            pendingBytes + ownDecoder.bufferedBytes(),
+          );
         } finally {
           if (frame === ownFrame) pendingBytes -= m.data.byteLength;
         }
@@ -231,9 +274,12 @@ export function createProgressiveAudioSource(
   return Object.assign(source, {
     streamStats: () => ({
       ...source.stats(),
-      compressedBytes: pendingBytes,
+      compressedBytes: pendingBytes + (decoder?.bufferedBytes() ?? 0),
       peakCompressedBytes,
-      totalBytes: source.stats().pcmBytes + pendingBytes,
+      totalBytes:
+        source.stats().pcmBytes +
+        pendingBytes +
+        (decoder?.bufferedBytes() ?? 0),
     }),
   });
 }

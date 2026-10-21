@@ -139,6 +139,14 @@ for (const [name, executablePath] of [
                 `${error.message}; PCM=${JSON.stringify(source.availableRanges())}; selected=${selected[0]?.startMs}..${selected.at(-1)?.startMs}`,
               );
             });
+            const cachedBytes = decoder.bufferedBytes();
+            // Native EOF can precede processing later cached windows.
+            await decoder.finish();
+            wanted = { startMs: 7000, endMs: 7600 };
+            // The entire native append has already arrived. No more bytes,
+            // no native seek/removal and no second download for this window.
+            await decoder.decodeRequested();
+            const next = await source.read(7000, 7600);
             return {
               ...initial,
               selected: {
@@ -148,6 +156,8 @@ for (const [name, executablePath] of [
                 readSamples: read.pcm.length,
               },
               finalRanges: source.availableRanges(),
+              cachedBytes,
+              nextWindowSamples: next.pcm.length,
             };
           } finally {
             decoder.dispose();
@@ -171,6 +181,8 @@ for (const [name, executablePath] of [
       expect(result.selected.endMs).toBeLessThan(7150);
       expect(result.selected.readSamples).toBe(16000);
       expect(result.finalRanges).toHaveLength(2);
+      expect(result.cachedBytes).toBeGreaterThan(0);
+      expect(result.nextWindowSamples).toBe(9600);
       await test.info().attach("progressive-decoder.json", {
         body: JSON.stringify(result, null, 2),
         contentType: "application/json",

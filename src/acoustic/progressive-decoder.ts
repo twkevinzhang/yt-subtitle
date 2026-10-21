@@ -5,6 +5,7 @@ import type {
 } from "./progressive-contracts";
 import { WebmDemuxer, type OpusTrack, type OpusPacket } from "./webm-demuxer";
 import type { TimeRange } from "./contracts";
+import { MAX_AUDIO_BYTES } from "./contracts";
 
 // Audio WebCodecs declarations are not included in this project's DOM typings.
 interface DecodedAudio {
@@ -39,6 +40,7 @@ export function createProgressiveDecoder(
   onRange: (range: PcmRange) => void,
   onError: (error: Error) => void,
   requestedRange: () => TimeRange | undefined = () => undefined,
+  maximumRetainedBytes: () => number = () => MAX_AUDIO_BYTES,
 ): ProgressiveDecoder {
   let generation = 0,
     sequence = 0,
@@ -132,6 +134,74 @@ export function createProgressiveDecoder(
     }
   }
   let packets: OpusPacket[] = [];
+  let retained: OpusPacket[] = [];
+  let retainedBytes = 0;
+  let inputEnded = false;
+  const retainedKeys = new Set<string>();
+  function clearRetained() {
+    retained = [];
+    retainedBytes = 0;
+    retainedKeys.clear();
+  }
+  async function decodePackets(current: OpusPacket[], expected: number) {
+    const wanted = requestedRange();
+    let decoder = native;
+    for (const packet of current) {
+      if (expected !== token || disposed || failed)
+        throw new Error("音訊 generation 已改變");
+      if (wanted && packet.timestampUs >= wanted.endMs * 1000 + 120000) {
+        const key = `${packet.timestampUs}:${packet.durationUs}`;
+        if (!retainedKeys.has(key)) {
+          if (
+            retainedBytes + packet.data.byteLength >
+            Math.min(MAX_AUDIO_BYTES, maximumRetainedBytes())
+          )
+            throw new Error("待解碼壓縮音訊超過 64 MiB");
+          // Own only these packet bytes, not the entire native append backing buffer.
+          retained.push({ ...packet, data: packet.data.slice() });
+          retainedKeys.add(key);
+          retainedBytes += packet.data.byteLength;
+        }
+        continue;
+      }
+      if (
+        wanted &&
+        packet.timestampUs + packet.durationUs < wanted.startMs * 1000 - 120000
+      )
+        continue;
+      if (
+        lastInputEndUs !== undefined &&
+        packet.timestampUs + packet.durationUs <= lastInputEndUs
+      )
+        continue;
+      // Chromium keeps its PCM clock across real encoded timestamp jumps.
+      // MediaRecorder's continuous packet times can jitter by ±9ms.
+      if (
+        lastInputEndUs !== undefined &&
+        Math.abs(packet.timestampUs - lastInputEndUs) > 10000
+      ) {
+        await waitForQueue(decoder!, 0);
+        await flushDecoder(decoder);
+        if (expected !== token || disposed || failed)
+          throw new Error("音訊 generation 已改變");
+        decoder!.close();
+        decoder = openDecoder(expected);
+      }
+      decoder!.decode(
+        new globals.EncodedAudioChunk!({
+          type: "key",
+          timestamp: packet.timestampUs,
+          data: packet.data,
+        }),
+      );
+      lastInputEndUs = packet.timestampUs + packet.durationUs;
+      if (decoder!.decodeQueueSize >= 64) await waitForQueue(decoder!, 32);
+    }
+    if (decoder) await waitForQueue(decoder, 0);
+    if (expected !== token || disposed)
+      throw new Error("音訊 generation 已改變");
+    if (failed) throw new Error("音訊解碼失敗");
+  }
   function openDecoder(expected: number) {
     const decoder = new decoderConstructor!({
       output: (audio) => {
@@ -190,6 +260,28 @@ export function createProgressiveDecoder(
   const demux = () => new WebmDemuxer(track, (packet) => packets.push(packet));
   let parser = demux();
   return {
+    bufferedBytes: () => retainedBytes,
+    decodeRequested() {
+      const expected = token;
+      const task = queued.then(async () => {
+        if (expected !== token || disposed || failed)
+          throw new Error("解碼器已停止");
+        const current = retained;
+        clearRetained();
+        await decodePackets(current, expected);
+        if (inputEnded && !retained.length) await flushDecoder(native);
+        if (expected !== token || disposed || failed)
+          throw new Error("音訊 generation 已改變");
+      });
+      queued = task.catch(() => {});
+      return task.catch((e) => {
+        if (expected === token && !disposed) {
+          failed = true;
+          close();
+        }
+        throw error(e);
+      });
+    },
     async discontinuity() {
       const expected = token;
       await queued;
@@ -202,8 +294,10 @@ export function createProgressiveDecoder(
       await queued;
       if (disposed || failed || expected !== token)
         throw new Error("解碼器已停止");
-      // Flush at verified EOF, never between contiguous streaming appends.
-      await flushDecoder(native);
+      inputEnded = true;
+      // Native EOF can arrive before later cached windows are requested.
+      // Keep their codec sequence open until those packets have been decoded.
+      if (!retained.length) await flushDecoder(native);
       if (disposed || failed || expected !== token)
         throw new Error("音訊 generation 已改變");
     },
@@ -220,62 +314,14 @@ export function createProgressiveDecoder(
         if (!globals.AudioDecoder || !globals.EncodedAudioChunk)
           throw new Error("瀏覽器不支援 Audio WebCodecs");
         sequence++;
+        inputEnded = false;
         parser.push(new Uint8Array(chunk.data), true);
         await configure;
         if (expected !== token || disposed)
           throw new Error("音訊 generation 已改變");
         const current = packets;
         packets = [];
-        const wanted = requestedRange();
-        let decoder = native;
-        // 120ms covers the Opus convergence history and maximum packet size.
-        // Actual lookahead releases delayed PCM without flushing each append.
-        for (const packet of current) {
-          if (
-            wanted &&
-            (packet.timestampUs + packet.durationUs <
-              wanted.startMs * 1000 - 120000 ||
-              packet.timestampUs >= wanted.endMs * 1000 + 120000)
-          )
-            continue;
-          if (expected !== token || disposed || failed)
-            throw new Error("音訊 generation 已改變");
-          if (
-            lastInputEndUs !== undefined &&
-            packet.timestampUs + packet.durationUs <= lastInputEndUs
-          )
-            continue;
-          // Chromium's Opus decoder continues its PCM clock across timestamp
-          // jumps. Restart only at a real discontinuity, preserving PCM gaps.
-          if (
-            lastInputEndUs !== undefined &&
-            // MediaRecorder's wall-clock block times can jitter by ±9ms even
-            // though the Opus packets are one continuous codec sequence.
-            Math.abs(packet.timestampUs - lastInputEndUs) > 10000
-          ) {
-            await waitForQueue(decoder!, 0);
-            await flushDecoder(decoder);
-            if (expected !== token || disposed || failed)
-              throw new Error("音訊 generation 已改變");
-            decoder!.close();
-            decoder = openDecoder(expected);
-          }
-          decoder!.decode(
-            new globals.EncodedAudioChunk({
-              type: "key",
-              timestamp: packet.timestampUs,
-              data: packet.data,
-            }),
-          );
-          lastInputEndUs = packet.timestampUs + packet.durationUs;
-          if (decoder!.decodeQueueSize >= 64) await waitForQueue(decoder!, 32);
-        }
-        // flush() ends a codec sequence and Chromium trims Opus priming again
-        // on the next push. Drain the submission queue without restarting it.
-        if (decoder) await waitForQueue(decoder, 0);
-        if (expected !== token || disposed)
-          throw new Error("音訊 generation 已改變");
-        if (failed) throw new Error("音訊解碼失敗");
+        await decodePackets(current, expected);
       });
       queued = task.catch(() => {});
       return task.catch((e) => {
@@ -299,6 +345,8 @@ export function createProgressiveDecoder(
       codecConfig = undefined;
       decoderConstructor = undefined;
       packets = [];
+      clearRetained();
+      inputEnded = false;
       configure = undefined;
       parser = demux();
       queued = Promise.resolve();
@@ -308,6 +356,7 @@ export function createProgressiveDecoder(
       token++;
       close();
       packets = [];
+      clearRetained();
       parser = demux();
     },
   };
