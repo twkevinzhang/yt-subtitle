@@ -16,6 +16,7 @@ import type {
 export type SearchRoute = "configured" | "comments" | "web";
 export interface SearchGroupSnapshot {
   id: string;
+  storageError?: string;
   videoId: string;
   routes: Record<
     SearchRoute,

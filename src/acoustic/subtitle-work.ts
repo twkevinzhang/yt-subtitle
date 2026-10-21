@@ -26,6 +26,7 @@ export async function runSubtitleAlignment(
     durationMs: number;
     mode: AlignmentMode;
     signal: AbortSignal;
+    resume?: Pick<AlignmentProgress, "checked" | "ready">;
   },
   deps: {
     source: () => RangeAudioSource;
@@ -49,14 +50,18 @@ export async function runSubtitleAlignment(
       .map((l) => l.id),
   );
   const silentReady: TimeRange[] = [];
-  const checked: TimeRange[] = [],
-    ready: TimeRange[] = lines
-      .filter(
-        (l) => !l.excluded && l.startMs !== undefined && l.endMs !== undefined,
-      )
-      .map((l) => ({ startMs: l.startMs!, endMs: l.endMs! })),
+  const checked: TimeRange[] = structuredClone(input.resume?.checked ?? []),
+    ready: TimeRange[] = [
+      ...structuredClone(input.resume?.ready ?? []),
+      ...lines
+        .filter(
+          (l) =>
+            !l.excluded && l.startMs !== undefined && l.endMs !== undefined,
+        )
+        .map((l) => ({ startMs: l.startMs!, endMs: l.endMs! })),
+    ],
     policy = createAlignmentPolicy(input.mode, input.durationMs);
-  const passChecked: TimeRange[] = [];
+  const passChecked: TimeRange[] = structuredClone(input.resume?.checked ?? []);
   const recognitionCache = new Map<
     string,
     {

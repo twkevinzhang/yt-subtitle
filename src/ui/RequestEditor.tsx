@@ -1,4 +1,5 @@
 import React, { useState, useRef } from "react";
+import type { RequestEditorState } from "../shared/workspace";
 
 export function RequestEditor({
   body,
@@ -6,17 +7,36 @@ export function RequestEditor({
   pending,
   onSend,
   onCancel,
+  state,
+  onStateChange,
 }: {
+  state?: RequestEditorState;
+  onStateChange?: (state: RequestEditorState) => void;
   body: Record<string, unknown>;
   endpoint?: string;
   pending: boolean;
   onSend: (body: Record<string, unknown>) => void;
   onCancel?: () => void;
 }) {
-  const original = useRef(JSON.stringify(body, null, 2)).current;
-  const [draft, setDraft] = useState(original),
-    [mode, setMode] = useState<"form" | "json">("form"),
+  const original = useRef(
+    state?.original ?? JSON.stringify(body, null, 2),
+  ).current;
+  const [draft, rawSetDraft] = useState(state?.draft ?? original),
+    [mode, rawSetMode] = useState<"form" | "json">(state?.mode ?? "form"),
+    [open, rawSetOpen] = useState(state?.open ?? false),
     [feedback, setFeedback] = useState("");
+  const current = useRef({ draft, original, mode, open });
+  current.current = { draft, original, mode, open };
+  const change = (patch: Partial<RequestEditorState>) => {
+    const next = { ...current.current, ...patch };
+    current.current = next;
+    rawSetDraft(next.draft);
+    rawSetMode(next.mode);
+    rawSetOpen(next.open);
+    onStateChange?.(next);
+  };
+  const setDraft = (draft: string) => change({ draft });
+  const setMode = (mode: "form" | "json") => change({ mode });
   const highlight = useRef<HTMLPreElement>(null),
     gutter = useRef<HTMLDivElement>(null);
   let parsed: Record<string, unknown> | undefined,
@@ -48,7 +68,14 @@ export function RequestEditor({
     /("(?:\\.|[^"\\])*"\s*:|"(?:\\.|[^"\\])*"|\b(?:true|false|null)\b|-?\b\d+(?:\.\d+)?\b)/g,
   );
   return (
-    <details className="request-editor">
+    <details
+      className="request-editor"
+      open={open}
+      onToggle={(e) => {
+        if (e.currentTarget.open !== current.current.open)
+          change({ open: e.currentTarget.open });
+      }}
+    >
       <summary>請求內容</summary>
       <p className="muted request-endpoint">
         POST /{endpoint ?? "responses"} · 驗證憑證沿用設定

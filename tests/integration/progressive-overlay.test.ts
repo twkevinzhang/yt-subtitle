@@ -96,3 +96,12 @@ it("does not substitute original text for unavailable translations", () => {
   expect(text()).toBe("");
   overlay.destroy();
 });
+it("applies a restored draft offset to playback", () => {
+  const { overlay, snapshot, text } = setup();
+  overlay.beginDraft(snapshot.key);
+  overlay.setDraftPreview(snapshot, "original", undefined, 1000);
+  expect(text()).toBe("");
+  document.querySelector("video")!.currentTime = 2.5;
+  expect(text()).toBe("ready");
+  overlay.destroy();
+});

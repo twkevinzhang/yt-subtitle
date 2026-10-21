@@ -32,6 +32,8 @@ import { AudioUploads, AudioStaging } from "./audio-uploads";
 import type { JobKey } from "../acoustic/contracts";
 import { startSearchGroup, type SearchGroupSnapshot } from "./search-group";
 import { readManualTrack, readComments } from "../youtube/context";
+import { workspaces, interruptedSearch } from "./workspaces";
+import type { WorkspacePanel } from "../shared/workspace";
 const searchGroups = new Map<
   string,
   {
@@ -41,8 +43,51 @@ const searchGroups = new Map<
     snapshot?: SearchGroupSnapshot;
     video: import("../shared/types").VideoContext;
     retries: Map<string, AbortController>;
+    generation: string;
+    persistence: Promise<void>;
   }
 >();
+function persistSearch(
+  group: NonNullable<ReturnType<typeof searchGroups.get>>,
+) {
+  const snapshot = structuredClone(group.snapshot);
+  if (!snapshot) return;
+  group.persistence = group.persistence
+    .then(async () => {
+      await workspaces.patch(group.videoId, group.generation, {
+        search: snapshot,
+        video: group.video,
+      });
+    })
+    .catch((error) => {
+      if (group.snapshot)
+        group.snapshot.storageError = String(
+          error instanceof Error ? error.message : error,
+        );
+    });
+}
+async function restoreSearch(id: string, tabId: number, videoId: string) {
+  const existing = searchGroups.get(id);
+  if (existing?.videoId === videoId) return existing;
+  if (existing) throw Error("搜尋工作已中斷");
+  const workspace = await workspaces.open(videoId);
+  const concurrent = searchGroups.get(id);
+  if (concurrent?.videoId === videoId) return concurrent;
+  if (workspace.search?.id !== id || !workspace.video)
+    throw Error("搜尋工作已中斷");
+  const group = {
+    tabId,
+    videoId,
+    video: workspace.video,
+    snapshot: interruptedSearch(workspace.search),
+    controller: new AbortController(),
+    retries: new Map<string, AbortController>(),
+    generation: workspace.generation,
+    persistence: Promise.resolve(),
+  };
+  searchGroups.set(id, group);
+  return group;
+}
 function cancelSearches(tabId: number) {
   for (const [id, group] of searchGroups)
     if (group.tabId === tabId) {
@@ -177,6 +222,76 @@ export async function handleMessage(
   await init();
   const tabId = sender.tab?.id ?? -1;
   switch (m.type) {
+    case "workspace-open": {
+      const videoId = new URL(sender.url!).searchParams.get("v")!;
+      const groups = [...searchGroups.values()].filter(
+        (g) => g.videoId === videoId,
+      );
+      await Promise.all(groups.map((g) => g.persistence));
+      let workspace = await workspaces.open(videoId);
+      if (
+        workspace.search &&
+        !groups.some((g) => g.snapshot?.id === workspace.search!.id)
+      )
+        workspace = await workspaces.patch(videoId, workspace.generation, {
+          search: interruptedSearch(workspace.search),
+        });
+      if (!workspace.panel && !workspace.search && !workspace.reset) {
+        const saved = (await listResults(videoId))[0];
+        if (saved) {
+          const settings = await getSettings();
+          workspace = await workspaces.patch(videoId, workspace.generation, {
+            panel: {
+              text: "",
+              lines: saved.lines as import("../shared/types").SubtitleLine[],
+              source: saved.subtitleSource ?? { kind: "legacy" },
+              provenance: {
+                source: saved.source,
+                model: saved.model,
+                targetLanguage: saved.key.targetLanguage,
+              },
+              mode: "original",
+              offset: saved.offsetMs,
+              onlyPending: false,
+              runMode:
+                settings.preferences.alignmentMode ?? "buffer-before-play",
+              resumeView: "edit",
+              editors: {},
+              activeRoute: "configured",
+            },
+          });
+        }
+      }
+      return workspace;
+    }
+    case "workspace-save": {
+      const videoId = new URL(sender.url!).searchParams.get("v")!;
+      return workspaces.savePanel(
+        videoId,
+        m.generation,
+        m.panel as WorkspacePanel,
+        m.baseline as WorkspacePanel | undefined,
+        {
+          fields: m.fields as (keyof WorkspacePanel)[] | undefined,
+          editorRoutes: m.editorRoutes,
+        },
+      );
+    }
+    case "workspace-reset": {
+      const videoId = new URL(sender.url!).searchParams.get("v")!;
+      const current = await workspaces.open(videoId);
+      if (current.generation !== m.generation)
+        throw Error("工作資料已改變，請重新開啟面板確認");
+      for (const [id, group] of searchGroups)
+        if (group.videoId === videoId && group.generation === m.generation) {
+          group.controller.abort();
+          group.retries.forEach((c) => c.abort());
+          searchGroups.delete(id);
+        }
+      await stopLocal(tabId);
+      runs.cancelTab(tabId);
+      return workspaces.reset(videoId, m.generation);
+    }
     case "preferences-save":
       return savePreferences(m.preferences);
     case "search-start": {
@@ -190,11 +305,25 @@ export async function handleMessage(
         { video: m.video, sources: settings.sources.filter((s) => s.enabled) },
         settings.revision,
       );
+      const workspace = await workspaces.open(m.video.videoId);
+      if (m.generation && workspace.generation !== m.generation)
+        throw Error("工作資料已重新載入，舊搜尋已取消");
+      if (workspace.search) return { id: workspace.search.id };
+      const active = [...searchGroups.values()].find(
+        (group) =>
+          group.videoId === m.video.videoId &&
+          group.generation === workspace.generation,
+      );
+      if (active?.snapshot) return { id: active.snapshot.id };
+      if (workspace.panel?.lines.length || workspace.panel?.text.trim())
+        throw Error("此影片已有工作資料，請使用繼續或重新載入");
       cancelSearches(tabId);
       const id = crypto.randomUUID(),
         group = {
           tabId,
           video: m.video,
+          generation: workspace.generation,
+          persistence: Promise.resolve(),
           retries: new Map<string, AbortController>(),
           videoId: m.video.videoId,
           controller: new AbortController(),
@@ -213,6 +342,7 @@ export async function handleMessage(
             group.snapshot.routes[route] = snapshot.routes[route];
             if (snapshot.routes[route].phase !== "pending") finished.add(route);
           }
+          persistSearch(group);
         },
         undefined,
         (signal) => readComments(tabId, m.video.videoId, signal),
@@ -225,14 +355,18 @@ export async function handleMessage(
           };
         },
       ).catch(() => {});
+      await group.persistence;
       return { id };
     }
     case "search-route-retry":
     case "search-route-cancel": {
-      const group = searchGroups.get(m.id);
+      const group = await restoreSearch(
+        m.id,
+        tabId,
+        new URL(sender.url!).searchParams.get("v")!,
+      );
       if (
         !group?.snapshot ||
-        group.tabId !== tabId ||
         group.videoId !== new URL(sender.url!).searchParams.get("v")
       )
         throw new Error("搜尋工作已中斷");
@@ -259,11 +393,13 @@ export async function handleMessage(
           (snapshot) => {
             if (group.snapshot)
               group.snapshot.routes[m.route] = snapshot.routes[m.route];
+            persistSearch(group);
           },
           undefined,
           (signal) => readComments(tabId, group.videoId, signal),
           { onlyRoute: m.route, body: m.body, previous: group.snapshot },
         );
+        await group.persistence;
         return group.snapshot.routes[m.route];
       } finally {
         group.retries.delete(m.route);
@@ -271,10 +407,13 @@ export async function handleMessage(
     }
     case "search-group":
     case "search-cancel": {
-      const group = searchGroups.get(m.id);
+      const group = await restoreSearch(
+        m.id,
+        tabId,
+        new URL(sender.url!).searchParams.get("v")!,
+      );
       if (
         !group ||
-        group.tabId !== tabId ||
         group.videoId !== new URL(sender.url!).searchParams.get("v")
       )
         throw new Error("搜尋工作已中斷");
@@ -282,6 +421,7 @@ export async function handleMessage(
         group.controller.abort();
         group.retries.forEach((c) => c.abort());
       }
+      await group.persistence;
       return group.snapshot;
     }
     case "read-manual-track":

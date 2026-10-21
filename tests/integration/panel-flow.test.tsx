@@ -16,7 +16,17 @@ const mock = vi.hoisted(() => ({
   cancel: vi.fn(async () => {}),
   publish: undefined as any,
 }));
-vi.mock("../../src/shared/messages", () => ({ request: mock.request }));
+vi.mock("../../src/shared/messages", () => ({
+  request: (message: any) =>
+    message.type === "workspace-open"
+      ? Promise.resolve({
+          schemaVersion: 1,
+          videoId: "12345678901",
+          generation: "test-generation",
+          updatedAt: 0,
+        })
+      : mock.request(message),
+}));
 vi.mock("../../src/ui/user-action", () => ({ isUserAction: () => true }));
 vi.mock("../../src/ui/use-subtitle-work", () => ({
   useSubtitleWork: (_b: any, p: any) => {
@@ -175,17 +185,15 @@ it("keeps untimed rows visible and blocks save/export until excluded or manually
     screen.getByRole("button", { name: "套用並保存" }).hasAttribute("disabled"),
   ).toBe(false);
 });
-it("keeps a previous draft after malformed paste and leaves its text unchanged", async () => {
+it("keeps the selected draft and locks replacement source actions", async () => {
   setup();
   await paste("1\n00:00:01,000 --> 00:00:03,000\nprevious");
-  fireEvent.click(screen.getByRole("button", { name: "貼入字幕" }));
-  fireEvent.change(screen.getByLabelText("字幕全文"), {
-    target: { value: "" },
-  });
-  fireEvent.click(screen.getByRole("button", { name: "使用貼入字幕" }));
-  await screen.findByRole("alert");
+  expect(
+    (screen.getByRole("button", { name: "貼入字幕" }) as HTMLButtonElement)
+      .disabled,
+  ).toBe(true);
   fireEvent.click(screen.getByRole("button", { name: "← 返回歌詞" }));
-  fireEvent.click(screen.getByRole("button", { name: "製作／編輯" }));
+  fireEvent.click(screen.getByRole("button", { name: "繼續" }));
   expect((screen.getByLabelText("原文") as HTMLTextAreaElement).value).toBe(
     "previous",
   );

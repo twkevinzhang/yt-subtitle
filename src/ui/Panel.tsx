@@ -32,6 +32,13 @@ import { SearchGroups } from "./SearchGroups";
 import { Editor } from "./Editor";
 import { LyricsPreview } from "./LyricsPreview";
 import { ContentSkeleton } from "./Skeleton";
+import { ReloadDialog } from "./ReloadDialog";
+import type {
+  VideoWorkspace,
+  WorkspacePanel,
+  RequestEditorState,
+  AlignmentCheckpoint,
+} from "../shared/workspace";
 import { isUserAction } from "./user-action";
 const modeNames: Record<AlignmentMode, string> = {
   "buffer-before-play": "先緩衝再播放",
@@ -94,8 +101,36 @@ export function Panel({
         }
       | undefined
     >(undefined);
+  const [restored, setRestored] = useState(false),
+    [storageError, setStorageError] = useState("");
+  const [confirmReload, setConfirmReload] = useState(false),
+    [reloading, setReloading] = useState(false);
+  const [editors, setEditors] = useState<
+    Partial<Record<SearchRoute, RequestEditorState>>
+  >({});
+  const [activeRoute, setActiveRoute] = useState<SearchRoute>("configured");
+  const [checkpoint, setCheckpoint] = useState<AlignmentCheckpoint>();
+  const generation = useRef(""),
+    autosaveReady = useRef(false),
+    lastSaved = useRef("");
+  const resumeView = useRef<WorkspacePanel["resumeView"]>("search");
+  const latestPanel = useRef<WorkspacePanel | undefined>(undefined);
+  const resetting = useRef(false);
+  const baselinePanel = useRef<WorkspacePanel | undefined>(undefined);
+  const saveSequence = useRef(0);
+  const dirtyFields = useRef(new Map<string, number>());
   const prefs = settings?.preferences ?? fallback;
   const onProgress = (p: AlignmentProgress) => {
+    if (resetting.current) return;
+    const alignment = {
+      checked: p.checked,
+      ready: p.ready,
+      phase: p.phase,
+      error: p.error,
+    };
+    setCheckpoint(alignment);
+    if (latestPanel.current)
+      savePanel({ ...latestPanel.current, lines: p.lines, alignment });
     setLines(p.lines);
     if (p.error) setNotice(p.error);
     if (p.phase !== "complete" && (p.mode ?? runMode) === "complete-before-use")
@@ -116,10 +151,178 @@ export function Panel({
       },
       mode,
       prefs,
+      offset,
     );
   };
   const work = useSubtitleWork(binding, onProgress, setNotice),
     busy = work.busy || reading || searching;
+  const savePanel = (panel: WorkspacePanel) => {
+    if (!autosaveReady.current || resetting.current || !generation.current)
+      return;
+    const encoded = JSON.stringify(panel);
+    if (encoded === lastSaved.current) return;
+    lastSaved.current = encoded;
+    const baseline = baselinePanel.current;
+    if (
+      !baseline &&
+      !panel.text.trim() &&
+      !panel.lines.length &&
+      !Object.keys(panel.editors).length
+    ) {
+      baselinePanel.current = structuredClone(panel);
+      return;
+    }
+    const sequence = ++saveSequence.current;
+    for (const key of new Set([
+      ...Object.keys(panel),
+      ...Object.keys(baseline ?? {}),
+    ]) as Set<keyof WorkspacePanel>) {
+      if (key === "editors") {
+        for (const route of ["configured", "comments", "web"] as const)
+          if (
+            JSON.stringify(panel.editors[route]) !==
+            JSON.stringify(baseline?.editors[route])
+          )
+            dirtyFields.current.set("editors." + route, sequence);
+      } else if (JSON.stringify(panel[key]) !== JSON.stringify(baseline?.[key]))
+        dirtyFields.current.set(key, sequence);
+    }
+    baselinePanel.current = structuredClone(panel);
+    const sent = new Map(dirtyFields.current),
+      expectedGeneration = generation.current;
+    const fields = [
+      ...new Set([...sent.keys()].map((key) => key.split(".")[0])),
+    ];
+    const editorRoutes = [...sent.keys()]
+      .filter((key) => key.startsWith("editors."))
+      .map((key) => key.slice(8) as SearchRoute);
+    void request({
+      type: "workspace-save",
+      generation: expectedGeneration,
+      panel,
+      fields,
+      editorRoutes,
+    })
+      .then(() => {
+        if (generation.current !== expectedGeneration) return;
+        for (const [key, version] of sent)
+          if (dirtyFields.current.get(key) === version)
+            dirtyFields.current.delete(key);
+      })
+      .catch((error) => {
+        if (generation.current !== expectedGeneration) return;
+        lastSaved.current = "";
+        if (live.current)
+          setStorageError(
+            error instanceof Error ? error.message : String(error),
+          );
+      });
+  };
+  useEffect(() => {
+    let current = true;
+    autosaveReady.current = false;
+    setRestored(false);
+    void request<VideoWorkspace>({ type: "workspace-open" })
+      .then((record) => {
+        if (!current) return;
+        if (!record?.generation)
+          throw Error("無法讀取已儲存工作，為避免覆寫資料，請重新開啟面板");
+        generation.current = record.generation;
+        if (record.search) {
+          setSearch(record.search);
+          searchId.current = record.search.id;
+        }
+        const panel = record.panel;
+        if (panel) {
+          setText(panel.text);
+          setLines(panel.lines);
+          setMode(panel.mode);
+          setOffset(panel.offset);
+          setOnlyPending(panel.onlyPending);
+          setRunMode(panel.runMode);
+          setManualId(panel.manualId);
+          source.current = panel.source;
+          provenance.current = panel.provenance;
+          resumeView.current = panel.resumeView;
+          setEditors(panel.editors);
+          setActiveRoute(panel.activeRoute);
+          const interrupted =
+            panel.alignment &&
+            ["loading", "buffering", "running"].includes(panel.alignment.phase);
+          setCheckpoint(
+            interrupted
+              ? { ...panel.alignment!, phase: "partial" }
+              : panel.alignment,
+          );
+          setNotice(
+            interrupted
+              ? "已恢復上次工作；校時已中斷，已完成的部分保留，可接續補時。"
+              : (panel.notice ?? ""),
+          );
+          setError(panel.error ?? "");
+          lastSaved.current = JSON.stringify(panel);
+          baselinePanel.current = structuredClone(panel);
+        }
+        autosaveReady.current = true;
+        setRestored(true);
+      })
+      .catch((e) => {
+        if (current)
+          setStorageError(e instanceof Error ? e.message : String(e));
+      });
+    return () => {
+      current = false;
+      autosaveReady.current = false;
+    };
+  }, [binding.videoId]);
+  if (view !== "lyrics") resumeView.current = view;
+  latestPanel.current = {
+    text,
+    lines,
+    mode,
+    offset,
+    onlyPending,
+    runMode,
+    source: source.current,
+    provenance: provenance.current,
+    manualId,
+    resumeView: resumeView.current,
+    editors,
+    activeRoute,
+    alignment: checkpoint,
+    notice,
+    error,
+  };
+  useEffect(() => {
+    if (restored && latestPanel.current) savePanel(latestPanel.current);
+  }, [
+    restored,
+    text,
+    lines,
+    mode,
+    offset,
+    onlyPending,
+    runMode,
+    manualId,
+    view,
+    editors,
+    activeRoute,
+    checkpoint,
+    notice,
+    error,
+  ]);
+  useEffect(() => {
+    const flush = () => {
+      if (latestPanel.current) savePanel(latestPanel.current);
+    };
+    window.addEventListener("pagehide", flush);
+    return () => window.removeEventListener("pagehide", flush);
+  }, []);
+  const hasData =
+    !!search ||
+    lines.length > 0 ||
+    !!text.trim() ||
+    Object.keys(editors).length > 0;
   const attempt = async (fn: () => Promise<unknown>) => {
     setError("");
     try {
@@ -152,11 +355,13 @@ export function Panel({
         setVideo(ctx.video);
         setTracks(ctx.tracks);
         setManualId(
-          selectManualTrack(
-            ctx.tracks,
-            ctx.selectedTrackId,
-            (publicSettings?.preferences ?? fallback).targetLanguage,
-          )?.id,
+          (previous) =>
+            previous ??
+            selectManualTrack(
+              ctx.tracks,
+              ctx.selectedTrackId,
+              (publicSettings?.preferences ?? fallback).targetLanguage,
+            )?.id,
         );
       })
       .catch((e) => {
@@ -185,7 +390,11 @@ export function Panel({
         );
     };
   }, [binding.videoId]);
-  const preview = (draft: SubtitleLine[], displayMode = mode) => {
+  const preview = (
+    draft: SubtitleLine[],
+    displayMode = mode,
+    previewOffset = offset,
+  ) => {
     const key = {
       runId: crypto.randomUUID(),
       tabId: 0,
@@ -198,12 +407,24 @@ export function Panel({
       { key, sequence: 1, lines: draft, segments: {}, modelState: "unloaded" },
       displayMode,
       prefs,
+      previewOffset,
     );
   };
-  const adopt = async (draft: SubtitleLine[], origin: SubtitleSource) => {
+  const adopt = async (
+    draft: SubtitleLine[],
+    origin: SubtitleSource,
+    expectedGeneration = generation.current,
+  ) => {
     if (!video) throw new Error("影片資訊尚未就緒");
     if (!draft.length) throw new Error("請先提供字幕");
     await work.cancel();
+    if (
+      !live.current ||
+      resetting.current ||
+      generation.current !== expectedGeneration
+    )
+      return;
+    setCheckpoint(undefined);
     source.current = origin;
     setLines(draft);
     setMode(prefs.mode);
@@ -225,7 +446,7 @@ export function Panel({
         (l) => l.excluded || (l.startMs !== undefined && l.endMs !== undefined),
       )
     ) {
-      preview(draft, prefs.mode);
+      preview(draft, prefs.mode, 0);
       setNotice("已保留來源時間碼，可直接使用、保存或下載。");
       return;
     }
@@ -235,13 +456,19 @@ export function Panel({
   const useYT = (trackId = manualId) =>
     attempt(async () => {
       if (!video || !trackId) return;
+      const expectedGeneration = generation.current;
       setReading(true);
       try {
         const cues = await request<Cue[]>({
           type: "read-manual-track",
           trackId,
         });
-        if (!live.current) return;
+        if (
+          !live.current ||
+          resetting.current ||
+          generation.current !== expectedGeneration
+        )
+          return;
         const draft = cues.map((cue, i) =>
           lockTiming(
             {
@@ -257,15 +484,60 @@ export function Panel({
           ),
         );
         setReading(false);
-        await adopt(draft, { kind: "youtube", trackId });
+        await adopt(draft, { kind: "youtube", trackId }, expectedGeneration);
         setManualId(trackId);
       } finally {
-        if (live.current) setReading(false);
+        if (live.current && generation.current === expectedGeneration)
+          setReading(false);
       }
+    });
+  const followSearch = async (id: string) => {
+    const deadline = Date.now() + 125000;
+    while (live.current && searchId.current === id) {
+      if (Date.now() > deadline) throw new Error("搜尋工作已中斷，請重新搜尋");
+      const snapshot = await request<SearchGroupSnapshot | undefined>({
+        type: "search-group",
+        id: id,
+      });
+      if (!live.current || searchId.current !== id) return;
+      if (snapshot) {
+        setSearch(snapshot);
+        if (snapshot.storageError) setStorageError(snapshot.storageError);
+        if (Object.values(snapshot.routes).every((r) => r.phase !== "pending"))
+          break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+  };
+  const continueWork = () =>
+    void attempt(async () => {
+      if (lines.length && resumeView.current !== "search") {
+        setView("edit");
+        preview(lines);
+        return;
+      }
+      if (search) {
+        setView("search");
+        if (Object.values(search.routes).some((r) => r.phase === "pending")) {
+          setSearching(true);
+          try {
+            await followSearch(search.id);
+          } finally {
+            if (live.current) setSearching(false);
+          }
+        }
+        return;
+      }
+      setView(resumeView.current);
     });
   const startSearch = () =>
     attempt(async () => {
       if (!video || !settings?.configured) return;
+      if (hasData && !resetting.current) {
+        setView(lines.length ? "edit" : "search");
+        return;
+      }
+      const expectedGeneration = generation.current;
       const ownRevision = ++searchRevision.current;
       setView("search");
       setSearch(undefined);
@@ -283,6 +555,7 @@ export function Panel({
         };
         const result = await request<{ id: string }>({
           type: "search-start",
+          generation: expectedGeneration,
           video,
           consent,
         });
@@ -291,32 +564,74 @@ export function Panel({
           return;
         }
         searchId.current = result.id;
-        const deadline = Date.now() + 125000;
-        while (live.current && searchId.current === result.id) {
-          if (Date.now() > deadline)
-            throw new Error("搜尋工作已中斷，請重新搜尋");
-          const snapshot = await request<SearchGroupSnapshot | undefined>({
-            type: "search-group",
-            id: result.id,
-          });
-          if (!live.current || searchId.current !== result.id) return;
-          if (snapshot) {
-            setSearch(snapshot);
-            if (
-              Object.values(snapshot.routes).every((r) => r.phase !== "pending")
-            )
-              break;
-          }
-          await new Promise((resolve) => setTimeout(resolve, 500));
-        }
+        await followSearch(result.id);
       } finally {
         if (live.current && ownRevision === searchRevision.current)
           setSearching(false);
       }
     });
+  const reload = () =>
+    void attempt(async () => {
+      if (!video || !generation.current || resetting.current) return;
+      resetting.current = true;
+      setReloading(true);
+      searchRevision.current++;
+      try {
+        await work.cancel();
+
+        const fresh = await request<VideoWorkspace>({
+          type: "workspace-reset",
+          generation: generation.current,
+        });
+        generation.current = fresh.generation;
+        searchId.current = undefined;
+        source.current = { kind: "paste" };
+        provenance.current = undefined;
+        previewRun.current = undefined;
+        resumeView.current = "search";
+        setReading(false);
+        setSearching(false);
+        setSearch(undefined);
+        setText("");
+        setLines([]);
+        setEditors({});
+        setActiveRoute("configured");
+        setCheckpoint(undefined);
+        setOffset(0);
+        setOnlyPending(false);
+        setNotice("");
+        setError("");
+        setStorageError("");
+        setMode(prefs.mode);
+        setRunMode(prefs.alignmentMode ?? "buffer-before-play");
+        overlay.stop();
+        lastSaved.current = "";
+        baselinePanel.current = undefined;
+        dirtyFields.current.clear();
+        setConfirmReload(false);
+        setView("search");
+        // Defer one render so the new search sees only the new workspace state.
+        if (settings?.configured) setReloadSearch(true);
+        else {
+          setView("lyrics");
+          setNotice("已清除工作資料；設定 AI 服務後即可重新搜尋。");
+        }
+      } finally {
+        resetting.current = false;
+        setReloading(false);
+      }
+    });
+  const [reloadSearch, setReloadSearch] = useState(false);
+  useEffect(() => {
+    if (reloadSearch) {
+      setReloadSearch(false);
+      void startSearch();
+    }
+  }, [reloadSearch]);
   const choose = (candidate: LyricCandidate, route: SearchRoute) =>
     void attempt(async () => {
       if (!video) return;
+      const expectedGeneration = generation.current;
       searchRevision.current++;
       if (searchId.current) {
         const id = searchId.current;
@@ -331,6 +646,7 @@ export function Panel({
           video.durationMs,
         ),
         { kind: route, url: candidate.url },
+        expectedGeneration,
       );
     });
   const issues = video ? validateTiming(lines, video.durationMs, offset) : [],
@@ -421,7 +737,13 @@ export function Panel({
           )}
           <h2>AI 歌詞</h2>
         </div>
-        <div className="row">
+        <div className="row header-actions">
+          <button
+            disabled={!restored || reloading || !video}
+            onClick={() => setConfirmReload(true)}
+          >
+            重新載入
+          </button>
           <button onClick={() => void request({ type: "open-options" })}>
             設定
           </button>
@@ -430,8 +752,23 @@ export function Panel({
           </button>
         </div>
       </header>
+      {confirmReload && (
+        <ReloadDialog
+          busy={reloading}
+          onCancel={() => setConfirmReload(false)}
+          onConfirm={reload}
+        />
+      )}
       <div className="workspace">
         <section className="panel-body stack" aria-label="歌詞操作與設定">
+          {!!storageError && (
+            <p role="alert" className="error">
+              {storageError}
+            </p>
+          )}
+          {!restored && !storageError && (
+            <p role="status">正在恢復本機工作資料…</p>
+          )}
           {!!notice && (
             <p role="status" className="notice">
               {notice}
@@ -462,7 +799,7 @@ export function Panel({
           {
             <div hidden={view !== "lyrics"} className="stack">
               <SourceActions
-                busy={busy || !video}
+                busy={busy || !video || !restored || hasData || reloading}
                 configured={!!settings?.configured}
                 hasManual={!!manualTracks(tracks).length}
                 onAI={(event) => {
@@ -471,6 +808,20 @@ export function Panel({
                 onYT={() => void useYT()}
                 onPaste={() => setView("paste")}
               />
+              {hasData && (
+                <>
+                  <button
+                    className="primary continue-work"
+                    disabled={!restored || reloading}
+                    onClick={continueWork}
+                  >
+                    繼續
+                  </button>
+                  <p className="muted">
+                    已保留這支影片的工作資料。繼續先前工作，或使用標題列的重新載入清除重做。
+                  </p>
+                </>
+              )}
               {!settings?.configured && (
                 <p className="muted">
                   尚未設定 AI 服務；YT 字幕與貼入字幕仍可使用。
@@ -499,9 +850,21 @@ export function Panel({
           {view === "search" && (
             <>
               <h3>三路字幕搜尋</h3>
+              {!!lines.length && (
+                <button onClick={() => setView("edit")}>回到歌詞與校時</button>
+              )}
               <SearchGroups
                 key={search?.id ?? "loading"}
                 snapshot={search}
+                editorStates={editors}
+                activeRoute={activeRoute}
+                onActiveRoute={setActiveRoute}
+                onEditorChange={(route, state) => {
+                  const next = { ...editors, [route]: state };
+                  setEditors(next);
+                  if (latestPanel.current)
+                    savePanel({ ...latestPanel.current, editors: next });
+                }}
                 onSelect={choose}
                 onRetry={async (route, body) => {
                   if (!search) return;
@@ -548,14 +911,6 @@ export function Panel({
                   取消搜尋
                 </button>
               )}
-              <button
-                disabled={busy}
-                onClick={(event) => {
-                  if (isUserAction(event)) void startSearch();
-                }}
-              >
-                重新搜尋
-              </button>
             </>
           )}
           {view === "paste" && (
@@ -592,7 +947,7 @@ export function Panel({
             <>
               <div className="row">
                 <button
-                  disabled={busy}
+                  disabled={busy || hasData}
                   onClick={(event) => {
                     if (isUserAction(event)) void startSearch();
                   }}
@@ -600,12 +955,15 @@ export function Panel({
                   AI 找字幕
                 </button>
                 <button
-                  disabled={busy || !manualTracks(tracks).length}
+                  disabled={busy || hasData || !manualTracks(tracks).length}
                   onClick={() => void useYT()}
                 >
                   YT 字幕
                 </button>
-                <button disabled={busy} onClick={() => setView("paste")}>
+                <button
+                  disabled={busy || hasData}
+                  onClick={() => setView("paste")}
+                >
                   貼入字幕
                 </button>
               </div>
@@ -615,7 +973,7 @@ export function Panel({
                   <select
                     aria-label="人工 YT 字幕軌"
                     value={manualId ?? ""}
-                    disabled={busy}
+                    disabled={busy || hasData}
                     onChange={(event) => void useYT(event.target.value)}
                   >
                     {manualTracks(tracks).map((t) => (
@@ -625,6 +983,17 @@ export function Panel({
                     ))}
                   </select>
                 </label>
+              )}
+              {search && (
+                <button onClick={() => setView("search")}>
+                  查看搜尋結果與請求
+                </button>
+              )}
+              {checkpoint && !work.busy && (
+                <p className="muted">
+                  已保留校時進度：已檢查 {checkpoint.checked.length} 個音訊區段
+                  {pending.length ? "，可接續補時。" : "。"}
+                </p>
               )}
               <label>
                 本次校時模式
@@ -756,11 +1125,16 @@ export function Panel({
                   onClick={() =>
                     void attempt(async () => {
                       if (video)
-                        await work.start(lines, runMode, video.durationMs);
+                        await work.start(
+                          lines,
+                          runMode,
+                          video.durationMs,
+                          checkpoint,
+                        );
                     })
                   }
                 >
-                  重新補時
+                  {checkpoint ? "接續補時" : "重新補時"}
                 </button>
               </div>
             </>
@@ -781,6 +1155,7 @@ export function Panel({
                       const draft = value.lines.map((l) =>
                         lockTiming(l, video.durationMs),
                       );
+                      setCheckpoint(undefined);
                       setLines(draft);
                       setOffset(value.offsetMs);
                       source.current = value.subtitleSource ?? {

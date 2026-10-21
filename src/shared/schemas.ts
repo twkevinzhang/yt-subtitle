@@ -150,6 +150,16 @@ export const localInferenceSchema = z.object({
   lines: z.array(lineSchema).max(10000).optional(),
 });
 const msg = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("workspace-open") }),
+  z.object({
+    type: z.literal("workspace-save"),
+    generation: z.string(),
+    panel: z.unknown(),
+    baseline: z.unknown().optional(),
+    fields: z.array(z.string()).optional(),
+    editorRoutes: z.array(z.enum(["configured", "comments", "web"])).optional(),
+  }),
+  z.object({ type: z.literal("workspace-reset"), generation: z.string() }),
   z.object({ type: z.literal("local-model"), input: localInferenceSchema }),
   z.object({ type: z.literal("local-model-cancel"), key: jobKeySchema }),
   z.object({
@@ -158,6 +168,7 @@ const msg = z.discriminatedUnion("type", [
   }),
   z.object({
     type: z.literal("search-start"),
+    generation: z.string().optional(),
     video: videoSchema,
     consent: consentSchema,
   }),

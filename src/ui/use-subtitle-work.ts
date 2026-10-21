@@ -52,6 +52,7 @@ export function useSubtitleWork(
     lines: SubtitleLine[],
     mode: AlignmentMode,
     durationMs: number,
+    resume?: Pick<AlignmentProgress, "checked" | "ready">,
   ) {
     const launch = ++launchRevision.current;
     await stop();
@@ -83,7 +84,7 @@ export function useSubtitleWork(
       if (latest && !binding.isAd()) playback.update(latest);
     }, 250);
     const task = runSubtitleAlignment(
-      { key, lines, durationMs, mode, signal: controller.signal },
+      { key, lines, durationMs, mode, signal: controller.signal, resume },
       {
         model: createLocalModelClient(key, controller.signal),
         positionMs: () => Math.max(0, binding.video.currentTime * 1000),

@@ -1,4 +1,5 @@
-import { test, expect } from "@playwright/test";
+import path from "node:path";
+import { chromium, test, expect, type BrowserContext } from "@playwright/test";
 import { createServer } from "node:http";
 import { mkdir } from "node:fs/promises";
 import { extensionTest, watchFixture } from "./support/extension";
@@ -64,6 +65,7 @@ test("Brave: three independent search requests, route failure isolation and expl
   });
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
   const app = await extensionTest();
+  let restarted: BrowserContext | undefined;
   try {
     await app.worker.evaluate(
       async (baseUrl) =>
@@ -96,15 +98,19 @@ test("Brave: three independent search requests, route failure isolation and expl
         }),
       `http://127.0.0.1:${(server.address() as any).port}/v1`,
     );
-    await app.context.route("https://www.youtube.com/watch*", async (route) =>
-      route.fulfill({
-        contentType: "text/html",
-        body: (await watchFixture()).replace(
-          "</body>",
-          '<div id="comments"><ytd-comment-thread-renderer><div id="pinned-comment-badge">置頂</div><a href="/watch?v=12345678901&lc=test-comment">date</a><div id="content-text">actual fixture lyrics</div></ytd-comment-thread-renderer></div></body>',
-        ),
-      }),
+    const watchHtml = (await watchFixture())
+      .replace(
+        "</head>",
+        "<style>@media(max-width:700px){#watch-shell{display:block;margin:0}#secondary{width:100%}#movie_player{height:480px}}</style></head>",
+      )
+      .replace(
+        "</body>",
+        '<div id="comments"><ytd-comment-thread-renderer><div id="pinned-comment-badge">置頂</div><a href="/watch?v=12345678901&lc=test-comment">date</a><div id="content-text">actual fixture lyrics</div></ytd-comment-thread-renderer></div></body>',
+      );
+    await app.context.route("https://www.youtube.com/watch*", (route) =>
+      route.fulfill({ contentType: "text/html", body: watchHtml }),
     );
+    app.context.setDefaultTimeout(15000);
     const page = await app.context.newPage();
     await page.goto("https://www.youtube.com/watch?v=12345678901");
     await page.getByRole("button", { name: "AI 歌詞", exact: true }).click();
@@ -197,7 +203,146 @@ test("Brave: three independent search requests, route failure isolation and expl
     ).toHaveValue("web lyrics");
     await expect(page.getByLabel("第 1 句開始秒數")).toHaveValue("2");
     expect(requests).toHaveLength(4);
+
+    await page.getByRole("button", { name: "查看搜尋結果與請求" }).click();
+    await editor.fill('{"incomplete":');
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await page.reload();
+    await page.getByRole("button", { name: "AI 歌詞", exact: true }).click();
+    await expect(
+      page.getByRole("button", { name: "AI 找字幕", exact: true }),
+    ).toBeDisabled();
+    await expect(
+      page.getByRole("button", { name: "YT 字幕", exact: true }),
+    ).toBeDisabled();
+    await expect(
+      page.getByRole("button", { name: "貼入字幕", exact: true }),
+    ).toBeDisabled();
+    await page.getByRole("button", { name: "繼續", exact: true }).click();
+    await expect(editor).toHaveValue('{"incomplete":');
+    await page.getByRole("button", { name: "回到歌詞與校時" }).click();
+    await expect(
+      page.getByRole("textbox", { name: "原文", exact: true }),
+    ).toHaveValue("web lyrics");
+    await page
+      .getByRole("textbox", { name: "原文", exact: true })
+      .fill("edited lyric");
+    await page.getByLabel("第 1 句開始秒數").fill("2.5");
+    await page.getByRole("button", { name: "查看搜尋結果與請求" }).click();
+    await expect(editor).toHaveValue('{"incomplete":');
+    expect(requests).toHaveLength(4);
+    await page.getByRole("button", { name: "回到歌詞與校時" }).click();
+
+    // Close the actual browser, then reopen its existing profile and extension.
+    await app.context.close();
+    restarted = await chromium.launchPersistentContext(
+      path.join(path.dirname(app.ext), "profile"),
+      {
+        executablePath:
+          process.env.TEST_BROWSER ||
+          "C:/Program Files/BraveSoftware/Brave-Browser/Application/brave.exe",
+        headless: true,
+        ignoreDefaultArgs: ["--disable-extensions"],
+        args: [
+          "--autoplay-policy=no-user-gesture-required",
+          "--disable-extensions-except=" + app.ext,
+          "--load-extension=" + app.ext,
+        ],
+        viewport: { width: 1440, height: 1000 },
+      },
+    );
+    restarted.setDefaultTimeout(15000);
+    await restarted.route("https://www.youtube.com/watch*", (route) =>
+      route.fulfill({ contentType: "text/html", body: watchHtml }),
+    );
+    const restoredPage = await restarted.newPage();
+    await restoredPage.goto("https://www.youtube.com/watch?v=12345678901");
+    await restoredPage
+      .getByRole("button", { name: "AI 歌詞", exact: true })
+      .click();
+    await expect(
+      restoredPage.getByRole("button", { name: "繼續", exact: true }),
+    ).toBeEnabled();
+    await restoredPage.setViewportSize({ width: 483, height: 850 });
+    await restoredPage.evaluate(() =>
+      document.documentElement.setAttribute("dark", ""),
+    );
+    await restoredPage
+      .getByRole("region", { name: "AI 歌詞工作面板" })
+      .screenshot({ path: "artifacts/subtitle-sources/persisted-home.png" });
+    await restoredPage
+      .getByRole("button", { name: "繼續", exact: true })
+      .click();
+    await expect(
+      restoredPage.getByRole("textbox", { name: "原文", exact: true }),
+    ).toHaveValue("edited lyric");
+    await expect(restoredPage.getByLabel("第 1 句開始秒數")).toHaveValue("2.5");
+    await restoredPage
+      .getByRole("button", { name: "查看搜尋結果與請求" })
+      .click();
+    const restoredWeb = restoredPage.getByRole("tabpanel", {
+      name: "全網搜尋",
+      exact: true,
+    });
+    await expect(
+      restoredWeb.getByRole("textbox", { name: "完整 API JSON" }),
+    ).toHaveValue('{"incomplete":');
+    await restoredWeb
+      .locator("summary")
+      .filter({ hasText: /^AI 原始回覆$/ })
+      .click();
+    await expect(
+      restoredWeb
+        .locator("details[open]")
+        .filter({
+          has: restoredPage.locator("summary", { hasText: /^AI 原始回覆$/ }),
+        })
+        .locator("pre"),
+    ).toContainText("web lyrics");
+    expect(requests).toHaveLength(4);
+    await restoredPage
+      .getByRole("button", { name: "重新載入", exact: true })
+      .click();
+    await expect(
+      restoredPage.getByRole("button", { name: "取消", exact: true }),
+    ).toBeFocused();
+    await restoredPage.screenshot({
+      path: "artifacts/subtitle-sources/reload-confirmation.png",
+    });
+    await restoredPage
+      .getByRole("button", { name: "取消", exact: true })
+      .click();
+    await expect(
+      restoredWeb.getByRole("textbox", { name: "完整 API JSON" }),
+    ).toHaveValue('{"incomplete":');
+    expect(requests).toHaveLength(4);
+    // Selecting a restored candidate must also work without an in-memory search group.
+    await restoredWeb.getByRole("button", { name: "使用這個版本" }).click();
+    await expect(
+      restoredPage.getByRole("textbox", { name: "原文", exact: true }),
+    ).toHaveValue("web lyrics");
+    await restoredPage
+      .getByRole("button", { name: "重新載入", exact: true })
+      .click();
+    await restoredPage.getByRole("button", { name: "清除並重新搜尋" }).click();
+    await expect.poll(() => requests.length).toBe(7);
+    await expect(
+      restoredPage
+        .getByRole("tabpanel", { name: "設定的歌詞來源", exact: true })
+        .getByRole("button", { name: "使用這個版本" }),
+    ).toBeVisible();
+    await restoredPage.getByRole("tab", { name: "全網搜尋" }).click();
+    await restoredPage
+      .getByRole("tabpanel", { name: "全網搜尋", exact: true })
+      .locator("summary")
+      .filter({ hasText: /^請求內容$/ })
+      .click();
+    await expect(
+      restoredPage.getByRole("textbox", { name: "模型", exact: true }),
+    ).toHaveValue("m");
+    expect(requests).toHaveLength(7);
   } finally {
+    await restarted?.close();
     await app.close();
     server.closeAllConnections();
     await new Promise<void>((r) => server.close(() => r()));

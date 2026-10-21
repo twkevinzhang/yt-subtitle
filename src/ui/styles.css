@@ -1100,3 +1100,62 @@ html.options-page body {
     visibility: hidden;
   }
 }
+.reload-dialog {
+  width: min(420px, calc(100vw - 32px));
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--text);
+  padding: 22px;
+  box-shadow: 0 16px 60px #0008;
+}
+.reload-dialog::backdrop {
+  background: #0009;
+}
+.reload-dialog h3 {
+  margin: 0 0 12px;
+}
+.reload-dialog p {
+  line-height: 1.75;
+}
+.reload-dialog .row {
+  justify-content: flex-end;
+  margin-top: 22px;
+}
+button.danger {
+  color: var(--error-text);
+  background: var(--error-bg);
+  border-color: var(--error-text);
+}
+.continue-work {
+  width: 100%;
+}
+.panel header {
+  gap: 8px;
+}
+.panel-title h2 {
+  white-space: nowrap;
+}
+.header-actions {
+  flex-wrap: nowrap;
+  gap: 6px;
+}
+.header-actions button {
+  padding: 8px 9px;
+  white-space: nowrap;
+}
+@container (max-width: 359px) {
+  .panel-title {
+    gap: 5px;
+  }
+  .panel-title h2 {
+    font-size: 16px;
+  }
+  .header-actions {
+    gap: 4px;
+  }
+  .header-actions button {
+    padding: 7px 5px;
+    font-size: 12px;
+  }
+}

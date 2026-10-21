@@ -1,4 +1,5 @@
 import React, { useState, useId } from "react";
+import type { RequestEditorState } from "../shared/workspace";
 import { RequestEditor } from "./RequestEditor";
 import type {
   SearchGroupSnapshot,
@@ -15,7 +16,15 @@ export function SearchGroups({
   onSelect,
   onRetry,
   onCancel,
+  editorStates,
+  onEditorChange,
+  activeRoute,
+  onActiveRoute,
 }: {
+  editorStates?: Partial<Record<SearchRoute, RequestEditorState>>;
+  onEditorChange?: (route: SearchRoute, state: RequestEditorState) => void;
+  activeRoute?: SearchRoute;
+  onActiveRoute?: (route: SearchRoute) => void;
   snapshot?: SearchGroupSnapshot;
   onRetry?: (
     route: SearchRoute,
@@ -24,7 +33,13 @@ export function SearchGroups({
   onCancel?: (route: SearchRoute) => void | Promise<void>;
   onSelect: (candidate: LyricCandidate, route: SearchRoute) => void;
 }) {
-  const [active, setActive] = useState<SearchRoute>("configured");
+  const [active, rawSetActive] = useState<SearchRoute>(
+    activeRoute ?? "configured",
+  );
+  const setActive = (route: SearchRoute) => {
+    rawSetActive(route);
+    onActiveRoute?.(route);
+  };
   const [pending, setPending] = useState<Partial<Record<SearchRoute, boolean>>>(
     {},
   );
@@ -161,6 +176,8 @@ export function SearchGroups({
             )}
             {result?.requestBody && (
               <RequestEditor
+                state={editorStates?.[route]}
+                onStateChange={(state) => onEditorChange?.(route, state)}
                 body={result.requestBody}
                 endpoint={result.endpoint}
                 pending={!!pending[route] || result.phase === "pending"}

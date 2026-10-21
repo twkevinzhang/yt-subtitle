@@ -11,7 +11,17 @@ import { Consent } from "../../src/ui/Consent";
 import { Editor } from "../../src/ui/Editor";
 import { Panel } from "../../src/ui/Panel";
 const { mockRequest } = vi.hoisted(() => ({ mockRequest: vi.fn() }));
-vi.mock("../../src/shared/messages", () => ({ request: mockRequest }));
+vi.mock("../../src/shared/messages", () => ({
+  request: (message: any) =>
+    message.type === "workspace-open"
+      ? Promise.resolve({
+          schemaVersion: 1,
+          videoId: "12345678901",
+          generation: "test-generation",
+          updatedAt: 0,
+        })
+      : mockRequest(message),
+}));
 vi.mock("../../src/ui/user-action", () => ({ isUserAction: () => true }));
 afterEach(cleanup);
 it("loads video independently of cache and keeps local paste available while captions are pending", async () => {

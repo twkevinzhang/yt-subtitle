@@ -9,7 +9,17 @@ import {
 } from "@testing-library/react";
 import { Panel } from "../../src/ui/Panel";
 const { request } = vi.hoisted(() => ({ request: vi.fn() }));
-vi.mock("../../src/shared/messages", () => ({ request }));
+vi.mock("../../src/shared/messages", () => ({
+  request: (message: any) =>
+    message.type === "workspace-open"
+      ? Promise.resolve({
+          schemaVersion: 1,
+          videoId: "12345678901",
+          generation: "test-generation",
+          updatedAt: 0,
+        })
+      : request(message),
+}));
 vi.mock("../../src/ui/user-action", () => ({ isUserAction: () => true }));
 afterEach(() => {
   cleanup();

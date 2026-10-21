@@ -41,7 +41,8 @@ export function createOverlay(binding: PlayerBinding) {
     frame = 0;
   let draftKey: JobKey | undefined,
     preview: AlignedLine[] | undefined,
-    previewSequence = -1;
+    previewSequence = -1,
+    previewOffsetMs = 0;
   const render = () => {
     if (!host.isConnected || !binding.video.isConnected) return;
     const lines =
@@ -49,7 +50,7 @@ export function createOverlay(binding: PlayerBinding) {
         ? activeLines(
             preview ?? result!.lines,
             binding.video.currentTime * 1000,
-            preview ? 0 : result!.offsetMs,
+            preview ? previewOffsetMs : result!.offsetMs,
           )
         : [];
     display.textContent = lines
@@ -75,7 +76,9 @@ export function createOverlay(binding: PlayerBinding) {
       snapshot: AlignmentSnapshot,
       newMode: DisplayMode,
       preferences?: Preferences,
+      offsetMs = 0,
     ) {
+      if (!Number.isFinite(offsetMs)) throw new Error("字幕偏移無效");
       if (!draftKey) throw new Error("尚未開始草稿預覽");
       assertJobKey(draftKey, snapshot.key);
       if (
@@ -98,6 +101,7 @@ export function createOverlay(binding: PlayerBinding) {
         timed.filter((l) => newMode === "original" || !!l.translation),
       );
       previewSequence = snapshot.sequence;
+      previewOffsetMs = offsetMs;
       mode = newMode;
       if (preferences) {
         display.style.fontSize = preferences.fontSize + "px";
