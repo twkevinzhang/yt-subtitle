@@ -1,6 +1,6 @@
 # 字幕工作台架構與 lyric-align-ts 整合設計
 
-狀態：完整設計及實作計畫已核准；library、offscreen 與 IndexedDB 已接入，獨立音訊來源尚缺。使用者已授權修正 lyric-align-ts 的 MV3 runtime，相容修正以本地 tarball 驗證，不發布 npm。真實全曲推論與推論中取消已通過，產品端到端流程仍待音訊提供者。
+狀態：完整設計及實作計畫已核准；library、offscreen 與 IndexedDB 已接入，獨立音訊來源尚缺。lyric-align-ts 的 MV3 修正已合併 main、發布 npm 0.1.1，消費端正式鎖定此版本。產品端到端流程仍待音訊提供者。
 
 ## 目的與範圍
 
@@ -125,6 +125,6 @@ UI 五步映射：尋找字幕、取得音訊、準備語音模型、對齊歌�
 8. 舊設定遷移後無模式分支、人工編輯或漸進發布；依賴／vendor 不殘留舊引擎。
 9. mock 驗證協調與異常；library 到位後以真實英文全曲驗證 WebGPU、資源釋放、原文保持及完整發布。未完成真實整合前不得宣稱整體流程可用。
 
-正式 lockfile 固定公開 @twkevinzhang/lyric-align-ts@0.1.0，該版仍有 JS Blob 載入問題。本地 MV3 修正包以 npm --no-save 安裝，在實際 offscreen／Worker 通過全曲與取消測試，尚未發布 npm；npm ci 會還原公開版本。整首獨立音訊來源尚缺。完整證據見 [整合驗收](../../lyric-align-integration.md)。
+正式 lockfile 固定 registry @twkevinzhang/lyric-align-ts@0.1.1 與 integrity，npm ci 可重現安裝 MV3 修正。整首獨立音訊來源尚缺。完整證據見 [整合驗收](../../lyric-align-integration.md)。
 
-可靠度分數：95%（本地修正包已通過真實 extension 全曲與推論中取消；公開 npm 尚未更新，產品全流程仍缺音訊來源）。升分方式：接入正式相容發布版及獨立整首音訊來源，再驗證跨 tab、背景節流／重啟與 GPU 釋放。不移入對齊演算法。
+可靠度分數：95%（MV3 修正已正式發布並接入；產品全流程仍缺音訊來源）。升分方式：接入獨立整首音訊來源，再驗證跨 tab、背景節流／重啟與 GPU 釋放。不移入對齊演算法。

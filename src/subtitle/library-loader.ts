@@ -18,7 +18,7 @@ export async function resolveLibrary(
   if (
     !binding ||
     binding.capabilities.contractVersion !== 1 ||
-    binding.capabilities.libraryVersion !== "0.1.0" ||
+    binding.capabilities.libraryVersion !== "0.1.1" ||
     typeof binding.createSession !== "function"
   )
     throw Object.assign(new Error("lyric-align-ts 發布物不符合固定契約"), {
