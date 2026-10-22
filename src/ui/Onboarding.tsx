@@ -34,10 +34,20 @@ export function Onboarding({
         if (!live) return;
         setSettings(s);
         setSettingsError("");
-        if (s.configured && !checked.has(s.settingsRevision)) {
+        if (
+          s.configured &&
+          s.preferences.autoSearchApproved &&
+          !checked.has(s.settingsRevision)
+        ) {
           checked.add(s.settingsRevision);
           // Availability only: never generate text, retry automatically, or block local work.
-          void request({ type: "connection-check" }).catch(() => {});
+          void request({ type: "subtitle-ensure" }).catch((error) => {
+            if (live) {
+              setSettingsError(
+                error instanceof Error ? error.message : "搜尋啟動失敗",
+              );
+            }
+          });
         }
       } catch {
         if (live) setSettingsError("設定暫時讀取失敗，請重試。");

@@ -1,5 +1,4 @@
 import { z } from "zod";
-import { jobKeySchema, segmentSchema } from "../acoustic/contracts";
 const time = z.number().finite().nonnegative();
 const endpoint = z.object({
   valueMs: time,
@@ -74,9 +73,7 @@ export const sourceSchema = z.object({
   enabled: z.boolean(),
 });
 export const preferencesSchema = z.object({
-  alignmentMode: z
-    .enum(["buffer-before-play", "background", "complete-before-use"])
-    .default("buffer-before-play"),
+  autoSearchApproved: z.boolean().default(false),
   mode: z.enum(["original", "bilingual", "translation"]),
   targetLanguage: z.enum(["ja", "zh-Hant", "en"]),
   fontSize: z.number().min(14).max(64),
@@ -112,111 +109,35 @@ export const searchTestBodySchema = z
     (body) => JSON.stringify(body).length <= 120000,
     "Request body 超過 120000 字元",
   );
-export const alignmentBodySchema = z
-  .object({
-    model: z.string().trim().min(1),
-    messages: z
-      .array(
-        z.object({
-          role: z.enum(["system", "user", "assistant"]),
-          content: z.string(),
-        }),
-      )
-      .min(1),
-    stream: z.literal(false),
-  })
-  .passthrough()
-  .refine(
-    (body) => JSON.stringify(body).length <= 120000,
-    "Request body 超過 120000 字元",
-  );
-export const localInferenceSchema = z.object({
-  verifyEvidence: z.boolean().optional(),
-  key: jobKeySchema,
-  operation: z.enum(["prepare", "transcribe", "align", "readings"]),
-  texts: z
-    .array(z.string().max(4000))
-    .max(256)
-    .refine(
-      (v) => v.reduce((n, s) => n + s.length, 0) <= 200000,
-      "讀音文字超過上限",
+const selectedSourceSchema = z.object({
+  rawText: z.string().max(2_000_000),
+  languageHint: z.string().max(50).optional(),
+  timings: z
+    .array(
+      z.object({
+        sourceLineIndex: z.number().int().nonnegative(),
+        start: z.number().finite(),
+        end: z.number().finite(),
+      }),
     )
+    .max(10000)
+    .readonly()
     .optional(),
-  assetId: z.string().optional(),
-  language: z.enum(["ja", "zh", "en", "auto"]).optional(),
-  leadingText: z.string().max(4000).optional(),
-  trailingText: z.string().max(4000).optional(),
-  segment: segmentSchema.optional(),
-  lines: z.array(lineSchema).max(10000).optional(),
 });
 const msg = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("workspace-open") }),
+  z.object({ type: z.literal("subtitle-ensure") }),
+  z.object({ type: z.literal("subtitle-snapshot") }),
+  z.object({ type: z.literal("subtitle-reset") }),
+  z.object({ type: z.literal("subtitle-cancel") }),
   z.object({
-    type: z.literal("workspace-save"),
-    generation: z.string(),
-    panel: z.unknown(),
-    baseline: z.unknown().optional(),
-    fields: z.array(z.string()).optional(),
-    editorRoutes: z.array(z.enum(["configured", "comments", "web"])).optional(),
-  }),
-  z.object({ type: z.literal("workspace-reset"), generation: z.string() }),
-  z.object({ type: z.literal("local-model"), input: localInferenceSchema }),
-  z.object({ type: z.literal("local-model-cancel"), key: jobKeySchema }),
-  z.object({
-    type: z.literal("preferences-save"),
-    preferences: preferencesSchema,
-  }),
-  z.object({
-    type: z.literal("search-start"),
-    generation: z.string().optional(),
-    video: videoSchema,
-    consent: consentSchema,
-  }),
-  z.object({
-    type: z.literal("search-route-retry"),
-    id: z.string(),
-    route: z.enum(["configured", "comments", "web"]),
-    body: z
-      .record(z.unknown())
-      .refine((v) => JSON.stringify(v).length <= 500000, "請求超過 500 KB"),
-  }),
-  z.object({
-    type: z.literal("search-route-cancel"),
-    id: z.string(),
+    type: z.literal("subtitle-retry-search"),
     route: z.enum(["configured", "comments", "web"]),
   }),
-  z.object({ type: z.literal("search-group"), id: z.string() }),
-  z.object({ type: z.literal("search-cancel"), id: z.string() }),
-  z.object({ type: z.literal("read-manual-track"), trackId: z.string() }),
-  z.object({ type: z.literal("audio-begin") }),
   z.object({
-    type: z.literal("audio-chunk"),
-    assetId: z.string(),
-    sequence: z.number().int().nonnegative(),
-    base64: z.string().max(350000),
-  }),
-  z.object({ type: z.literal("audio-finish"), assetId: z.string() }),
-  z.object({ type: z.literal("audio-clear") }),
-  z.object({
-    type: z.literal("acoustic-position"),
-    runId: z.string(),
-    timeMs: time,
+    type: z.literal("subtitle-select"),
+    source: selectedSourceSchema,
   }),
   z.object({ type: z.literal("settings-public") }),
-  z
-    .object({
-      type: z.literal("po-token-get"),
-      videoId: z.string().regex(/^[\w-]{11}$/),
-      requestId: z.string().uuid(),
-    })
-    .strict(),
-  z
-    .object({
-      type: z.literal("po-token-cancel"),
-      videoId: z.string().regex(/^[\w-]{11}$/),
-      requestId: z.string().uuid(),
-    })
-    .strict(),
   z.object({ type: z.literal("settings-edit") }),
   z.object({
     type: z.literal("settings-save"),
@@ -224,47 +145,27 @@ const msg = z.discriminatedUnion("type", [
     sources: z.array(sourceSchema),
     preferences: preferencesSchema,
   }),
+  z.object({
+    type: z.literal("preferences-save"),
+    preferences: preferencesSchema,
+  }),
   z.object({ type: z.literal("clear-credentials") }),
   z.object({ type: z.literal("models"), provider: providerSchema }),
   z.object({ type: z.literal("connection-check") }),
   z.object({ type: z.literal("open-options") }),
   z.object({ type: z.literal("inspect") }),
-  z.object({ type: z.literal("read-track"), trackId: z.string() }),
-  z.object({ type: z.literal("read-transcript") }),
-  z.object({
-    type: z.literal("search"),
-    video: videoSchema,
-    consent: consentSchema,
-  }),
   z.object({
     type: z.literal("search-test"),
     body: searchTestBodySchema,
     consent: consentSchema,
   }),
-  z.object({
-    type: z.literal("generate"),
-    input: z.object({
-      video: videoSchema,
-      lines: z.array(lineSchema).max(10000),
-      cues: z.array(cueSchema).max(20000),
-      targetLanguage: z.enum(["ja", "zh-Hant", "en"]),
-      translate: z.boolean(),
-      body: alignmentBodySchema.optional(),
-      timingOnly: z.boolean().optional(),
-      audioAssetId: z.string().optional(),
-      positionMs: time.optional(),
-      consent: consentSchema,
-    }),
-  }),
-  z.object({ type: z.literal("cancel"), runId: z.string() }),
   z.object({ type: z.literal("run"), runId: z.string() }),
+  z.object({ type: z.literal("cancel"), runId: z.string() }),
   z.object({ type: z.literal("results-list"), videoId: z.string().optional() }),
-  z.object({ type: z.literal("results-save"), result: z.unknown() }),
   z.object({ type: z.literal("results-delete"), key: z.unknown() }),
   z.object({ type: z.literal("results-clear") }),
 ]);
 export function validateMessage(value: unknown) {
   return msg.parse(value);
 }
-// Callers send schema input; validation supplies defaults at the receiving boundary.
 export type ExtensionMessage = z.input<typeof msg>;

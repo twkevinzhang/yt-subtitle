@@ -1,130 +1,53 @@
-import { useEffect, useRef, useState } from "react";
-import type {
-  AlignmentMode,
-  PlayerBinding,
-  SubtitleLine,
-} from "../shared/types";
-import { createProgressiveAudioSource } from "../acoustic/youtube-stream";
-import { createLocalModelClient } from "../acoustic/local-model-client";
-import { runSubtitleAlignment } from "../acoustic/subtitle-work";
-import type { AlignmentProgress } from "../acoustic/alignment-policy";
-import type { TimingReport } from "../acoustic/timing-diagnostics";
-import { bindPlaybackCoordinator } from "../content/playback-coordinator";
-export function useSubtitleWork(
-  binding: PlayerBinding,
-  publish: (progress: AlignmentProgress) => void,
-  notice: (text: string) => void,
-) {
-  const handlers = useRef({ publish, notice });
-  handlers.current = { publish, notice };
-  const revision = useRef(0),
-    launchRevision = useRef(0),
-    active = useRef<
-      | {
-          controller: AbortController;
-          promise: Promise<unknown>;
-          playback: ReturnType<typeof bindPlaybackCoordinator>;
-        }
-      | undefined
-    >(undefined);
-  const [busy, setBusy] = useState(false),
-    [progress, setProgress] = useState<AlignmentProgress>();
-  const [diagnostics, setDiagnostics] = useState<TimingReport>();
-  const live = useRef(true);
+import { useEffect, useState, useCallback } from "react";
+import { request } from "../shared/messages";
+import type { VideoWork } from "../subtitle/coordinator";
+import type { SelectedSource } from "../subtitle/types";
+export function useSubtitleWork(videoId: string) {
+  const [work, setWork] = useState<VideoWork>(),
+    [error, setError] = useState("");
   useEffect(() => {
-    live.current = true;
-    return () => {
-      live.current = false;
-      launchRevision.current++;
-      active.current?.playback.dispose();
-      active.current?.controller.abort();
+    let live = true,
+      busy = false;
+    const update = async () => {
+      if (busy) return;
+      busy = true;
+      try {
+        const state = await request<VideoWork | null>({
+          type: "subtitle-snapshot",
+        });
+        if (live && state?.video.videoId === videoId) {
+          setWork(state);
+          setError("");
+        }
+      } catch (e) {
+        if (live) setError(e instanceof Error ? e.message : "無法讀取狀態");
+      } finally {
+        busy = false;
+      }
     };
-  }, [binding.videoId]);
-  const stop = async () => {
-    const work = active.current;
-    if (!work) return;
-    work.controller.abort();
-    await work.promise.catch(() => {});
+    void update();
+    const timer = setInterval(update, 700);
+    return () => {
+      live = false;
+      clearInterval(timer);
+    };
+  }, [videoId]);
+  const select = useCallback(
+    async (source: SelectedSource) => {
+      const next = await request<VideoWork>({
+        type: "subtitle-select",
+        source,
+      });
+      if (next.video.videoId === videoId) setWork(next);
+    },
+    [videoId],
+  );
+  const reset = async () => {
+    setWork(await request<VideoWork>({ type: "subtitle-reset" }));
   };
   const cancel = async () => {
-    launchRevision.current++;
-    await stop();
+    const next = await request<VideoWork>({ type: "subtitle-cancel" });
+    setWork(next);
   };
-  async function start(
-    lines: SubtitleLine[],
-    mode: AlignmentMode,
-    durationMs: number,
-    resume?: Pick<AlignmentProgress, "checked" | "ready">,
-  ) {
-    const launch = ++launchRevision.current;
-    await stop();
-    if (!live.current || launch !== launchRevision.current) return;
-    const controller = new AbortController(),
-      key = {
-        runId: crypto.randomUUID(),
-        tabId: 0,
-        videoId: binding.videoId,
-        draftRevision: ++revision.current,
-      };
-    const playback = bindPlaybackCoordinator(binding.video, (text) =>
-      handlers.current.notice(text),
-    );
-    playback.begin(key, mode);
-    const work = {
-      controller,
-      playback,
-      promise: Promise.resolve() as Promise<unknown>,
-    };
-    active.current = work;
-    setDiagnostics(undefined);
-    setBusy(true);
-    let latest: AlignmentProgress | undefined;
-    const timer = setTimeout(() => {
-      handlers.current.notice("本次補時達 10 分鐘上限，已有結果保留");
-      controller.abort();
-    }, 600000);
-    const tick = setInterval(() => {
-      if (latest && !binding.isAd()) playback.update(latest);
-    }, 250);
-    const task = runSubtitleAlignment(
-      { key, lines, durationMs, mode, signal: controller.signal, resume },
-      {
-        model: createLocalModelClient(key, controller.signal),
-        positionMs: () => Math.max(0, binding.video.currentTime * 1000),
-        source: (onDecode) =>
-          createProgressiveAudioSource(
-            key,
-            durationMs,
-            (text) => handlers.current.notice(text),
-            onDecode,
-          ),
-        onDiagnostics: (report) => {
-          if (live.current && active.current === work) setDiagnostics(report);
-        },
-        publish: (progress) => {
-          if (!live.current || active.current !== work) return;
-          latest = progress;
-          setProgress(progress);
-          if (!binding.isAd()) playback.update(progress);
-          handlers.current.publish(progress);
-        },
-      },
-    );
-    work.promise = task;
-    try {
-      return await task;
-    } catch (error) {
-      if (!controller.signal.aborted) throw error;
-    } finally {
-      clearTimeout(timer);
-      clearInterval(tick);
-      playback.finish();
-      playback.dispose();
-      if (active.current === work) {
-        active.current = undefined;
-        if (live.current) setBusy(false);
-      }
-    }
-  }
-  return { start, cancel, busy, progress, diagnostics };
+  return { work, error, select, reset, cancel };
 }

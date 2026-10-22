@@ -44,7 +44,7 @@ export async function startSearchGroup(
   readComments?: (signal: AbortSignal) => Promise<CommentBatch>,
   options?: {
     onlyRoute: SearchRoute;
-    body: Record<string, unknown>;
+    body?: Record<string, unknown>;
     previous: SearchGroupSnapshot;
   },
   onRouteStart?: (

@@ -34,7 +34,7 @@ export function Options() {
     [savedProvider, setSavedProvider] = useState<ProviderSettings | null>(null),
     [sources, setSources] = useState<SourceSettings[]>([]),
     [preferences, setPreferences] = useState<Preferences>({
-      alignmentMode: "buffer-before-play",
+      autoSearchApproved: false,
       mode: "original",
       targetLanguage: "zh-Hant",
       fontSize: 28,
@@ -409,57 +409,20 @@ export function Options() {
             </select>
           </label>
         </div>
-        <fieldset disabled={!!busy}>
-          <legend>缺時字幕的校時模式</legend>
-          {(
-            [
-              [
-                "buffer-before-play",
-                "先緩衝再播放",
-                "先準備前方字幕，必要時自動暫停與恢復；手動暫停不會被覆蓋。",
-              ],
-              [
-                "background",
-                "播放中背景校時",
-                "影片持續播放，完成的片段逐步顯示；缺時句暫不顯示。",
-              ],
-              [
-                "complete-before-use",
-                "整首校完再使用",
-                "所有缺時句完成後才啟用本次字幕；準備期間保留原字幕。",
-              ],
-            ] as const
-          ).map(([value, label, description]) => (
-            <label key={value} className="mode-choice">
-              <input
-                type="radio"
-                name="alignment-mode"
-                value={value}
-                checked={
-                  (preferences.alignmentMode ?? "buffer-before-play") === value
-                }
-                onChange={() =>
-                  setPreferences({ ...preferences, alignmentMode: value })
-                }
-              />
-              <strong>{label}</strong>
-              <small>{description}</small>
-            </label>
-          ))}
-          <p>
-            所有來源的有效時間碼均保留。儲存後套用到下一次工作，不改變目前正在執行的模式。
-          </p>
-          <button
-            onClick={() =>
-              void attempt("preferences", async () => {
-                await request({ type: "preferences-save", preferences });
-                notify("preferences", { status: "已儲存顯示與校時設定。" });
+        <label className="auto-search-consent">
+          <input
+            type="checkbox"
+            checked={preferences.autoSearchApproved ?? false}
+            onChange={(event) =>
+              setPreferences({
+                ...preferences,
+                autoSearchApproved: event.target.checked,
               })
             }
-          >
-            儲存顯示與校時設定
-          </button>
-        </fieldset>
+          />
+          允許影片載入時自動搜尋字幕（傳送影片資訊與留言到已設定 AI
+          服務，會使用模型額度）
+        </label>
         <button disabled={!!busy} onClick={() => save("preferences")}>
           儲存全部設定
         </button>

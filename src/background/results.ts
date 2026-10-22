@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { lineSchema, subtitleSourceSchema } from "../shared/schemas";
-import { lockTiming } from "../lyrics/timing-locks";
+
 import { validateTiming } from "../lyrics/formats";
 import type { ResultKey, SavedResult } from "../shared/types";
 export const resultKeySchema = z
@@ -114,7 +114,7 @@ export async function listResults(videoId?: string) {
           .map((x) => ({
             ...x,
             subtitleSource: x.subtitleSource ?? { kind: "legacy" as const },
-            lines: x.lines.map((line) => lockTiming(line, x.videoDurationMs)),
+            lines: x.lines,
           }))
           .sort((a, b) => b.updatedAt - a.updatedAt),
       );

@@ -1,8 +1,7 @@
 export type Language = "ja" | "zh" | "en";
 export type TargetLanguage = "ja" | "zh-Hant" | "en";
 export type DisplayMode = "original" | "bilingual" | "translation";
-export type AlignmentMode =
-  "buffer-before-play" | "background" | "complete-before-use";
+
 export interface SubtitleSource {
   kind: "configured" | "comments" | "web" | "youtube" | "paste" | "legacy";
   url?: string;
@@ -84,8 +83,7 @@ export interface SourceSettings {
   enabled: boolean;
 }
 export interface Preferences {
-  // Optional only at legacy in-memory call sites; storage schema always defaults it.
-  alignmentMode?: AlignmentMode;
+  autoSearchApproved?: boolean;
   mode: DisplayMode;
   targetLanguage: TargetLanguage;
   fontSize: number;

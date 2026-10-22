@@ -28,7 +28,7 @@ export const defaults: SettingsRecord = {
     },
   ],
   preferences: {
-    alignmentMode: "buffer-before-play",
+    autoSearchApproved: false,
     mode: "original",
     targetLanguage: "zh-Hant",
     fontSize: 28,
