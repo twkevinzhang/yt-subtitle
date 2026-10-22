@@ -81,6 +81,7 @@ export interface SourceSettings {
   domain: string;
   includeSubdomains: boolean;
   enabled: boolean;
+  iconDataUrl?: string;
 }
 export interface Preferences {
   autoSearchApproved?: boolean;

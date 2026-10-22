@@ -65,7 +65,9 @@ export function searchMessages(
   sources: SourceSettings[],
   route: "configured" | "comments" | "web" = "configured",
 ): ChatMessage[] {
-  const enabled = sources.filter((x) => x.enabled);
+  const enabled = sources
+    .filter((x) => x.enabled)
+    .map(({ iconDataUrl: _icon, ...source }) => source);
   if (route === "configured" && !enabled.length)
     throw new Error("請先勾選至少一個歌詞來源，或使用貼入字幕");
   return [

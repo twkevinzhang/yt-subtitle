@@ -78,7 +78,7 @@ export function SearchTest({
     }
     if (
       !window.confirm(
-        "將送出上方 Request body，使用已儲存服務的憑證並消耗模型額度。繼續？",
+        "將送出測試搜尋請求，使用已儲存服務的憑證並消耗模型額度。繼續？",
       )
     )
       return;
@@ -140,19 +140,25 @@ export function SearchTest({
       aria-label="測試搜尋"
       hidden={!open}
     >
-      <label>
-        <span>Request body</span>
-        <textarea
-          spellCheck={false}
-          value={body}
-          disabled={busy}
-          onChange={(e) => setBody(e.target.value)}
-        />
-      </label>
-      <p className="muted">
-        送往已儲存服務的 /responses；此操作會使用模型額度。憑證由背景程式加入
-        headers。
+      <p>
+        查詢 LRCLIB 官方說明，確認模型是否能使用網頁搜尋。此操作會使用模型額度。
       </p>
+      <details>
+        <summary>進階：檢視與編輯搜尋請求</summary>
+        <label>
+          <span>Request body</span>
+          <textarea
+            spellCheck={false}
+            value={body}
+            disabled={busy}
+            onChange={(e) => setBody(e.target.value)}
+          />
+        </label>
+        <p className="muted">
+          送往已儲存服務的 /responses；此操作會使用模型額度。憑證由背景程式加入
+          headers。
+        </p>
+      </details>
       <div className="search-test-actions">
         <button
           className="primary"
@@ -171,7 +177,7 @@ export function SearchTest({
             role="status"
             className={`http-status http-status-${response.status === null ? "none" : Math.floor(response.status / 100) + "xx"}`}
           >
-            Response ·{" "}
+            服務回應：{" "}
             {response.status === null
               ? "未收到 HTTP 回應"
               : `HTTP ${response.status}`}
@@ -184,17 +190,20 @@ export function SearchTest({
         )}
       </div>
       {response && (
-        <div
-          role="region"
-          aria-label="完整 API 回應"
-          className="search-response"
-        >
-          <pre tabIndex={0}>
-            {typeof response.body === "string"
-              ? response.body
-              : JSON.stringify(response.body, null, 2)}
-          </pre>
-        </div>
+        <details>
+          <summary>檢視完整 API 回應</summary>
+          <div
+            role="region"
+            aria-label="完整 API 回應"
+            className="search-response"
+          >
+            <pre tabIndex={0}>
+              {typeof response.body === "string"
+                ? response.body
+                : JSON.stringify(response.body, null, 2)}
+            </pre>
+          </div>
+        </details>
       )}
     </div>
   );

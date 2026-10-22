@@ -71,6 +71,11 @@ export const sourceSchema = z.object({
   domain: z.string().min(1).max(253),
   includeSubdomains: z.boolean(),
   enabled: z.boolean(),
+  iconDataUrl: z
+    .string()
+    .max(100_000)
+    .regex(/^data:image\/png;base64,[A-Za-z0-9+/]+={0,2}$/)
+    .optional(),
 });
 export const preferencesSchema = z.object({
   autoSearchApproved: z.boolean().default(false),
