@@ -1,12 +1,12 @@
 # 字幕工作台架構與 lyric-align-ts 整合設計
 
-狀態：完整設計及實作計畫已核准，消費端正在實作；library 與獨立音訊來源尚未接入。offscreen／真實推論的描述是目標契約要求，不代表現階段已具備；不修改 lyric-align-ts。
+狀態：完整設計及實作計畫已核准；library、offscreen 與 IndexedDB 已接入，獨立音訊來源尚缺。使用者已授權修正 lyric-align-ts 的 MV3 runtime，相容修正以本地 tarball 驗證，不發布 npm。真實全曲推論與推論中取消已通過，產品端到端流程仍待音訊提供者。
 
 ## 目的與範圍
 
 影片正常播放時完成字幕準備。移除「先緩衝再播放」「播放中背景校時」及人工時間編輯，全專案固定完整結果就緒後才使用。字幕頁改為處理狀態 dashboard。
 
-本次只在本專案保存設計與 TypeScript 契約，不修改 C:/Projects/lyric-align-ts。相鄰 `lyric-align-contract.ts` 為提案，不宣稱 library 已實現。附件的 Python API 是分工基準，不是 TS 現況證明。所讀本機 README 描述英文 small.en、WebGPU 的 spike；不能由此推定已存在可匯入套件、多語言或生命週期 API。
+本專案保存 TypeScript 消費契約；library 已提供 contract v1 的正式 session API。使用者允許在 C:/Projects/lyric-align-ts 修正 runtime 資產載入，但對齊與辨識邏輯仍全部留在該 library。附件的 Python API 是分工基準。模型目前僅英文 small.en／WebGPU，不能推定多語言能力。
 
 ## 已確認的產品政策
 
@@ -125,6 +125,6 @@ UI 五步映射：尋找字幕、取得音訊、準備語音模型、對齊歌�
 8. 舊設定遷移後無模式分支、人工編輯或漸進發布；依賴／vendor 不殘留舊引擎。
 9. mock 驗證協調與異常；library 到位後以真實英文全曲驗證 WebGPU、資源釋放、原文保持及完整發布。未完成真實整合前不得宣稱整體流程可用。
 
-目前以 npm 安裝固定 @twkevinzhang/lyric-align-ts@0.1.0，建置從安裝套件複製資產，已接入 offscreen／IndexedDB transport。真實 extension 測試收到模型準備進度、取消回 ABORTED，但 prepare 因 JS Blob module 載入失敗而中止；整首獨立音訊來源也尚缺。完整證據與 library 配合條件見 [整合驗收](../../lyric-align-integration.md)。
+正式 lockfile 固定公開 @twkevinzhang/lyric-align-ts@0.1.0，該版仍有 JS Blob 載入問題。本地 MV3 修正包以 npm --no-save 安裝，在實際 offscreen／Worker 通過全曲與取消測試，尚未發布 npm；npm ci 會還原公開版本。整首獨立音訊來源尚缺。完整證據見 [整合驗收](../../lyric-align-integration.md)。
 
-可靠度分數：95%（已核對發布物與本機 extension 測試；無時間碼全流程仍未通過）。升分方式：library 提供 MV3 相容 runtime 後重跑全曲、推論中取消、跨 tab 與背景節流／重啟測試，並接入獨立整首音訊來源。不移入對齊演算法。
+可靠度分數：95%（本地修正包已通過真實 extension 全曲與推論中取消；公開 npm 尚未更新，產品全流程仍缺音訊來源）。升分方式：接入正式相容發布版及獨立整首音訊來源，再驗證跨 tab、背景節流／重啟與 GPU 釋放。不移入對齊演算法。

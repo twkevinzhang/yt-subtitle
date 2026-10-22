@@ -4,8 +4,11 @@ import { chromium } from "@playwright/test";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import path from "node:path";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 const [audioPath, lyricsPath] = process.argv.slice(2);
 const cancel = process.argv.includes("--cancel");
+const cancelTranscribing = process.argv.includes("--cancel-transcribing");
+const requests = [];
 if (!audioPath || !lyricsPath)
   throw Error("Pass local audio and exact lyric text files");
 await mkdir("test-results/library-host", { recursive: true });
@@ -23,6 +26,7 @@ const context = await chromium.launchPersistentContext(
   },
 );
 let report;
+context.on("request", (request) => requests.push(request.url()));
 try {
   const background =
     context.serviceWorkers()[0] ??
@@ -42,7 +46,7 @@ try {
     });
   });
   await page.evaluate(
-    async ({ encoded, rawText, cancel }) => {
+    async ({ encoded, rawText, cancel, cancelTranscribing }) => {
       const bytes = Uint8Array.from(atob(encoded), (c) => c.charCodeAt(0));
       const decoder = new OfflineAudioContext(1, 1, 16000);
       const decoded = await decoder.decodeAudioData(bytes.buffer);
@@ -97,8 +101,16 @@ try {
       port.onMessage.addListener((message) => {
         if (message.type === "progress") {
           window.__probe.events.push(message.progress);
-          if (cancel && window.__probe.events.length === 1)
+          if (
+            (cancel && window.__probe.events.length === 1) ||
+            (cancelTranscribing &&
+              message.progress.phase === "transcribing" &&
+              /step=\d+/.test(message.progress.detail ?? "") &&
+              !window.__probe.cancelled)
+          ) {
+            window.__probe.cancelled = true;
             port.postMessage({ type: "cancel" });
+          }
         } else
           Object.assign(window.__probe, { state: message.type, ...message });
       });
@@ -117,6 +129,7 @@ try {
       encoded: (await readFile(audioPath)).toString("base64"),
       rawText: await readFile(lyricsPath, "utf8"),
       cancel,
+      cancelTranscribing,
     },
   );
   const start = Date.now();
@@ -133,12 +146,29 @@ try {
     await new Promise((resolve) => setTimeout(resolve, 10000));
   }
   await writeFile(
-    `test-results/library-host/${cancel ? "cancel" : "report"}.json`,
-    JSON.stringify(report, null, 2),
+    `test-results/library-host/${cancelTranscribing ? "cancel-transcribing" : cancel ? "cancel" : "report"}.json`,
+    JSON.stringify(
+      {
+        ...report,
+        elapsedMs: Date.now() - start,
+        requests,
+        installedEntrySha256: createHash("sha256")
+          .update(
+            await readFile(
+              "node_modules/@twkevinzhang/lyric-align-ts/index.js",
+            ),
+          )
+          .digest("hex"),
+      },
+      null,
+      2,
+    ),
   );
-  if (cancel) {
+  if (cancel || cancelTranscribing) {
     assert.equal(report.state, "error");
     assert.equal(report.error.code, "ABORTED");
+    if (cancelTranscribing)
+      assert.ok(report.events.some((event) => event.phase === "transcribing"));
     console.log("PASS: real library cancellation via offscreen port");
     process.exitCode = 0;
   } else {

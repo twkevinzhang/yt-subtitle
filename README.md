@@ -16,9 +16,9 @@ Chrome MV3 擴充功能，在 YouTube 影片旁提供字幕搜尋與處理狀態
 
 ## 整合邊界與限制
 
-`src/subtitle/library-contract.ts` 定義 TS 契約，以 Python API 的辨識／對齊分工為基準：`prepare → transcribe(audio) → align(segments, lyrics) → dispose`。以 npm 安裝並固定 `@twkevinzhang/lyric-align-ts@0.1.0`，建置從 node_modules 複製套件與 Worker 資產供 offscreen host 載入；不保存手動發布 ZIP。但真實 MV3 測試在 runtime 的動態 JS Blob 載入失敗；獨立整首音訊下載來源也尚未接入。無時間碼全流程尚未可用。沒有修改另一個 library 專案。
+`src/subtitle/library-contract.ts` 定義 TS 契約，以 Python API 的辨識／對齊分工為基準：`prepare → transcribe(audio) → align(segments, lyrics) → dispose`。正式依賴固定 `@twkevinzhang/lyric-align-ts@0.1.0`，建置從 node_modules 複製套件與 Worker 資產供 offscreen host 載入；不保存手動發布 ZIP。公開 0.1.0 有 MV3 JS Blob 載入問題；使用者已授權在 library repo 修正，修正以本地 npm tarball 安裝驗證，尚未發布 npm。獨立整首 YouTube 音訊下載來源仍未接入，產品無時間碼全流程尚未可用。
 
-所有模型、辨識、歌詞定位及 Worker 管理由 library 負責。本專案只包裝音訊 handle、排隊、進度、取消、結果驗證與發布。已驗證真實 offscreen 模型準備進度與取消，尚未通過 extension 全曲推論。具體證據、重跑命令及 library 配合條件見 [整合驗收](docs/lyric-align-integration.md)。
+所有模型、辨識、歌詞定位及 Worker 管理由 library 負責。本專案只包裝音訊 handle、排隊、進度、取消、結果驗證與發布。本地 library 修正已通過真實 MV3 offscreen 全曲 12/12 原文結果與推論中取消；公開 npm 安裝尚不包含此修正。具體證據、重跑命令及待驗證範圍見 [整合驗收](docs/lyric-align-integration.md)。
 
 未匹配或不合法時間不插補、不發布部分字幕；文字相似度不是時間準確率。SRT 必須有完整起訖；只有起點的 LRC 不推估結束，需更換完整時間碼字幕或原文來源。原文與換行保留，辨識文字不能取代歌詞。
 

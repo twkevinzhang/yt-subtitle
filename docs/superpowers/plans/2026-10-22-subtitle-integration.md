@@ -34,9 +34,9 @@
 - `build.mjs` 在 build 開始前讀舊 `src/acoustic/model-manifest.json` 並下載模型；因此規劃階段不執行 npm build/test。
 - `src/acoustic/youtube-audio-source.ts` 建立 autoplay 隱藏 iframe，`youtube-stream.ts` 依 progressive capture；不能直接沿用作新 AudioProvider。
 - `vitest.config.ts` 已定義 tests/unit 與 tests/integration，但本 checkout 未找到這些測試資料夾；計畫的新測試路徑需建立，不能聲稱舊測試存在。
-- 真實 library 的發布物、固定版本、prepare/progress/abort/dispose、英文支援與 offscreen WebGPU 都必須交付後驗證；本計畫不修改對方以補齊。
+- 真實 library 的發布物、固定版本、prepare/progress/abort/dispose、英文支援與 offscreen WebGPU 都必須交付後驗證；辨識與對齊仍屬 library，使用者已額外授權在該 repo 修正 MV3 runtime，但禁止發布 npm。
 
-**目前實作狀態**：原文／時間驗證、單一狀態、背景搜尋與 v2 快照、原子套用、窄面板與舊引擎移除已接線。library-runner 有隔離契約測試；正式 loader 回 null。尚未接入音訊提供者與 offscreen runtime，不啟動空殼推論程序。測試與檢查依目前 repository 命令執行，不能將下方待辦全視為已完成。`npx` 不在此環境 PATH，實作使用 `node node_modules/vitest/vitest.mjs` 等效命令。
+**目前實作狀態**：原文／時間驗證、單一狀態、背景搜尋與 v2 快照、原子套用、窄面板與舊引擎移除已接線；真實 library loader、offscreen runtime 與 IndexedDB 也已接入。本地 MV3 修正包通過全曲與取消，正式 npm 0.1.0 尚不含修正，音訊提供者尚缺。測試與檢查依目前 repository 命令執行，不能將下方待辦全視為已完成。`npx` 不在此環境 PATH，實作使用 `node node_modules/vitest/vitest.mjs` 等效命令。
 
 **關卡 A（Task 3）**：證明可透過已授權來源獨立取得完整音訊；若不可行，保留明確 AUDIO_UNAVAILABLE 與已時間碼路徑，停止宣稱無時間碼可用，不改成錄製播放器。
 
@@ -173,7 +173,7 @@
 
 `1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 → 9`。這是保守的單一路徑；UI task 在協調資料穩定後進行。Task 8 是內部變更收斂點，在它之前分支不作可發布宣稱。Task 9 是實際 library 可用性的關卡；無 library 仍可交付完整時間碼路徑與誠實的不可用狀態，但整體需求保持部分未完成。
 
-執行方式：使用者已選擇本 session 原生逐項實作。產品修改與任務提交已授權；不修改 library，不部署。目前固定接入 0.1.0 發布物、offscreen 與 IndexedDB；真實準備階段取消通過，全曲測試被 runtime JS Blob module 載入阻擋。關卡 A/B 與 Task 9 仍未通過，獨立下載、真實全曲推論／推論中取消、GPU 釋放及背景節流仍待驗證。證據與 library 配合條件見 `docs/lyric-align-integration.md`。
+執行方式：使用者已選擇本 session 原生逐項實作，並授權修正 library 的 MV3 runtime、測試通過後提交該 repo；不發布 npm、不部署。目前正式依賴固定公開 0.1.0，本地修正以 tarball 暫時安裝，真實全曲與推論中取消通過。獨立下載、正式發布版接入、GPU 量測、跨 tab 與背景節流仍待驗證，因此 Task 9 的產品端到端驗收仍未完成。證據見 `docs/lyric-align-integration.md`。
 
 ## 計畫自查
 
