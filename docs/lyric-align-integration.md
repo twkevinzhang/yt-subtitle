@@ -1,6 +1,8 @@
 # lyric-align-ts 整合驗收
 
-本專案已接入固定 0.1.0 發布物，未修改 `lyric-align-ts` 專案或發布物內容。無時間碼全流程**尚未通過**。
+本專案透過 `npm install --save-exact @twkevinzhang/lyric-align-ts@0.1.0` 安裝正式 npm 套件，未修改 `lyric-align-ts` 專案或套件內容。無時間碼全流程**尚未通過**。
+
+`package.json` 固定版本，`package-lock.json` 固定 registry tarball 與 SHA-512 integrity；使用 `npm ci` 可重現安裝。建置從安裝套件的 `package.json` 解析根目錄，完整複製至 `dist/vendor/lyric-align-ts/`，保留 Worker 相對路徑及 LICENSE、THIRD_PARTY_NOTICES.md、licenses/。本專案不再保存手動發布 ZIP，也不依賴另一專案的 dist 目錄。
 
 ## 消費端路徑
 

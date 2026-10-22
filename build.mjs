@@ -1,16 +1,9 @@
 import { build } from "vite";
-import { createHash } from "node:crypto";
-import {
-  mkdir,
-  readFile,
-  writeFile,
-  copyFile,
-  cp,
-  readdir,
-} from "node:fs/promises";
+import { mkdir, readFile, writeFile, cp, readdir } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { zipSync, unzipSync } from "fflate";
+import { zipSync } from "fflate";
+import { createRequire } from "node:module";
 
 process.chdir(path.dirname(fileURLToPath(import.meta.url)));
 const common = { configFile: false, logLevel: "warn", publicDir: false };
@@ -45,24 +38,18 @@ for (const [name, entry] of Object.entries({
   });
 }
 await cp("extension/manifest.json", "dist/manifest.json");
-const release = await readFile("vendor/lyric-align-ts/release.zip");
-if (
-  createHash("sha256").update(release).digest("hex") !==
-  "c7a6c80b461891a23924328d6949063fd593f09fdb49521b6923df8678557fa9"
-)
-  throw Error("lyric-align-ts release checksum mismatch");
-for (const [archiveName, bytes] of Object.entries(unzipSync(release))) {
-  if (!archiveName.startsWith("library/"))
-    throw Error("Unexpected release root");
-  const name = archiveName.slice("library/".length);
-  if (name.endsWith("/") || name.endsWith(".map")) continue;
-  if (name.startsWith("/") || name.split("/").includes(".."))
-    throw Error("Unsafe release path");
-  const target = path.join("dist/vendor/lyric-align-ts", name);
-  await mkdir(path.dirname(target), { recursive: true });
-  await writeFile(target, bytes);
-}
-console.log("建置完成：dist/（lyric-align-ts 0.1.0；模型按需下載）");
+// Keep the installed package intact: its entry creates a Worker by relative URL.
+const require = createRequire(import.meta.url);
+const libraryRoot = path.dirname(
+  require.resolve("@twkevinzhang/lyric-align-ts/package.json"),
+);
+const libraryPackage = JSON.parse(
+  await readFile(path.join(libraryRoot, "package.json"), "utf8"),
+);
+await cp(libraryRoot, "dist/vendor/lyric-align-ts", { recursive: true });
+console.log(
+  `建置完成：dist/（${libraryPackage.name} ${libraryPackage.version}；模型按需下載）`,
+);
 
 if (process.argv.includes("--package")) {
   async function entries(dir, base = "") {

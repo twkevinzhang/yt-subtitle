@@ -16,7 +16,7 @@ Chrome MV3 擴充功能，在 YouTube 影片旁提供字幕搜尋與處理狀態
 
 ## 整合邊界與限制
 
-`src/subtitle/library-contract.ts` 定義 TS 契約，以 Python API 的辨識／對齊分工為基準：`prepare → transcribe(audio) → align(segments, lyrics) → dispose`。已接入固定 `lyric-align-ts 0.1.0` 發布物與 offscreen host，但真實 MV3 測試在 runtime 的動態 JS Blob 載入失敗；獨立整首音訊下載來源也尚未接入。無時間碼全流程尚未可用。沒有修改另一個 library 專案。
+`src/subtitle/library-contract.ts` 定義 TS 契約，以 Python API 的辨識／對齊分工為基準：`prepare → transcribe(audio) → align(segments, lyrics) → dispose`。以 npm 安裝並固定 `@twkevinzhang/lyric-align-ts@0.1.0`，建置從 node_modules 複製套件與 Worker 資產供 offscreen host 載入；不保存手動發布 ZIP。但真實 MV3 測試在 runtime 的動態 JS Blob 載入失敗；獨立整首音訊下載來源也尚未接入。無時間碼全流程尚未可用。沒有修改另一個 library 專案。
 
 所有模型、辨識、歌詞定位及 Worker 管理由 library 負責。本專案只包裝音訊 handle、排隊、進度、取消、結果驗證與發布。已驗證真實 offscreen 模型準備進度與取消，尚未通過 extension 全曲推論。具體證據、重跑命令及 library 配合條件見 [整合驗收](docs/lyric-align-integration.md)。
 
