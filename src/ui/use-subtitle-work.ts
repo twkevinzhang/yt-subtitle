@@ -49,5 +49,8 @@ export function useSubtitleWork(videoId: string) {
     const next = await request<VideoWork>({ type: "subtitle-cancel" });
     setWork(next);
   };
-  return { work, error, select, reset, cancel };
+  const setEntryMode = async (mode: "ai" | "paste") => {
+    setWork(await request<VideoWork>({ type: "subtitle-entry-mode", mode }));
+  };
+  return { work, error, select, reset, cancel, setEntryMode };
 }

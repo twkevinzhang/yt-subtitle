@@ -6,6 +6,7 @@ import { initialJob, type JobSnapshot } from "./job-state";
 import { validateSource } from "./result-validation";
 import { resolveLibrary } from "./library-loader";
 export interface VideoWork {
+  entryMode?: "ai" | "paste";
   version: 2;
   video: VideoContext;
   settingsRevision: number;
@@ -92,6 +93,7 @@ export class SubtitleCoordinator {
     tabId: number,
     video: VideoContext,
     settingsRevision: number,
+    discover = true,
   ): Promise<VideoWork> {
     const existing = this.works.get(tabId);
     if (
@@ -104,6 +106,7 @@ export class SubtitleCoordinator {
     this.controllers.set(tabId, controller);
     const work: VideoWork = {
       version: 2,
+      entryMode: discover ? "ai" : "paste",
       video,
       settingsRevision,
       job: {
@@ -113,10 +116,14 @@ export class SubtitleCoordinator {
           sourceFingerprint: "",
           generation: Date.now(),
         }),
-        phase: "searching",
+        phase: discover ? "searching" : "selecting",
       },
     };
     this.works.set(tabId, work);
+    if (!discover) {
+      await this.persist(tabId, work);
+      return structuredClone(work);
+    }
     void this.deps
       .search(tabId, video, controller.signal, (search) => {
         if (this.works.get(tabId) !== work || controller.signal.aborted) return;
@@ -226,6 +233,7 @@ export class SubtitleCoordinator {
   }
   async retrySearch(tabId: number, videoId: string, route: SearchRoute) {
     const work = this.works.get(tabId);
+    if (work?.entryMode === "paste") throw Error("貼入字幕模式不執行 AI 搜尋");
     if (
       !work?.search ||
       work.video.videoId !== videoId ||
@@ -256,5 +264,26 @@ export class SubtitleCoordinator {
       },
     );
     return this.get(tabId, videoId);
+  }
+  async setEntryMode(tabId: number, videoId: string, mode: "ai" | "paste") {
+    const work = this.works.get(tabId);
+    if (!work || work.video.videoId !== videoId)
+      throw Error("影片工作不存在，請先重新讀取");
+    work.entryMode = mode;
+    if (mode === "paste") {
+      this.controllers.get(tabId)?.abort();
+      this.controllers.delete(tabId);
+      if (work.search)
+        for (const route of Object.values(work.search.routes))
+          if (route.phase === "pending") {
+            route.phase = "cancelled";
+            route.error =
+              "已切換至貼入字幕，搜尋已取消；可返回 AI 取得字幕後重試。";
+          }
+      if (work.job.phase === "searching") work.job.phase = "selecting";
+    }
+    work.job.sequence++;
+    await this.persist(tabId, work);
+    return this.get(tabId, videoId)!;
   }
 }

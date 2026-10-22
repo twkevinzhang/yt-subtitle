@@ -80,14 +80,20 @@ await coordinator.ensure(1, video, 1);
 Object.assign(globalThis, {
   chrome: {
     runtime: {
-      sendMessage: async (message: { type: string; source: never }) => ({
+      sendMessage: async (message: {
+        type: string;
+        source: never;
+        mode: "ai" | "paste";
+      }) => ({
         ok: true,
         data:
-          message.type === "subtitle-select"
-            ? await coordinator.select(1, video.videoId, message.source)
-            : message.type === "subtitle-reset"
-              ? (coordinator.reset(1), await coordinator.ensure(1, video, 1))
-              : coordinator.get(1, video.videoId),
+          message.type === "subtitle-entry-mode"
+            ? await coordinator.setEntryMode(1, video.videoId, message.mode)
+            : message.type === "subtitle-select"
+              ? await coordinator.select(1, video.videoId, message.source)
+              : message.type === "subtitle-reset"
+                ? (coordinator.reset(1), await coordinator.ensure(1, video, 1))
+                : coordinator.get(1, video.videoId),
       }),
     },
   },

@@ -96,3 +96,40 @@ it("cancel invalidates a source selection awaiting its library preflight", async
   await selecting;
   expect(coordinator.get(1, video.videoId)?.job.phase).toBe("cancelled");
 });
+it("paste mode cancels only pending search and returning to AI does not resend", async () => {
+  let signal: AbortSignal | undefined;
+  const search = vi.fn(async (_tab, _video, s, onUpdate) => {
+    signal = s;
+    onUpdate({
+      id: "s",
+      videoId: video.videoId,
+      routes: {
+        configured: { phase: "pending", text: "", candidates: [] },
+        comments: { phase: "complete", text: "", candidates: [] },
+        web: { phase: "pending", text: "", candidates: [] },
+      },
+    });
+  });
+  const coordinator = new SubtitleCoordinator({ search, save: async () => {} });
+  await coordinator.ensure(1, video, 1);
+  await coordinator.setEntryMode(1, video.videoId, "paste");
+  expect(signal?.aborted).toBe(true);
+  expect(
+    coordinator.get(1, video.videoId)?.search?.routes.configured.phase,
+  ).toBe("cancelled");
+  expect(coordinator.get(1, video.videoId)?.search?.routes.comments.phase).toBe(
+    "complete",
+  );
+  await expect(
+    coordinator.retrySearch(1, video.videoId, "web"),
+  ).rejects.toThrow("貼入字幕");
+  await coordinator.setEntryMode(1, video.videoId, "ai");
+  expect(search).toHaveBeenCalledTimes(1);
+});
+it("local pasted subtitles do not need a discovery request", async () => {
+  const search = vi.fn(async () => {}),
+    coordinator = new SubtitleCoordinator({ search, save: async () => {} });
+  await coordinator.ensure(1, video, 1, false);
+  expect(search).not.toHaveBeenCalled();
+  expect(coordinator.get(1, video.videoId)?.entryMode).toBe("paste");
+});

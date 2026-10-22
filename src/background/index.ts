@@ -45,17 +45,22 @@ const coordinator = new SubtitleCoordinator({
 });
 async function snapshot(tabId: number, videoId: string) {
   const settings = await getSettings();
-  if (!settings.provider?.model || !settings.preferences.autoSearchApproved)
-    return null;
   const active = coordinator.get(tabId, videoId);
-  if (active?.settingsRevision === settings.revision) return active;
+  const aiAllowed =
+    !!settings.provider?.model && !!settings.preferences.autoSearchApproved;
+  if (
+    active?.settingsRevision === settings.revision &&
+    (aiAllowed || active.entryMode === "paste")
+  )
+    return active;
   const saved = (await chrome.storage.local.get("subtitle-v2:" + tabId))[
     "subtitle-v2:" + tabId
   ];
   if (
     saved?.version === 2 &&
     saved.video?.videoId === videoId &&
-    saved.settingsRevision === settings.revision
+    saved.settingsRevision === settings.revision &&
+    (aiAllowed || saved.entryMode === "paste")
   ) {
     try {
       coordinator.restore(tabId, saved);
@@ -63,7 +68,10 @@ async function snapshot(tabId: number, videoId: string) {
       return null;
     }
   }
-  return coordinator.get(tabId, videoId) ?? null;
+  const restored = coordinator.get(tabId, videoId);
+  return restored && (aiAllowed || restored.entryMode === "paste")
+    ? restored
+    : null;
 }
 async function ensure(tabId: number, videoId: string) {
   const context = await inspectVideo(tabId);
@@ -103,6 +111,23 @@ export async function handleMessage(
       return ensure(tabId, videoId);
     case "subtitle-snapshot":
       return snapshot(tabId, videoId);
+    case "subtitle-entry-mode": {
+      if (!coordinator.get(tabId, videoId)) {
+        if (m.mode === "ai") await ensure(tabId, videoId);
+        else {
+          const context = await inspectVideo(tabId),
+            settings = await getSettings();
+          if (context.video.videoId !== videoId) throw Error("影片已切換");
+          await coordinator.ensure(
+            tabId,
+            context.video,
+            settings.revision,
+            false,
+          );
+        }
+      }
+      return coordinator.setEntryMode(tabId, videoId, m.mode);
+    }
     case "subtitle-select": {
       const settings = await getSettings(),
         work = coordinator.get(tabId, videoId);

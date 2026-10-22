@@ -130,6 +130,10 @@ const msg = z.discriminatedUnion("type", [
   z.object({ type: z.literal("subtitle-reset") }),
   z.object({ type: z.literal("subtitle-cancel") }),
   z.object({
+    type: z.literal("subtitle-entry-mode"),
+    mode: z.enum(["ai", "paste"]),
+  }),
+  z.object({
     type: z.literal("subtitle-retry-search"),
     route: z.enum(["configured", "comments", "web"]),
   }),

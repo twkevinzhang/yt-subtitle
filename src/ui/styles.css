@@ -1431,3 +1431,24 @@ button.danger {
   padding: 16px;
   background: var(--notice);
 }
+.subtitle-methods {
+  display: grid;
+  gap: 12px;
+  margin-top: 20px;
+}
+.subtitle-methods h3 {
+  font-size: 16px;
+  margin: 0;
+}
+.subtitle-methods > button {
+  width: 100%;
+  padding: 13px;
+}
+.subtitle-methods p {
+  font-size: 12px;
+  color: var(--muted);
+}
+.subtitle-back {
+  margin: 0 0 16px;
+  padding: 7px 10px;
+}
