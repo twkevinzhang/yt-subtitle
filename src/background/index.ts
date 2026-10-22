@@ -15,8 +15,31 @@ import { startSearchGroup } from "./search-group";
 import { SubtitleCoordinator } from "../subtitle/coordinator";
 import { hashInput, listResults, deleteResult, clearResults } from "./results";
 import type { RunRecord } from "./runs";
+import { audioProvider } from "../subtitle/audio-provider";
+import { runInHost, initializeHost } from "../subtitle/host-client";
+const hostStartup =
+  typeof chrome !== "undefined"
+    ? initializeHost().then(
+        () => null,
+        (error) => error,
+      )
+    : Promise.resolve(null);
 const testRuns = new Map<string, RunRecord>();
 const coordinator = new SubtitleCoordinator({
+  align: async (video, lyrics, language, signal, progress) => {
+    const startupError = await hostStartup;
+    if (startupError) throw startupError;
+    if (language && language !== "en")
+      throw Object.assign(Error("目前 lyric-align-ts 僅支援英文"), {
+        code: "UNSUPPORTED_LANGUAGE",
+      });
+    const audio = await audioProvider.acquire(
+      video.videoId,
+      video.durationMs / 1000,
+      signal,
+    );
+    return runInHost(audio, lyrics, language, signal, progress);
+  },
   search: async (tabId, video, signal, update) => {
     const settings = await getSettings();
     if (!settings.provider?.model || !settings.preferences.autoSearchApproved)

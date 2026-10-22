@@ -125,4 +125,6 @@ UI 五步映射：尋找字幕、取得音訊、準備語音模型、對齊歌�
 8. 舊設定遷移後無模式分支、人工編輯或漸進發布；依賴／vendor 不殘留舊引擎。
 9. mock 驗證協調與異常；library 到位後以真實英文全曲驗證 WebGPU、資源釋放、原文保持及完整發布。未完成真實整合前不得宣稱整體流程可用。
 
-可靠度分數：90%（需求與本機架構有依據；library binding／音訊獨立取得尚待實作驗證）。升分方式：library 契約實作與真實音訊整合測試；若獨立音訊取得或 offscreen WebGPU 不成立，需調整對應 host／transport 設計，不移入對齊演算法。
+目前已固定接入 lyric-align-ts 0.1.0 發布物及 offscreen／IndexedDB transport。真實 extension 測試收到模型準備進度、取消回 ABORTED，但 prepare 因 JS Blob module 載入失敗而中止；整首獨立音訊來源也尚缺。完整證據與 library 配合條件見 [整合驗收](../../lyric-align-integration.md)。
+
+可靠度分數：95%（已核對發布物與本機 extension 測試；無時間碼全流程仍未通過）。升分方式：library 提供 MV3 相容 runtime 後重跑全曲、推論中取消、跨 tab 與背景節流／重啟測試，並接入獨立整首音訊來源。不移入對齊演算法。

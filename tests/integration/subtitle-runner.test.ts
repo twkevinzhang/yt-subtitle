@@ -1,10 +1,8 @@
 import { it, expect, vi } from "vitest";
 import { runUntimed } from "../../src/subtitle/library-runner";
 import { prepareLyrics } from "../../src/subtitle/source-input";
-import { resolveLibrary } from "../../src/subtitle/library-loader";
 import { audioProvider } from "../../src/subtitle/audio-provider";
 it("keeps missing library and audio sources explicit", async () => {
-  expect(await resolveLibrary()).toBeNull();
   await expect(
     audioProvider.acquire("abcdefghijk", 10, new AbortController().signal),
   ).rejects.toMatchObject({ code: "AUDIO_UNAVAILABLE" });

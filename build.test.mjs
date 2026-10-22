@@ -29,11 +29,17 @@ test("ZIP 與正式 manifest 一致且沒有舊模型或推論引擎", async () 
   assert.ok(files["background.js"]);
   assert.ok(files["content.js"]);
   assert.equal(
-    Object.keys(files).some((file) =>
-      /^(models|acoustic|vendor)\//u.test(file),
-    ),
+    Object.keys(files).some((file) => /^(models|acoustic)\//u.test(file)),
     false,
   );
+  assert.ok(files["subtitle-host.html"]);
+  assert.ok(files["vendor/lyric-align-ts/index.js"]);
+  assert.ok(
+    Object.keys(files).some((file) =>
+      /^vendor\/lyric-align-ts\/assets\/worker-.*\.js$/.test(file),
+    ),
+  );
+  assert.ok(files["vendor/lyric-align-ts/upstream.LICENSE"]);
   assert.equal(
     Object.keys(files).some((file) => /audio-helper|model-worker/u.test(file)),
     false,

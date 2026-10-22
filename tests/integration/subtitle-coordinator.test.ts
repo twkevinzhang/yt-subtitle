@@ -8,6 +8,35 @@ const video = {
   description: "",
   durationMs: 10000,
 };
+it("runs untimed lyrics through the host boundary and preserves their exact text on restore", async () => {
+  const align = vi.fn(async (_video, lyrics, _language, _signal, progress) => {
+    progress({ phase: "preparing-model", kind: "indeterminate", sequence: 1 });
+    return {
+      kind: "complete" as const,
+      cues: lyrics.lyrics.map((text: string, index: number) => ({
+        text,
+        sourceLineIndex: index,
+        startMs: 1000,
+        endMs: 2000,
+      })),
+    };
+  });
+  const coordinator = new SubtitleCoordinator({
+    search: async () => {},
+    save: async () => {},
+    align,
+  });
+  await coordinator.ensure(1, video, 1, false);
+  const saved = await coordinator.select(1, video.videoId, {
+    rawText: " words ",
+    languageHint: "en",
+  });
+  expect(saved.job.phase).toBe("complete");
+  expect(saved.cues?.[0].text).toBe(" words ");
+  expect(align).toHaveBeenCalledOnce();
+  coordinator.restore(1, saved);
+  expect(coordinator.get(1, video.videoId)?.cues?.[0].text).toBe(" words ");
+});
 it("deduplicates discovery and persists complete timed subtitles without invoking audio", async () => {
   const search = vi.fn(async () => undefined),
     save = vi.fn(async () => {});

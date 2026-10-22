@@ -10,7 +10,7 @@ import {
 } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { zipSync } from "fflate";
+import { zipSync, unzipSync } from "fflate";
 
 process.chdir(path.dirname(fileURLToPath(import.meta.url)));
 const common = { configFile: false, logLevel: "warn", publicDir: false };
@@ -19,7 +19,7 @@ await build({
   build: {
     target: "chrome116",
     outDir: "dist",
-    rollupOptions: { input: "options.html" },
+    rollupOptions: { input: ["options.html", "subtitle-host.html"] },
   },
 });
 for (const [name, entry] of Object.entries({
@@ -45,7 +45,24 @@ for (const [name, entry] of Object.entries({
   });
 }
 await cp("extension/manifest.json", "dist/manifest.json");
-console.log("建置完成：dist/（無內建語音模型；library 邊界尚待接入）");
+const release = await readFile("vendor/lyric-align-ts/release.zip");
+if (
+  createHash("sha256").update(release).digest("hex") !==
+  "c7a6c80b461891a23924328d6949063fd593f09fdb49521b6923df8678557fa9"
+)
+  throw Error("lyric-align-ts release checksum mismatch");
+for (const [archiveName, bytes] of Object.entries(unzipSync(release))) {
+  if (!archiveName.startsWith("library/"))
+    throw Error("Unexpected release root");
+  const name = archiveName.slice("library/".length);
+  if (name.endsWith("/") || name.endsWith(".map")) continue;
+  if (name.startsWith("/") || name.split("/").includes(".."))
+    throw Error("Unsafe release path");
+  const target = path.join("dist/vendor/lyric-align-ts", name);
+  await mkdir(path.dirname(target), { recursive: true });
+  await writeFile(target, bytes);
+}
+console.log("建置完成：dist/（lyric-align-ts 0.1.0；模型按需下載）");
 
 if (process.argv.includes("--package")) {
   async function entries(dir, base = "") {

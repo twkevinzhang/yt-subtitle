@@ -173,7 +173,7 @@
 
 `1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 → 9`。這是保守的單一路徑；UI task 在協調資料穩定後進行。Task 8 是內部變更收斂點，在它之前分支不作可發布宣稱。Task 9 是實際 library 可用性的關卡；無 library 仍可交付完整時間碼路徑與誠實的不可用狀態，但整體需求保持部分未完成。
 
-執行方式：使用者已選擇本 session 原生逐項實作。產品修改與任務提交已授權；不修改 library，不部署。關卡 A/B 尚未通過，獨立下載、offscreen 真實推論、佇列／資源釋放與 Task 9 仍待實際外部能力驗證。
+執行方式：使用者已選擇本 session 原生逐項實作。產品修改與任務提交已授權；不修改 library，不部署。目前固定接入 0.1.0 發布物、offscreen 與 IndexedDB；真實準備階段取消通過，全曲測試被 runtime JS Blob module 載入阻擋。關卡 A/B 與 Task 9 仍未通過，獨立下載、真實全曲推論／推論中取消、GPU 釋放及背景節流仍待驗證。證據與 library 配合條件見 `docs/lyric-align-integration.md`。
 
 ## 計畫自查
 

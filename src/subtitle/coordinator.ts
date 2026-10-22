@@ -4,7 +4,8 @@ import type { SearchRoute } from "../background/search-group";
 import type { PlayableCue, SelectedSource } from "./types";
 import { initialJob, type JobSnapshot } from "./job-state";
 import { validateSource } from "./result-validation";
-import { resolveLibrary } from "./library-loader";
+import type { Progress } from "./library-contract";
+import type { PreparedLyrics, ResultValidation } from "./types";
 export interface VideoWork {
   entryMode?: "ai" | "paste";
   version: 2;
@@ -19,6 +20,13 @@ export interface VideoWork {
   storageError?: string;
 }
 interface WorkDependencies {
+  align?: (
+    video: VideoContext,
+    lyrics: PreparedLyrics,
+    language: string | undefined,
+    signal: AbortSignal,
+    progress: (event: Progress) => void,
+  ) => Promise<ResultValidation>;
   search: (
     tabId: number,
     video: VideoContext,
@@ -39,6 +47,7 @@ export class SubtitleCoordinator {
   private works = new Map<number, VideoWork>();
   private controllers = new Map<number, AbortController>();
   private writes = new Map<number, Promise<void>>();
+  private alignControllers = new Map<number, AbortController>();
   constructor(private deps: WorkDependencies) {}
   restore(tabId: number, saved: VideoWork) {
     if (saved.version !== 2 || saved.job.key.tabId !== tabId) return;
@@ -171,6 +180,7 @@ export class SubtitleCoordinator {
       sourceFingerprint: crypto.randomUUID(),
       generation: work.job.key.generation + 1,
     };
+    this.alignControllers.get(tabId)?.abort();
     work.source = structuredClone(source);
     work.job = {
       ...initialJob(key),
@@ -185,18 +195,95 @@ export class SubtitleCoordinator {
       work.job.phase = "complete";
       work.publishedSequence = work.job.sequence;
     } else if (validation.kind === "untimed") {
-      const binding = await resolveLibrary();
+      const controller = new AbortController();
+      this.alignControllers.set(tabId, controller);
+      work.job.phase = "acquiring-audio";
+      await this.persist(tabId, work);
+      let lastProgressSave = 0;
+      try {
+        if (!this.deps.align)
+          throw Object.assign(Error("字幕處理 host 尚未接入"), {
+            code: "LIBRARY_UNAVAILABLE",
+          });
+        const result = await this.deps.align(
+          work.video,
+          validation.lyrics,
+          source.languageHint,
+          controller.signal,
+          (event) => {
+            if (
+              this.works.get(tabId) !== work ||
+              work.job.key !== key ||
+              controller.signal.aborted
+            )
+              return;
+            work.job.phase = event.phase;
+            work.job.progress = event;
+            work.job.sequence++;
+            if (Date.now() - lastProgressSave >= 250) {
+              lastProgressSave = Date.now();
+              void this.persist(tabId, work).catch(() => {});
+            }
+          },
+        );
+        if (
+          this.works.get(tabId) !== work ||
+          work.job.key !== key ||
+          controller.signal.aborted
+        )
+          return this.get(tabId, videoId)!;
+        if (result.kind === "complete") {
+          // Revalidate host output against the selected original and video duration.
+          const published = {
+            ...source,
+            timings: result.cues.map((c) => ({
+              sourceLineIndex: c.sourceLineIndex,
+              start: c.startMs / 1000,
+              end: c.endMs / 1000,
+            })),
+          };
+          const checked = validateSource(
+            published,
+            work.video.durationMs / 1000,
+          );
+          if (
+            checked.kind !== "complete" ||
+            checked.cues.some((c, i) => c.text !== result.cues[i]?.text)
+          )
+            throw Object.assign(Error("處理結果與原文不一致"), {
+              code: "CONTRACT_VIOLATION",
+            });
+          work.cues = checked.cues;
+          work.publishedSource = published;
+          work.job.phase = "complete";
+          work.publishedSequence = ++work.job.sequence;
+        } else if (result.kind === "incomplete") {
+          work.job.phase = "incomplete";
+          work.job.unmatchedLineIndexes = result.lineIndexes;
+        } else
+          throw Object.assign(Error("對齊結果不符合契約"), {
+            code: result.code,
+          });
+      } catch (error) {
+        if (
+          this.works.get(tabId) !== work ||
+          work.job.key !== key ||
+          controller.signal.aborted
+        )
+          return this.get(tabId, videoId)!;
+        const e = error as { code?: string; message?: string };
+        work.job.failedPhase = work.job.phase;
+        work.job.phase = "failed";
+        work.job.error = {
+          code: e.code ?? "LIBRARY_FAILED",
+          message: e.message ?? String(error),
+        };
+      } finally {
+        if (this.alignControllers.get(tabId) === controller)
+          this.alignControllers.delete(tabId);
+      }
       if (this.works.get(tabId) !== work || work.job.key !== key)
         return this.get(tabId, videoId)!;
-      // No inferred package or hidden-player fallback. A real binding activates the host boundary.
-      work.job.phase = "failed";
-      work.job.failedPhase = binding ? "acquiring-audio" : "selecting";
-      work.job.error = {
-        code: binding ? "AUDIO_UNAVAILABLE" : "LIBRARY_UNAVAILABLE",
-        message: binding
-          ? "尚未接入獨立的整首音訊下載來源。"
-          : "尚未接入符合契約的 lyric-align-ts，無時間碼歌詞暫時無法對齊。請更換含完整時間碼的字幕。",
-      };
     } else {
       work.job.phase = "failed";
       work.job.failedPhase = "validating";
@@ -211,6 +298,8 @@ export class SubtitleCoordinator {
     return structuredClone(work);
   }
   cancel(tabId: number) {
+    this.alignControllers.get(tabId)?.abort();
+    this.alignControllers.delete(tabId);
     this.controllers.get(tabId)?.abort();
     this.controllers.delete(tabId);
     const work = this.works.get(tabId);
