@@ -1,8 +1,8 @@
 # lyric-align-ts 整合驗收
 
-正式依賴固定 registry 發布的 `@twkevinzhang/lyric-align-ts@0.1.1`，已包含 MV3 靜態 runtime 修正。library 修正與版本提交已合併、推送 main；產品無時間碼全流程仍缺整首音訊提供者。
+正式依賴固定 registry 發布的 `lyric-align-ts@1.0.2`（Whisper C++／WASM，CPU，取代舊的 `@twkevinzhang/lyric-align-ts@0.1.1` WebGPU 版）。library 要求 SharedArrayBuffer，故 manifest 宣告 `cross_origin_opener_policy: same-origin` 與 `cross_origin_embedder_policy: require-corp`。產品無時間碼全流程仍缺整首音訊提供者。
 
-`package.json`／`package-lock.json` 固定 0.1.1 registry tarball 與 integrity，未寫入本機絕對路徑。發布 tarball SHA-1 為 `f4a5dc6a5fa1a97b1310956611b44c14b00fe177`，與 registry 一致。`npm ci` 可重現安裝。建置從安裝套件的 `package.json` 解析根目錄，完整複製至 `dist/vendor/lyric-align-ts/`，保留 Worker、靜態 runtime `.mjs`／`.wasm` 及授權文件。沒有手動發布 ZIP。
+`package.json`／`package-lock.json` 固定 1.0.2 registry tarball 與 integrity，未寫入本機絕對路徑。`npm ci` 可重現安裝。建置從安裝套件的 `package.json` 解析根目錄，完整複製至 `dist/vendor/lyric-align-ts/`，保留 `dist/` 內的 Worker、`assets/` 的 `.wasm`／tokenizer 及授權文件。沒有手動發布 ZIP。
 
 ## 消費端路徑
 
@@ -23,21 +23,19 @@ node tests/e2e/library-host.mjs AUDIO_FILE LYRICS_FILE --cancel-transcribing
 ```
 
 - Extension 載入、offscreen 建立、ES module 入口、library Worker 與 IndexedDB PCM 傳遞成功；收到模型下載的真實 bytes 進度。
-- 公開 npm 0.1.0 可重現 `prepare()` 拒絕 `MODEL_LOAD_FAILED: Failed to fetch dynamically imported module: blob:chrome-extension://…`。
-- 正式 registry 0.1.1 全曲 **PASS**：12/12 cues，同數同序同原文，0 ≤ start < end ≤ duration。取消後的新 session 重試也通過，觀測總耗時 151356ms（含輪詢）。runner 在傳回結果前已 await dispose；不代表演唱時間精準度已評估。
-- 正式 registry 0.1.1 推論中取消 **PASS**：收到實際 `seek … step=0` 解碼進度後取消，library 回 `ABORTED`。準備階段取消另有 probe。
-- 安裝入口 SHA-256：`b56a22131251a1a10b86d29cf14f8a7491043bbba580a71581a416d7d04f3ee6`；63 項 unit/integration、型別檢查與 2 項打包檢查通過。
+- 正式 registry 1.0.2 以 11 秒 jfk 樣本與 3 行歌詞 **PASS**：cues 同數同序同原文，0 ≤ start < end ≤ duration；不代表整首歌曲耗時、記憶體或演唱時間準確度已評估。
+- 正式 registry 1.0.2 推論中取消 **PASS**：收到 `transcribing` 進度後取消，library 回 `ABORTED`。取消探針以 `detail === "transcribing"` 觸發；1.0.2 不再回報舊版的 `step=N`。
+- 移除 manifest 的 COOP／COEP 後，library 回 `UNSUPPORTED_DEVICE`（需要 cross-origin isolation），故兩項宣告是必要條件。
+- 安裝入口 SHA-256：`e57e560df206beee8b7d845a9bae54211113988fecc7e7f98d307e95428e4ccf`；63 項 unit/integration、型別檢查與 2 項打包檢查通過。
 - host-client 排隊取消與 PCM 啟動清理有整合測試；真實 probe 直接連 offscreen port，因此未驗證實際跨 tab queue、五秒強制關閉、長時間背景 service worker 存活／節流、推論中 GPU 釋放或演唱時間準確度。
 - 報告：`test-results/library-host/report.json`、`cancel-transcribing.json`（本機忽略），包含進度、耗時與安裝入口 SHA-256。requests 只涵蓋 Playwright 看見的頁面請求，不作全 Worker 網路稽核。腳本使用 finally 關閉隔離瀏覽器，未啟動 dev server。
 
-程式碼核對：發布物內 Transformers.js 的 WASM cache 會讀取 runtime factory，建立 JavaScript Blob，再動態 import。Chrome MV3 extension 的 script CSP 不允許這種載入；`wasm-unsafe-eval` 只允許 WASM 編譯，不能使任意 JavaScript Blob 合法。依據：[Chrome extension CSP](https://developer.chrome.com/docs/extensions/reference/manifest/content-security-policy)。
-
 ## library 修正與交付邊界
 
-library 原始碼已設定套件內靜態 factory／WASM、關閉 JS Blob cache，保留模型快取與上游對舊 Safari standard runtime 的選擇。辨識／對齊 API 與演算法未改動，extension CSP 保持 `script-src 'self' 'wasm-unsafe-eval'; worker-src 'self'`：
+library 為 Whisper C++／WASM，Worker 為 classic Worker，載入 `dist/worker.js` 與 `dist/assets/` 的 WASM。extension CSP 保持 `script-src 'self' 'wasm-unsafe-eval'; worker-src 'self'`：
 
-1. 0.1.1 經 npm publish 公開發布，本專案正式從 registry 安裝，沒有本地套件覆蓋或 bundle 私有改寫。
-2. loader 核對 contractVersion=1 與 libraryVersion=0.1.1；lockfile 固定來源與完整性。
-3. Safari 選擇分支只有回歸單測，未實測 Safari；WASM 全曲、跨 tab、背景節流與 GPU 資源量測仍待驗證。
+1. 1.0.2 經 npm publish 公開發布，本專案正式從 registry 安裝，沒有本地套件覆蓋或 bundle 私有改寫。
+2. loader 核對 contractVersion=1 與 libraryVersion=1.0.2；lockfile 固定來源與完整性。
+3. 未驗證：整首歌曲的耗時與記憶體、跨 tab、背景 service worker 節流，以及 Chrome for Testing 以外的正式 Chrome。
 
 `AudioProvider` 尚無獨立 YouTube 整首音訊下載來源；此測試使用本機音檔，不能當作產品 YouTube 端到端通過。不恢復隱藏播放器擷取，也不暫停或 seek 使用者影片。

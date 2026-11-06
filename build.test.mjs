@@ -33,16 +33,16 @@ test("ZIP 與正式 manifest 一致且沒有舊模型或推論引擎", async () 
     false,
   );
   assert.ok(files["subtitle-host.html"]);
-  assert.ok(files["vendor/lyric-align-ts/index.js"]);
+  assert.ok(files["vendor/lyric-align-ts/dist/index.js"]);
   assert.ok(
     Object.keys(files).some((file) =>
-      /^vendor\/lyric-align-ts\/assets\/worker-.*\.js$/.test(file),
+      /^vendor\/lyric-align-ts\/dist\/worker\.js$/.test(file),
     ),
   );
   assert.deepEqual(
-    files["vendor/lyric-align-ts/index.js"],
+    files["vendor/lyric-align-ts/dist/index.js"],
     new Uint8Array(
-      await readFile("node_modules/@twkevinzhang/lyric-align-ts/index.js"),
+      await readFile("node_modules/lyric-align-ts/dist/index.js"),
     ),
   );
   assert.ok(files["vendor/lyric-align-ts/LICENSE"]);

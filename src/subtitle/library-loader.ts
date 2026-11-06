@@ -6,9 +6,9 @@ export async function resolveLibrary(
 ): Promise<LyricAlignBinding> {
   const url =
     typeof chrome !== "undefined" && chrome.runtime?.getURL
-      ? chrome.runtime.getURL("vendor/lyric-align-ts/index.js")
+      ? chrome.runtime.getURL("vendor/lyric-align-ts/dist/index.js")
       : new URL(
-          /* @vite-ignore */ "../../vendor/lyric-align-ts/index.js",
+          /* @vite-ignore */ "../../vendor/lyric-align-ts/dist/index.js",
           import.meta.url,
         ).href;
   const module = (await importer(url)) as {
@@ -18,7 +18,7 @@ export async function resolveLibrary(
   if (
     !binding ||
     binding.capabilities.contractVersion !== 1 ||
-    binding.capabilities.libraryVersion !== "0.1.1" ||
+    binding.capabilities.libraryVersion !== "1.0.2" ||
     typeof binding.createSession !== "function"
   )
     throw Object.assign(new Error("lyric-align-ts 發布物不符合固定契約"), {

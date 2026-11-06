@@ -41,7 +41,7 @@ await cp("extension/manifest.json", "dist/manifest.json");
 // Keep the installed package intact: its entry creates a Worker by relative URL.
 const require = createRequire(import.meta.url);
 const libraryRoot = path.dirname(
-  require.resolve("@twkevinzhang/lyric-align-ts/package.json"),
+  require.resolve("lyric-align-ts/package.json"),
 );
 const libraryPackage = JSON.parse(
   await readFile(path.join(libraryRoot, "package.json"), "utf8"),

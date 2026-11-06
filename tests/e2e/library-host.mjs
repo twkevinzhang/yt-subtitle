@@ -105,7 +105,7 @@ try {
             (cancel && window.__probe.events.length === 1) ||
             (cancelTranscribing &&
               message.progress.phase === "transcribing" &&
-              /step=\d+/.test(message.progress.detail ?? "") &&
+              message.progress.detail === "transcribing" &&
               !window.__probe.cancelled)
           ) {
             window.__probe.cancelled = true;
@@ -155,7 +155,7 @@ try {
         installedEntrySha256: createHash("sha256")
           .update(
             await readFile(
-              "node_modules/@twkevinzhang/lyric-align-ts/index.js",
+              "node_modules/lyric-align-ts/dist/index.js",
             ),
           )
           .digest("hex"),

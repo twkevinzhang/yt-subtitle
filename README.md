@@ -16,9 +16,9 @@ Chrome MV3 擴充功能，在 YouTube 影片旁提供字幕搜尋與處理狀態
 
 ## 整合邊界與限制
 
-`src/subtitle/library-contract.ts` 定義 TS 契約，以 Python API 的辨識／對齊分工為基準：`prepare → transcribe(audio) → align(segments, lyrics) → dispose`。正式依賴固定 registry 發布的 `@twkevinzhang/lyric-align-ts@0.1.1`，包含 MV3 靜態 runtime 修正。建置從 node_modules 複製套件、Worker 與 runtime 資產供 offscreen host 載入；不保存手動發布 ZIP。獨立整首 YouTube 音訊下載來源仍未接入，產品無時間碼全流程尚未可用。
+`src/subtitle/library-contract.ts` 定義 TS 契約，以 Python API 的辨識／對齊分工為基準：`prepare → transcribe(audio) → align(segments, lyrics) → dispose`。正式依賴固定 registry 發布的 `lyric-align-ts@1.0.2`（Whisper C++／WASM，需 cross-origin isolation，manifest 已宣告 COOP／COEP）。建置從 node_modules 複製套件、Worker 與 runtime 資產供 offscreen host 載入；不保存手動發布 ZIP。獨立整首 YouTube 音訊下載來源仍未接入，產品無時間碼全流程尚未可用。
 
-所有模型、辨識、歌詞定位及 Worker 管理由 library 負責。本專案只包裝音訊 handle、排隊、進度、取消、結果驗證與發布。0.1.1 可由 lockfile 重現安裝，無須暫時覆蓋本地包。真實 MV3 offscreen 測試與待驗證範圍見 [整合驗收](docs/lyric-align-integration.md)。
+所有模型、辨識、歌詞定位及 Worker 管理由 library 負責。本專案只包裝音訊 handle、排隊、進度、取消、結果驗證與發布。1.0.2 可由 lockfile 重現安裝，無須暫時覆蓋本地包。真實 MV3 offscreen 測試與待驗證範圍見 [整合驗收](docs/lyric-align-integration.md)。
 
 未匹配或不合法時間不插補、不發布部分字幕；文字相似度不是時間準確率。SRT 必須有完整起訖；只有起點的 LRC 不推估結束，需更換完整時間碼字幕或原文來源。原文與換行保留，辨識文字不能取代歌詞。
 
