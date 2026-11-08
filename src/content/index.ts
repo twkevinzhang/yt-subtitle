@@ -6,7 +6,9 @@ import { Onboarding } from "../ui/Onboarding";
 import { followYouTubeTheme } from "./theme";
 import { mountWatchPanel } from "./placement";
 import { createControlButton } from "./control-button";
+import { installAudioTapBridge } from "../youtube/audio-tap-bridge";
 import css from "../ui/styles.css?inline";
+installAudioTapBridge();
 let cleanup = () => {};
 bindPlayer((binding) => {
   cleanup();

@@ -19,6 +19,7 @@ for (const [name, entry] of Object.entries({
   background: "src/background/index.ts",
   content: "src/content/index.ts",
   bridge: "src/youtube/bridge.ts",
+  "audio-tap-main": "src/youtube/audio-tap-main.ts",
 })) {
   await build({
     ...common,

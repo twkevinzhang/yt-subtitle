@@ -26,6 +26,7 @@ interface WorkDependencies {
     language: string | undefined,
     signal: AbortSignal,
     progress: (event: Progress) => void,
+    tabId: number,
   ) => Promise<ResultValidation>;
   search: (
     tabId: number,
@@ -225,6 +226,7 @@ export class SubtitleCoordinator {
               void this.persist(tabId, work).catch(() => {});
             }
           },
+          tabId,
         );
         if (
           this.works.get(tabId) !== work ||

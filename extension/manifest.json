@@ -24,6 +24,12 @@
   "content_scripts": [
     {
       "matches": ["https://www.youtube.com/*"],
+      "js": ["audio-tap-main.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": ["https://www.youtube.com/*"],
       "js": ["content.js"],
       "run_at": "document_idle"
     }

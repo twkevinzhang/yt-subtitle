@@ -17,6 +17,7 @@ import { hashInput, listResults, deleteResult, clearResults } from "./results";
 import type { RunRecord } from "./runs";
 import { audioProvider } from "../subtitle/audio-provider";
 import { runInHost, initializeHost } from "../subtitle/host-client";
+import { subtitleCache, resultCacheKey } from "../subtitle/cache-store";
 const hostStartup =
   typeof chrome !== "undefined"
     ? initializeHost().then(
@@ -26,7 +27,16 @@ const hostStartup =
     : Promise.resolve(null);
 const testRuns = new Map<string, RunRecord>();
 const coordinator = new SubtitleCoordinator({
-  align: async (video, lyrics, language, signal, progress) => {
+  align: async (video, lyrics, language, signal, progress, tabId) => {
+    // Same video + lyrics + language + library release always aligns the same.
+    const cacheKey = await resultCacheKey({
+      videoId: video.videoId,
+      durationMs: video.durationMs,
+      lyrics,
+      language,
+    });
+    const hit = await subtitleCache.getResult(cacheKey).catch(() => undefined);
+    if (hit) return hit;
     const startupError = await hostStartup;
     if (startupError) throw startupError;
     if (language && language !== "en")
@@ -37,8 +47,11 @@ const coordinator = new SubtitleCoordinator({
       video.videoId,
       video.durationMs / 1000,
       signal,
+      tabId,
     );
-    return runInHost(audio, lyrics, language, signal, progress);
+    const result = await runInHost(audio, lyrics, language, signal, progress);
+    await subtitleCache.putResult(cacheKey, result).catch(() => {});
+    return result;
   },
   search: async (tabId, video, signal, update) => {
     const settings = await getSettings();
@@ -203,6 +216,7 @@ export async function handleMessage(
     case "results-delete":
       return deleteResult(m.key as never);
     case "results-clear":
+      await subtitleCache.clear().catch(() => {});
       return clearResults();
     case "run": {
       const run = testRuns.get(m.runId);
