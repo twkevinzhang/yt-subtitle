@@ -1,4 +1,4 @@
-import { resolveLibrary } from "./library-loader";
+import { resolveAligner } from "./library-loader";
 import { readAudio, releaseAudio } from "./audio-store";
 import { runUntimed } from "./library-runner";
 import type { AudioHandle } from "./audio-provider";
@@ -26,9 +26,9 @@ chrome.runtime.onConnect.addListener((port) => {
       language?: string;
     };
     try {
-      const binding = await resolveLibrary();
+      const createAligner = await resolveAligner();
       const result = await runUntimed(
-        binding,
+        createAligner,
         await readAudio(audio),
         lyrics,
         language,

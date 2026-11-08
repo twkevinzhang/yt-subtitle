@@ -443,8 +443,8 @@ export function Panel({
                 <details>
                   <summary>查看處理詳細資訊</summary>
                   <p>
-                    對齊由 lyric-align-ts
-                    負責。現階段尚未接入符合契約的發布物與獨立音訊下載來源。
+                    音訊取自你正在播放的影片，在本機由 lyric-align-ts
+                    對齊，不會另外下載。
                   </p>
                   <p>語言提示：{work.source?.languageHint ?? "尚未選擇"}</p>
                   <p>{job.error?.code}</p>
