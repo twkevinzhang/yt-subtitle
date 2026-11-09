@@ -197,6 +197,8 @@ export async function handleMessage(
     case "subtitle-reset":
       coordinator.reset(tabId);
       await chrome.storage.local.remove("subtitle-v2:" + tabId);
+      // Reloading a song means starting it over, including its local data.
+      if (m.clearLocalData) await subtitleCache.deleteVideo(videoId);
       return ensure(tabId, videoId);
     case "settings-public":
       return getPublicSettings();

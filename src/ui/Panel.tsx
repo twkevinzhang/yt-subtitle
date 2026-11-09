@@ -159,11 +159,11 @@ export function Panel({
             onClick={() => {
               if (
                 window.confirm(
-                  "重新載入會清除此影片的字幕工作並重新搜尋，確定繼續？",
+                  "重新載入會清除這首歌的本機資料（音訊與對齊結果）並重新搜尋，確定繼續？",
                 )
               )
                 void perform(async () => {
-                  await reset();
+                  await reset(true);
                   setView("method");
                   setPaste("");
                   setSelected(undefined);
@@ -310,7 +310,7 @@ export function Panel({
                     pending={pending}
                     onSelect={setSelected}
                     onUseSelected={() => void useSelected()}
-                    onSearchAgain={() => void perform(reset)}
+                    onSearchAgain={() => void perform(() => reset())}
                     onPaste={() => void chooseMode("paste")}
                   />
                 )}

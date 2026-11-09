@@ -121,7 +121,10 @@ const selectedSourceSchema = z.object({
 const msg = z.discriminatedUnion("type", [
   z.object({ type: z.literal("subtitle-ensure") }),
   z.object({ type: z.literal("subtitle-snapshot") }),
-  z.object({ type: z.literal("subtitle-reset") }),
+  z.object({
+    type: z.literal("subtitle-reset"),
+    clearLocalData: z.boolean().optional(),
+  }),
   z.object({ type: z.literal("subtitle-cancel") }),
   z.object({
     type: z.literal("subtitle-entry-mode"),

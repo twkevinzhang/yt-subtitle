@@ -31,3 +31,12 @@ it("validates cache messages", () => {
   ).toThrow();
   expect(() => validateMessage({ type: "cache-delete" })).toThrow();
 });
+it("lets the video page ask to clear this song's local data when it resets", () => {
+  expect(
+    validateMessage({ type: "subtitle-reset", clearLocalData: true }),
+  ).toEqual({ type: "subtitle-reset", clearLocalData: true });
+  expect(validateMessage({ type: "subtitle-reset" })).toEqual({
+    type: "subtitle-reset",
+  });
+  expect(authorizeSender("subtitle-reset", page as never, id)).toBe(false);
+});

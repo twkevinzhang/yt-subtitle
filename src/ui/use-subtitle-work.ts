@@ -42,8 +42,13 @@ export function useSubtitleWork(videoId: string) {
     },
     [videoId],
   );
-  const reset = async () => {
-    setWork(await request<VideoWork>({ type: "subtitle-reset" }));
+  const reset = async (clearLocalData = false) => {
+    setWork(
+      await request<VideoWork>({
+        type: "subtitle-reset",
+        ...(clearLocalData ? { clearLocalData } : {}),
+      }),
+    );
   };
   const cancel = async () => {
     const next = await request<VideoWork>({ type: "subtitle-cancel" });
