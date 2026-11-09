@@ -1,41 +1,38 @@
 # AI 歌詞字幕
 
-Chrome MV3 擴充功能，在 YouTube 影片旁提供字幕搜尋與處理狀態面板。使用者先設定自己的 AI 服務、來源網站，並在設定頁允許影片載入時自動搜尋；會傳送影片資訊與實際留言，並使用模型額度。
+Chrome MV3 擴充功能。在 YouTube 影片旁的面板找出歌詞，沒有時間碼時在本機把歌詞對齊到音訊，整首完成後才套用成字幕；處理期間不影響影片播放。
 
-## 現在可用
+## 流程
 
-- 影片 context 建立後自動啟動設定來源、YouTube 留言、全網搜尋三路搜尋，面板開關不重送。
-- 窄面板顯示來源品牌、搜尋結果、五階段進度、唯讀歌詞預覽，標題列保留「重新載入」「設定」「×」。
-- 具有完整有效時間碼的 SRT 原文驗證後一次套用；處理不暫停、播放或跳轉影片。
-- 貼入原文或 SRT；失敗時保留原文與先前成功字幕。每一路搜尋可獨立重試。
-- 進度節點支援滑鼠／鍵盤提示、Esc 關閉及螢幕閱讀器名稱。
+1. 開啟影片後同時搜尋三個來源：**LRCLIB**、**留言區**、**Google**。LRCLIB 不用 AI；留言區與 Google 使用你設定的 AI 服務與模型額度。也可以改成直接貼入歌詞或 SRT。
+2. 選一份歌詞。已有完整時間碼（SRT，或有起訖的字幕）就驗證後直接套用。
+3. 沒有時間碼時在本機對齊：取得音訊 → 準備語音模型 → 對齊歌詞 → 套用字幕。音訊在背景小視窗載入播放器內容後擷取，語音模型與取得音訊同時準備。
+4. 音訊與對齊結果依影片快取，重播或換歌詞時不必重做。
 
-## 取得方式與返回流程
+未匹配的行或不合法的時間不插補、不發布部分字幕。只有起點的 LRC 不推估結束時間。原文與換行保留，辨識文字不會取代歌詞。對齊語言支援英、日、中；未指定時由歌詞判斷。
 
-面板先選擇「AI 取得字幕」或「貼入字幕」，兩個來源頁互斥顯示。「上一步」從來源頁返回方式選擇；從處理／結果頁返回原來源，保留輸入與選擇。處理中返回會取消本次處理，已完成字幕維持顯示。切入貼入頁取消尚未完成的 AI 搜尋，返回 AI 頁不自動重送，需按來源重試。貼入本身不需要 AI 服務設定。
+## 設定頁
 
-## 整合邊界與限制
+- **AI 服務**：端點、金鑰與模型。
+- **字幕與搜尋**：影片載入時自動搜尋需明確開啟（預設關閉），會把影片資訊與實際留言送給 AI 服務並使用額度。Google 與留言搜尋的任務指示可自訂，回覆格式由程式附加，可隨時還原預設。含搜尋測試，以固定影片跑一次三路搜尋，不保存任何結果。
+- **本機資料**：依影片列出已快取的音訊與對齊結果，可單筆或全部刪除。面板的「重新載入」會一併清除該影片的本機資料。
 
-`src/subtitle/library-contract.ts` 定義 TS 契約，以 Python API 的辨識／對齊分工為基準：`prepare → transcribe(audio) → align(segments, lyrics) → dispose`。正式依賴固定 registry 發布的 `lyric-align-ts@1.0.2`（Whisper C++／WASM，需 cross-origin isolation，manifest 已宣告 COOP／COEP）。建置從 node_modules 複製套件、Worker 與 runtime 資產供 offscreen host 載入；不保存手動發布 ZIP。獨立整首 YouTube 音訊下載來源仍未接入，產品無時間碼全流程尚未可用。
+## 安裝
 
-所有模型、辨識、歌詞定位及 Worker 管理由 library 負責。本專案只包裝音訊 handle、排隊、進度、取消、結果驗證與發布。1.0.2 可由 lockfile 重現安裝，無須暫時覆蓋本地包。真實 MV3 offscreen 測試與待驗證範圍見 [整合驗收](docs/lyric-align-integration.md)。
+到 [Releases](https://github.com/twkevinzhang/yt-subtitle/releases) 下載 `ai-lyrics-extension.zip` 並解壓，在 `chrome://extensions` 開啟開發者模式後「載入未封裝項目」。語音模型不隨套件發布，首次對齊時才下載。
 
-未匹配或不合法時間不插補、不發布部分字幕；文字相似度不是時間準確率。SRT 必須有完整起訖；只有起點的 LRC 不推估結束，需更換完整時間碼字幕或原文來源。原文與換行保留，辨識文字不能取代歌詞。
-
-先前的校時模式、人工時間編輯、聲學對齊演算法、模型與播放器擷取入口均已移除。舊工作資料不會被自動當作新引擎成功結果；新的工作使用獨立 version 2 儲存快照，背景重啟不自動重發收費搜尋。既有設定自動搜尋同意預設關閉，需使用者明確開啟。
-
-## 建置與驗證
+## 開發
 
 ```sh
 npm ci
 npm run typecheck
-npx vitest run
-npm test
-npm run package
+npm test            # vitest、打包與打包測試
+npm run build       # 輸出 dist/
+npm run package     # 另產生 artifacts/ai-lyrics-extension.zip
 ```
 
-建置不下載語音模型。`dist/` 可在 Chrome 擴充功能開發者模式載入；ZIP 位於 `artifacts/ai-lyrics-extension.zip`。
+`dist/` 可直接載入。`tests/e2e/dashboard.html` 是用測試資料與本地協調器驅動真實 React 面板的頁面，不送出 AI 請求，也不含在發布物內。
 
-`tests/e2e/dashboard.html` 是隔離的實際 React 面板測試頁，使用測試資料與本地協調器，不會送出 AI 請求；不包含在擴充功能發布物。啟動 Vite 後可用它驗證來源選擇、完整時間碼套用與 library 不可用狀態。這不等於真實 YouTube／AI 服務的端到端驗收。
+對齊由固定版本的 `lyric-align-ts@1.0.2`（Whisper C++／WASM，需 cross-origin isolation，manifest 已宣告 COOP／COEP）負責；建置時從 `node_modules` 原樣複製，由 offscreen host 載入。本專案只處理音訊交接、排隊、進度、取消與結果驗證。介面契約見 `src/subtitle/library-contract.ts`。
 
-架構設計：`docs/superpowers/specs/2026-10-22-subtitle-architecture-design.md`。實作計畫與尚待 library 配合的關卡：`docs/superpowers/plans/2026-10-22-subtitle-integration.md`。
+`services/po-token` 是獨立的 PO Token 服務，`infra/cloud-run/po-token` 為其部署腳本，用法見各自的 README。
