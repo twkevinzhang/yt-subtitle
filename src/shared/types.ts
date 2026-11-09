@@ -80,6 +80,9 @@ export interface Preferences {
   targetLanguage: TargetLanguage;
   fontSize: number;
   position: "top" | "bottom";
+  /** Task text for the Google and comments searches; empty means the default. */
+  webPrompt?: string;
+  commentsPrompt?: string;
 }
 export interface PublicSettings {
   baseUrl: string;

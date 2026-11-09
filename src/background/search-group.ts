@@ -136,8 +136,8 @@ export async function startSearchGroup(
           }
           if (routeController.signal.aborted) throw new Error("已取消");
           const messages = batch
-            ? commentMessages(video, batch)
-            : searchMessages(video, route);
+            ? commentMessages(video, batch, settings.preferences.commentsPrompt)
+            : searchMessages(video, route, settings.preferences.webPrompt);
           const client = createAiClient(settings.provider!);
           const endpoint =
             route === "comments"

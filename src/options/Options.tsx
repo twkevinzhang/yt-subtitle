@@ -2,11 +2,11 @@ import React, { useEffect, useState } from "react";
 import { request } from "../shared/messages";
 import { normalizeProvider, type SettingsRecord } from "../background/settings";
 import { preferencesSchema, providerSchema } from "../shared/schemas";
-import type {
-  ProviderSettings,
-  Preferences,
-  SavedResult,
-} from "../shared/types";
+import {
+  DEFAULT_COMMENTS_INSTRUCTION,
+  DEFAULT_WEB_INSTRUCTION,
+} from "../lyrics/default-prompts";
+import type { ProviderSettings, Preferences } from "../shared/types";
 import { SearchTest } from "./SearchTest";
 import { cacheDetails } from "./cache-format";
 import type { CacheEntry } from "../subtitle/cache-store";
@@ -16,7 +16,7 @@ const emptyProvider: ProviderSettings = {
   apiToken: "",
   model: "",
 };
-type SectionId = "ai" | "preferences" | "records" | "cache";
+type SectionId = "ai" | "preferences" | "cache";
 type Notice = { status?: string; error?: string };
 const serviceKey = (p: ProviderSettings | null) =>
   p &&
@@ -29,8 +29,7 @@ const serviceKey = (p: ProviderSettings | null) =>
 const categories = [
   ["ai", "AI 服務"],
   ["preferences", "字幕與搜尋"],
-  ["records", "本機資料"],
-  ["cache", "快取"],
+  ["cache", "本機資料"],
 ] as const;
 export function Options() {
   const [active, setActive] = useState<SectionId>("ai");
@@ -46,7 +45,6 @@ export function Options() {
       position: "bottom",
     }),
     [models, setModels] = useState<string[]>([]),
-    [records, setRecords] = useState<SavedResult[]>([]),
     [cacheEntries, setCacheEntries] = useState<CacheEntry[]>([]),
     [testOpen, setTestOpen] = useState(false),
     [feedback, setFeedback] = useState<Partial<Record<SectionId, Notice>>>({
@@ -112,14 +110,9 @@ export function Options() {
       JSON.stringify([record.provider || emptyProvider, record.preferences]),
     );
     try {
-      setRecords(await request<SavedResult[]>({ type: "results-list" }));
-    } catch {
-      notify("records", { error: "本機結果讀取失敗，請重新整理設定頁。" });
-    }
-    try {
       setCacheEntries(await request<CacheEntry[]>({ type: "cache-list" }));
     } catch {
-      notify("cache", { error: "快取讀取失敗，請重新整理設定頁。" });
+      notify("cache", { error: "本機資料讀取失敗，請重新整理設定頁。" });
     }
     notify("ai", {});
   };
@@ -369,6 +362,7 @@ export function Options() {
               open={testOpen}
               ready={savedModelReady}
               model={provider.model}
+              webPrompt={preferences.webPrompt}
               onBusy={(value) => setBusy(value ? "ai" : null)}
             />
           </section>
@@ -437,63 +431,44 @@ export function Options() {
               允許影片載入時自動搜尋字幕（傳送影片資訊與留言到已設定 AI
               服務，會使用模型額度）
             </label>
-            {sectionNotice("preferences")}
-          </section>
-          <section hidden={active !== "records"} aria-label="本機結果">
-            <h2>本機資料</h2>
-            <p>
-              已保存 {records.length} 份。重新載入已保存版本不會呼叫
-              AI；容量不足時可在這裡刪除不需要的版本。
-            </p>
-            {!records.length && (
-              <div className="empty-records">
-                <h3>還沒有保存的歌詞</h3>
-                <p>在 YouTube 完成字幕處理並保存後，就會出現在這裡。</p>
-              </div>
-            )}
-            {records.map((r) => (
-              <div className="row records" key={JSON.stringify(r.key)}>
-                <span>
-                  {r.key.videoId}／{r.lines.length} 句／{r.key.targetLanguage}
-                </span>
+            <h3>搜尋指示</h3>
+            {(
+              [
+                ["webPrompt", "Google 搜尋", DEFAULT_WEB_INSTRUCTION],
+                ["commentsPrompt", "留言區", DEFAULT_COMMENTS_INSTRUCTION],
+              ] as const
+            ).map(([key, label, fallback]) => (
+              <div className="prompt-field" key={key}>
+                <label>
+                  <span>{label}</span>
+                  <textarea
+                    rows={8}
+                    disabled={!!busy}
+                    maxLength={4000}
+                    value={preferences[key] ?? fallback}
+                    onChange={(event) =>
+                      setPreferences({
+                        ...preferences,
+                        [key]: event.target.value,
+                      })
+                    }
+                  />
+                </label>
                 <button
-                  disabled={!!busy}
+                  type="button"
+                  disabled={!!busy || preferences[key] === undefined}
                   onClick={() =>
-                    attempt("records", async () => {
-                      await request({ type: "results-delete", key: r.key });
-                      setRecords(
-                        await request<SavedResult[]>({ type: "results-list" }),
-                      );
-                    })
+                    setPreferences({ ...preferences, [key]: undefined })
                   }
                 >
-                  刪除此版本
+                  還原預設
                 </button>
               </div>
             ))}
-            <div className="row">
-              <button
-                disabled={!!busy}
-                onClick={() =>
-                  attempt("records", async () => {
-                    if (
-                      window.confirm("清除全部已保存歌詞？這個動作無法復原。")
-                    ) {
-                      await request({ type: "results-clear" });
-                      setRecords(
-                        await request<SavedResult[]>({ type: "results-list" }),
-                      );
-                    }
-                  })
-                }
-              >
-                清除全部結果
-              </button>
-            </div>
-            {sectionNotice("records")}
+            {sectionNotice("preferences")}
           </section>
-          <section hidden={active !== "cache"} aria-label="快取">
-            <h2>快取（{cacheEntries.length}）</h2>
+          <section hidden={active !== "cache"} aria-label="本機資料">
+            <h2>本機資料（{cacheEntries.length}）</h2>
             {cacheEntries.map((entry) => (
               <div className="row records" key={entry.videoId}>
                 <span>
@@ -526,7 +501,9 @@ export function Options() {
                 disabled={!!busy || !cacheEntries.length}
                 onClick={() =>
                   attempt("cache", async () => {
-                    if (window.confirm("清除全部快取？這個動作無法復原。")) {
+                    if (
+                      window.confirm("清除全部本機資料？這個動作無法復原。")
+                    ) {
                       await request({ type: "cache-clear" });
                       setCacheEntries(
                         await request<CacheEntry[]>({ type: "cache-list" }),
@@ -535,7 +512,7 @@ export function Options() {
                   })
                 }
               >
-                清除全部快取
+                清除全部本機資料
               </button>
             </div>
             {sectionNotice("cache")}

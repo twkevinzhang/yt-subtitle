@@ -70,6 +70,8 @@ export const preferencesSchema = z.object({
   targetLanguage: z.enum(["ja", "zh-Hant", "en"]),
   fontSize: z.number().min(14).max(64),
   position: z.enum(["top", "bottom"]),
+  webPrompt: z.string().max(4000).optional(),
+  commentsPrompt: z.string().max(4000).optional(),
 });
 export const providerSchema = z.object({
   schemaVersion: z.literal(1),

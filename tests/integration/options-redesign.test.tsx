@@ -71,17 +71,35 @@ test("opens the category containing an invalid field on save", async () => {
     expect.objectContaining({ type: "settings-save" }),
   );
 });
-test("clearing saved results preserves pending subtitle changes and credentials", async () => {
+test("clearing local data preserves pending subtitle changes and credentials", async () => {
   vi.spyOn(window, "confirm").mockReturnValue(true);
+  vi.mocked(chrome.runtime.sendMessage).mockImplementation((async (m: {
+    type: string;
+  }) => ({
+    ok: true,
+    data:
+      m.type === "settings-edit"
+        ? settings
+        : m.type === "cache-list"
+          ? [
+              {
+                videoId: "aaaaaaaaaaa",
+                title: "Song A",
+                resultCount: 1,
+                lastUsed: Date.now(),
+              },
+            ]
+          : undefined,
+  })) as never);
   render(<Options />);
   await screen.findByText("設定已載入");
   fireEvent.click(screen.getByRole("button", { name: "字幕與搜尋" }));
   fireEvent.change(screen.getByRole("spinbutton"), { target: { value: "40" } });
   fireEvent.click(screen.getByRole("button", { name: "本機資料" }));
-  fireEvent.click(screen.getByRole("button", { name: "清除全部結果" }));
+  fireEvent.click(screen.getByRole("button", { name: "清除全部本機資料" }));
   await waitFor(() =>
     expect(chrome.runtime.sendMessage).toHaveBeenCalledWith({
-      type: "results-clear",
+      type: "cache-clear",
     }),
   );
   fireEvent.click(screen.getByRole("button", { name: "字幕與搜尋" }));
@@ -92,7 +110,7 @@ test("clearing saved results preserves pending subtitle changes and credentials"
   );
 });
 
-test("lists cached videos and deletes one or all of them", async () => {
+test("lists local data per video and deletes one or all of them", async () => {
   vi.spyOn(window, "confirm").mockReturnValue(true);
   let entries = [
     {
@@ -135,8 +153,8 @@ test("lists cached videos and deletes one or all of them", async () => {
   }) as never);
   render(<Options />);
   await screen.findByText("設定已載入");
-  fireEvent.click(screen.getByRole("button", { name: "快取" }));
-  expect(screen.getByRole("heading", { name: "快取（2）" })).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "本機資料" }));
+  expect(screen.getByRole("heading", { name: "本機資料（2）" })).toBeTruthy();
   expect(screen.getByText("Song A")).toBeTruthy();
   expect(screen.getByText(/Artist · 3:33 · 6\.5 MB · 2 組歌詞/)).toBeTruthy();
   expect(screen.getByText("bbbbbbbbbbb")).toBeTruthy();
@@ -147,11 +165,14 @@ test("lists cached videos and deletes one or all of them", async () => {
       videoId: "aaaaaaaaaaa",
     }),
   );
-  await screen.findByRole("heading", { name: "快取（1）" });
-  fireEvent.click(screen.getByRole("button", { name: "清除全部快取" }));
-  await screen.findByRole("heading", { name: "快取（0）" });
+  await screen.findByRole("heading", { name: "本機資料（1）" });
+  fireEvent.click(screen.getByRole("button", { name: "清除全部本機資料" }));
+  await screen.findByRole("heading", { name: "本機資料（0）" });
   expect(
-    (screen.getByRole("button", { name: "清除全部快取" }) as HTMLButtonElement)
-      .disabled,
+    (
+      screen.getByRole("button", {
+        name: "清除全部本機資料",
+      }) as HTMLButtonElement
+    ).disabled,
   ).toBe(true);
 });
