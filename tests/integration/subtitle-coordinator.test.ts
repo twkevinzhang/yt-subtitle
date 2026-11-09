@@ -107,6 +107,7 @@ it("late discovery updates cannot replace a completed subtitle phase", async () 
     id: "s",
     videoId: video.videoId,
     routes: {
+      lrclib: { phase: "complete", text: "", candidates: [] },
       comments: { phase: "complete", text: "", candidates: [] },
       web: { phase: "complete", text: "", candidates: [] },
     },

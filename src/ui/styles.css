@@ -1186,9 +1186,9 @@ button.danger {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 13px 17px;
+  padding: 9px 14px;
   border-bottom: 1px solid var(--border);
-  gap: 10px;
+  gap: 8px;
 }
 .subtitle-heading {
   display: flex;
@@ -1226,11 +1226,11 @@ button.danger {
   white-space: nowrap;
 }
 .subtitle-body {
-  padding: 0 18px 24px;
+  padding: 10px 14px 16px;
 }
 .subtitle-body h2 {
-  font-size: 18px;
-  margin: 14px 0;
+  font-size: 16px;
+  margin: 10px 0;
   overflow-wrap: anywhere;
 }
 .subtitle-play {
@@ -1242,27 +1242,30 @@ button.danger {
   background: var(--notice);
   border-left: 3px solid var(--link);
   border-radius: 6px;
-  padding: 16px 12px;
+  padding: 10px 12px;
+}
+.subtitle-hero-compact {
+  padding: 8px 12px 6px;
 }
 .subtitle-hero h3 {
-  font-size: 18px;
+  font-size: 16px;
   margin: 0;
 }
 .subtitle-hero p {
   font-size: 12px;
   color: var(--muted);
-  margin: 5px 0;
+  margin: 3px 0;
 }
 .subtitle-rail {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
-  margin-top: 23px;
+  margin-top: 14px;
 }
 .subtitle-station {
   position: relative;
   display: flex;
   justify-content: center;
-  padding-top: 15px;
+  padding-top: 9px;
   color: var(--muted);
 }
 .subtitle-station:before {
@@ -1308,7 +1311,7 @@ button.danger {
   border: 0;
   background: transparent;
   color: inherit;
-  padding: 5px;
+  padding: 3px;
   cursor: help;
 }
 .subtitle-tip {
@@ -1335,36 +1338,15 @@ button.danger {
 }
 .subtitle-section-title {
   font-size: 13px;
-  margin: 24px 0 12px;
+  margin: 16px 0 8px;
 }
-.subtitle-badges {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 7px;
-  margin-bottom: 18px;
-}
-.subtitle-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  border: 1px solid var(--border);
-  border-radius: 16px;
-  padding: 5px 8px;
-  font-size: 11px;
-}
-.subtitle-badge.done {
-  color: var(--success-text);
-  background: var(--success-bg);
-}
-.subtitle-badge.quiet {
-  border-color: transparent;
-  padding: 5px 2px;
-  font-size: 10px;
-  color: var(--muted);
-  opacity: 0.7;
+.subtitle-panel .subtitle-failures {
+  margin: 8px 0;
+  border-bottom: 0;
+  padding-bottom: 0;
 }
 .subtitle-ai-message {
-  margin: 0 0 14px;
+  margin: 0 0 8px;
   font-size: 12px;
   overflow-wrap: anywhere;
 }
@@ -1386,11 +1368,6 @@ button.danger {
   display: block;
   color: var(--muted);
   overflow-wrap: anywhere;
-}
-.subtitle-badge img,
-.subtitle-candidates img {
-  border-radius: 3px;
-  object-fit: contain;
 }
 .subtitle-row {
   display: flex;
@@ -1415,38 +1392,53 @@ button.danger {
 }
 .subtitle-candidates {
   border: 0;
-  margin: 20px 0;
+  margin: 10px 0;
   padding: 0;
 }
 .subtitle-candidates legend {
+  padding: 0;
   font-size: 13px;
 }
-.subtitle-candidates label {
+.subtitle-pick {
   display: flex;
-  gap: 12px;
-  align-items: center;
-  padding: 16px 0;
-  border-bottom: 1px solid var(--border);
-  cursor: pointer;
+  gap: 8px;
+  align-items: stretch;
+  margin-top: 4px;
 }
-.subtitle-candidates label > span {
+.subtitle-pick button {
+  flex: none;
+  padding: 6px 14px;
+  white-space: nowrap;
+}
+.subtitle-candidates select {
+  flex: 1 1 0;
+  width: 100%;
   min-width: 0;
+  min-height: 36px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #fff;
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
 }
-.subtitle-candidates strong {
-  display: flex;
-  gap: 7px;
-  align-items: center;
+.subtitle-candidates .subtitle-reason {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  color: var(--muted);
 }
-.subtitle-candidates label > span > span,
 .subtitle-candidates small {
   display: block;
+  margin-top: 6px;
   font-size: 12px;
-  overflow-wrap: anywhere;
 }
 .subtitle-panel details {
-  margin: 18px 0;
+  margin: 10px 0;
   border-bottom: 1px solid var(--border);
-  padding-bottom: 13px;
+  padding-bottom: 8px;
 }
 .subtitle-panel summary {
   cursor: pointer;
@@ -1459,6 +1451,8 @@ button.danger {
   max-height: 220px;
   overflow: auto;
   font: inherit;
+  line-height: 1.45;
+  margin: 6px 0;
 }
 .subtitle-panel textarea {
   width: 100%;
@@ -1472,7 +1466,7 @@ button.danger {
 .subtitle-actions {
   display: flex;
   gap: 8px;
-  margin: 12px 0;
+  margin: 8px 0;
 }
 .subtitle-panel button:focus-visible,
 .subtitle-panel summary:focus-visible,
@@ -1486,8 +1480,8 @@ button.danger {
 }
 .subtitle-methods {
   display: grid;
-  gap: 12px;
-  margin-top: 20px;
+  gap: 8px;
+  margin-top: 12px;
 }
 .subtitle-methods h3 {
   font-size: 16px;

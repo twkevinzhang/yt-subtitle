@@ -1,3 +1,6 @@
+// The panel runs this far below the player so results have room.
+const EXTRA_HEIGHT = 240;
+
 // Do not publish at a provisional full-width anchor: wait for the final column.
 export function mountWatchPanel(player: HTMLElement, host: HTMLElement) {
   let sidebar: HTMLElement | null = null;
@@ -16,7 +19,7 @@ export function mountWatchPanel(player: HTMLElement, host: HTMLElement) {
       column.x >= video.x + video.width - 1 &&
       column.y < video.y + video.height - 1
     )
-      host.style.setProperty("--watch-panel-height", `${video.height}px`);
+      host.style.setProperty("--watch-panel-height", `${video.height + EXTRA_HEIGHT}px`);
     else host.style.removeProperty("--watch-panel-height");
   };
   const schedule = () => {

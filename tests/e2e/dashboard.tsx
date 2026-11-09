@@ -47,6 +47,7 @@ const coordinator = new SubtitleCoordinator({
       id: "s",
       videoId: video.videoId,
       routes: {
+        lrclib: { phase: "complete", text: "", candidates: [] },
         comments: {
           phase: "complete",
           text: "",

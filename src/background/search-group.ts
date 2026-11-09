@@ -1,6 +1,7 @@
 import { createAiClient } from "./ai-client";
 import type { SettingsRecord } from "./settings";
 import { searchMessages, parseSearchReply } from "../lyrics/search";
+import { searchLrclib } from "../lyrics/lrclib";
 import {
   commentMessages,
   parseCommentReply,
@@ -13,7 +14,7 @@ import type {
   SearchEvidence,
   VideoContext,
 } from "../shared/types";
-export type SearchRoute = "comments" | "web";
+export type SearchRoute = "lrclib" | "comments" | "web";
 export interface SearchGroupSnapshot {
   id: string;
   storageError?: string;
@@ -56,6 +57,7 @@ export async function startSearchGroup(
     id: crypto.randomUUID(),
     videoId: video.videoId,
     routes: {
+      lrclib: { phase: "pending", text: "", candidates: [] },
       comments: { phase: "pending", text: "", candidates: [] },
       web: { phase: "pending", text: "", candidates: [] },
     },
@@ -70,7 +72,7 @@ export async function startSearchGroup(
   publish();
   try {
     await Promise.all(
-      (["comments", "web"] as const).map(async (route) => {
+      (["lrclib", "comments", "web"] as const).map(async (route) => {
         if (options && options.onlyRoute !== route) return;
         snapshot.routes[route] = {
           ...snapshot.routes[route],
@@ -101,6 +103,19 @@ export async function startSearchGroup(
             });
             if (routeController.signal.aborted) rejectAbort();
           });
+          if (route === "lrclib") {
+            const result = await Promise.race([
+              searchLrclib(video, routeController.signal),
+              aborted,
+            ]);
+            if (routeController.signal.aborted) return;
+            snapshot.routes.lrclib = {
+              ...snapshot.routes.lrclib,
+              ...result,
+              phase: "complete",
+            };
+            return;
+          }
           let batch: CommentBatch | undefined;
           if (route === "comments") {
             if (!readComments)

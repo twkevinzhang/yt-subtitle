@@ -117,6 +117,8 @@ export function Panel({
       setView(backView(view, origin));
     });
   const job = work?.job,
+    // Picking a result needs the room; the hint line is dropped then.
+    choosing = view === "ai" && job?.phase !== "searching",
     steps = job ? toDashboardSteps(job) : [];
   return (
     <section className="subtitle-panel" aria-label="AI 歌詞">
@@ -226,7 +228,11 @@ export function Panel({
               </div>
             ) : (
               <>
-                <div className="subtitle-hero">
+                <div
+                  className={
+                    "subtitle-hero" + (choosing ? " subtitle-hero-compact" : "")
+                  }
+                >
                   <h3 role="status" aria-live="polite">
                     {view === "paste"
                       ? "貼入字幕"
@@ -234,11 +240,13 @@ export function Panel({
                         ? "選擇一份字幕"
                         : phaseTitles[job.phase]}
                   </h3>
-                  <p>
-                    {job.phase === "complete"
-                      ? "完整字幕已顯示在影片中。"
-                      : "整首完成後才套用，處理期間不影響影片播放。"}
-                  </p>
+                  {!choosing && (
+                    <p>
+                      {job.phase === "complete"
+                        ? "完整字幕已顯示在影片中。"
+                        : "整首完成後才套用，處理期間不影響影片播放。"}
+                    </p>
+                  )}
                   {view !== "paste" && (
                     <ProgressSteps
                       job={

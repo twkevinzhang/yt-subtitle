@@ -70,7 +70,7 @@ it("offers pasting as the main action when nothing was found", () => {
   expect(p.onPaste).toHaveBeenCalledOnce();
   expect(p.onSearchAgain).toHaveBeenCalledOnce();
 });
-it("tags a source that found lyrics and keeps one that found none quiet", () => {
+it("lists candidates with their source and keeps a failed source's message", () => {
   render(
     <AiResults
       {...props()}
@@ -80,15 +80,27 @@ it("tags a source that found lyrics and keeps one that found none quiet", () => 
       )}
     />,
   );
-  const tags = Array.from(document.querySelectorAll(".subtitle-badge"));
-  expect(tags.map((t) => t.className)).toEqual([
-    "subtitle-badge quiet",
-    "subtitle-badge done",
-  ]);
-  expect(tags[0]!.textContent).toContain("YouTube");
-  expect(tags[1]!.textContent).toContain("找到 1 份");
-  expect(screen.getByText(/12 行/)).toBeTruthy();
-  expect(screen.getByText(/歌詞第1行 \/ 歌詞第2行 \/ 歌詞第3行/)).toBeTruthy();
+  const select = screen.getByRole("combobox", { name: "選擇字幕" });
+  expect(select.textContent).toContain("lyrics.example · Lemon");
+  expect(screen.getByText("留言區沒有歌詞")).toBeTruthy();
+  expect(select.textContent).toContain("12 行");
+});
+it("picks a candidate from the dropdown", () => {
+  const onSelect = vi.fn();
+  render(
+    <AiResults
+      {...props()}
+      onSelect={onSelect}
+      search={search(
+        route("complete"),
+        route("complete", { candidates: [candidate] }),
+      )}
+    />,
+  );
+  fireEvent.change(screen.getByRole("combobox", { name: "選擇字幕" }), {
+    target: { value: "web:1" },
+  });
+  expect(onSelect).toHaveBeenCalledWith({ candidate, route: "web" });
 });
 it("does not offer a candidate that has no lyric text", () => {
   render(
@@ -116,4 +128,40 @@ it("hides the actions while a search is still running", () => {
   );
   expect(screen.queryByRole("button", { name: "重新搜尋" })).toBeNull();
   expect(document.querySelector(".subtitle-badge")).toBeNull();
+});
+
+it("selects the first offer at once and keeps failed sources in one folded note", () => {
+  const onSelect = vi.fn();
+  render(
+    <AiResults
+      {...props()}
+      onSelect={onSelect}
+      search={search(
+        route("complete", { error: "留言區沒有歌詞" }),
+        route("complete", { candidates: [candidate] }),
+      )}
+    />,
+  );
+  expect(onSelect).toHaveBeenCalledWith({ candidate, route: "web" });
+  const note = document.querySelector(".subtitle-failures")!;
+  expect(note.querySelector("summary")!.textContent).toBe(
+    "YouTube 沒有可用歌詞",
+  );
+  expect((note as HTMLDetailsElement).open).toBe(false);
+});
+it("names the action 使用這份 and enables it once something is selected", () => {
+  render(
+    <AiResults
+      {...props()}
+      selected={{ candidate, route: "web" }}
+      search={search(
+        route("complete"),
+        route("complete", { candidates: [candidate] }),
+      )}
+    />,
+  );
+  expect(
+    (screen.getByRole("button", { name: "使用這份" }) as HTMLButtonElement)
+      .disabled,
+  ).toBe(false);
 });
