@@ -55,9 +55,12 @@ it("does not store audio larger than the whole limit", async () => {
 });
 it("keeps complete and incomplete results but never invalid ones", async () => {
   const cache = fresh();
-  await cache.putResult("k1", complete);
-  await cache.putResult("k2", { kind: "incomplete", lineIndexes: [1] });
-  await cache.putResult("k3", { kind: "invalid", code: "X" });
+  await cache.putResult("k1", "abcdefghijk", complete);
+  await cache.putResult("k2", "abcdefghijk", {
+    kind: "incomplete",
+    lineIndexes: [1],
+  });
+  await cache.putResult("k3", "abcdefghijk", { kind: "invalid", code: "X" });
   expect(await cache.getResult("k1")).toEqual(complete);
   expect(await cache.getResult("k2")).toEqual({
     kind: "incomplete",
@@ -68,9 +71,9 @@ it("keeps complete and incomplete results but never invalid ones", async () => {
 it("limits how many results are kept", async () => {
   let clock = 0;
   const cache = fresh({ maxResults: 2, now: () => ++clock });
-  await cache.putResult("old", complete);
-  await cache.putResult("mid", complete);
-  await cache.putResult("new", complete);
+  await cache.putResult("old", "abcdefghijk", complete);
+  await cache.putResult("mid", "abcdefghijk", complete);
+  await cache.putResult("new", "abcdefghijk", complete);
   expect(await cache.getResult("old")).toBeUndefined();
   expect(await cache.getResult("mid")).toBeDefined();
   expect(await cache.getResult("new")).toBeDefined();
@@ -78,7 +81,7 @@ it("limits how many results are kept", async () => {
 it("clears audio and results together", async () => {
   const cache = fresh();
   await cache.putAudio("abcdefghijk", 10, pcm(4));
-  await cache.putResult("k", complete);
+  await cache.putResult("k", "abcdefghijk", complete);
   await cache.clear();
   expect(await cache.getAudio("abcdefghijk", 10)).toBeUndefined();
   expect(await cache.getResult("k")).toBeUndefined();
@@ -106,4 +109,78 @@ it("keys results by video, duration, lyrics, language and ignores raw formatting
       lyrics: { ...lyrics, lyrics: ["a", "c"] },
     }),
   ).not.toBe(key);
+});
+
+const info = { title: "Song", channel: "Artist", durationMs: 213060 };
+it("lists one entry per video with size, result count and video info", async () => {
+  let clock = 0;
+  const cache = fresh({ now: () => ++clock });
+  await cache.putAudio("aaaaaaaaaaa", 10, pcm(10)); // 20 bytes
+  await cache.putResult("r1", "aaaaaaaaaaa", complete);
+  await cache.putResult("r2", "aaaaaaaaaaa", complete);
+  await cache.describe("aaaaaaaaaaa", info);
+  await cache.putResult("r3", "bbbbbbbbbbb", complete); // result only, no audio
+  const entries = await cache.list();
+  expect(entries.map((e) => e.videoId)).toEqual(["bbbbbbbbbbb", "aaaaaaaaaaa"]);
+  expect(entries[1]).toMatchObject({
+    videoId: "aaaaaaaaaaa",
+    title: "Song",
+    channel: "Artist",
+    durationMs: 213060,
+    audioBytes: 20,
+    resultCount: 2,
+  });
+  expect(entries[0]).toMatchObject({
+    title: "",
+    audioBytes: 0,
+    resultCount: 1,
+  });
+});
+it("ignores video info that has no cached data", async () => {
+  const cache = fresh();
+  await cache.describe("aaaaaaaaaaa", info);
+  expect(await cache.list()).toEqual([]);
+});
+it("deletes one video's audio, results and info without touching others", async () => {
+  const cache = fresh();
+  for (const id of ["aaaaaaaaaaa", "bbbbbbbbbbb"]) {
+    await cache.putAudio(id, 10, pcm(4));
+    await cache.putResult("r-" + id, id, complete);
+    await cache.describe(id, info);
+  }
+  await cache.deleteVideo("aaaaaaaaaaa");
+  expect((await cache.list()).map((e) => e.videoId)).toEqual(["bbbbbbbbbbb"]);
+  expect(await cache.getAudio("aaaaaaaaaaa", 10)).toBeUndefined();
+  expect(await cache.getResult("r-aaaaaaaaaaa")).toBeUndefined();
+  expect(await cache.getResult("r-bbbbbbbbbbb")).toBeDefined();
+});
+it("drops v1 results (no video id) when upgrading but keeps audio", async () => {
+  const name = "cache-upgrade-" + n++;
+  await new Promise<void>((resolve, reject) => {
+    const open = indexedDB.open(name, 1);
+    open.onupgradeneeded = () => {
+      for (const store of ["audio", "audioMeta", "results"])
+        open.result.createObjectStore(store);
+    };
+    open.onsuccess = () => {
+      const tx = open.result.transaction(
+        ["audio", "audioMeta", "results"],
+        "readwrite",
+      );
+      tx.objectStore("audio").put(
+        { durationMs: 10000, pcm: pcm(4) },
+        "aaaaaaaaaaa",
+      );
+      tx.objectStore("audioMeta").put({ bytes: 8, lastUsed: 1 }, "aaaaaaaaaaa");
+      tx.objectStore("results").put({ result: complete, lastUsed: 1 }, "old");
+      tx.oncomplete = () => {
+        open.result.close();
+        resolve();
+      };
+      tx.onerror = () => reject(tx.error);
+    };
+  });
+  const cache = createSubtitleCache({ dbName: name });
+  expect(await cache.getResult("old")).toBeUndefined();
+  expect(await cache.getAudio("aaaaaaaaaaa", 10)).toBeDefined();
 });

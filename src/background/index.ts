@@ -35,6 +35,13 @@ const coordinator = new SubtitleCoordinator({
       lyrics,
       language,
     });
+    void subtitleCache
+      .describe(video.videoId, {
+        title: video.title,
+        channel: video.channel,
+        durationMs: video.durationMs,
+      })
+      .catch(() => {});
     const hit = await subtitleCache.getResult(cacheKey).catch(() => undefined);
     if (hit) return hit;
     const startupError = await hostStartup;
@@ -48,7 +55,9 @@ const coordinator = new SubtitleCoordinator({
       tabId,
     );
     const result = await runInHost(audio, lyrics, language, signal, progress);
-    await subtitleCache.putResult(cacheKey, result).catch(() => {});
+    await subtitleCache
+      .putResult(cacheKey, video.videoId, result)
+      .catch(() => {});
     return result;
   },
   search: async (tabId, video, signal, update) => {
@@ -214,8 +223,13 @@ export async function handleMessage(
     case "results-delete":
       return deleteResult(m.key as never);
     case "results-clear":
-      await subtitleCache.clear().catch(() => {});
       return clearResults();
+    case "cache-list":
+      return subtitleCache.list();
+    case "cache-delete":
+      return subtitleCache.deleteVideo(m.videoId);
+    case "cache-clear":
+      return subtitleCache.clear();
     case "run": {
       const run = testRuns.get(m.runId);
       if (run && run.state.tabId !== tabId) throw Error("工作不屬於此分頁");

@@ -13,6 +13,8 @@ import type {
   SavedResult,
 } from "../shared/types";
 import { SearchTest } from "./SearchTest";
+import { cacheDetails } from "./cache-format";
+import type { CacheEntry } from "../subtitle/cache-store";
 import { SourceSettingsEditor } from "./SourceSettingsEditor";
 const emptyProvider: ProviderSettings = {
   schemaVersion: 1,
@@ -20,7 +22,7 @@ const emptyProvider: ProviderSettings = {
   apiToken: "",
   model: "",
 };
-type SectionId = "ai" | "sources" | "preferences" | "records";
+type SectionId = "ai" | "sources" | "preferences" | "records" | "cache";
 type Notice = { status?: string; error?: string };
 const serviceKey = (p: ProviderSettings | null) =>
   p &&
@@ -35,6 +37,7 @@ const categories = [
   ["sources", "歌詞來源"],
   ["preferences", "字幕與搜尋"],
   ["records", "本機資料"],
+  ["cache", "快取"],
 ] as const;
 export function Options() {
   const [active, setActive] = useState<SectionId>("ai");
@@ -52,6 +55,7 @@ export function Options() {
     }),
     [models, setModels] = useState<string[]>([]),
     [records, setRecords] = useState<SavedResult[]>([]),
+    [cacheEntries, setCacheEntries] = useState<CacheEntry[]>([]),
     [testOpen, setTestOpen] = useState(false),
     [feedback, setFeedback] = useState<Partial<Record<SectionId, Notice>>>({
       ai: { status: "正在載入…" },
@@ -125,6 +129,11 @@ export function Options() {
       setRecords(await request<SavedResult[]>({ type: "results-list" }));
     } catch {
       notify("records", { error: "本機結果讀取失敗，請重新整理設定頁。" });
+    }
+    try {
+      setCacheEntries(await request<CacheEntry[]>({ type: "cache-list" }));
+    } catch {
+      notify("cache", { error: "快取讀取失敗，請重新整理設定頁。" });
     }
     notify("ai", {});
   };
@@ -525,6 +534,54 @@ export function Options() {
               </button>
             </div>
             {sectionNotice("records")}
+          </section>
+          <section hidden={active !== "cache"} aria-label="快取">
+            <h2>快取（{cacheEntries.length}）</h2>
+            {cacheEntries.map((entry) => (
+              <div className="row records" key={entry.videoId}>
+                <span>
+                  {entry.title || entry.videoId}
+                  <small className="cache-details">
+                    {cacheDetails(entry).join(" · ")}
+                  </small>
+                </span>
+                <button
+                  aria-label={`刪除 ${entry.title || entry.videoId}`}
+                  disabled={!!busy}
+                  onClick={() =>
+                    attempt("cache", async () => {
+                      await request({
+                        type: "cache-delete",
+                        videoId: entry.videoId,
+                      });
+                      setCacheEntries(
+                        await request<CacheEntry[]>({ type: "cache-list" }),
+                      );
+                    })
+                  }
+                >
+                  刪除
+                </button>
+              </div>
+            ))}
+            <div className="row">
+              <button
+                disabled={!!busy || !cacheEntries.length}
+                onClick={() =>
+                  attempt("cache", async () => {
+                    if (window.confirm("清除全部快取？這個動作無法復原。")) {
+                      await request({ type: "cache-clear" });
+                      setCacheEntries(
+                        await request<CacheEntry[]>({ type: "cache-list" }),
+                      );
+                    }
+                  })
+                }
+              >
+                清除全部快取
+              </button>
+            </div>
+            {sectionNotice("cache")}
           </section>
         </div>
       </div>

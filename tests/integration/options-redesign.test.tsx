@@ -33,7 +33,7 @@ beforeEach(() => {
         data:
           m.type === "settings-edit"
             ? settings
-            : m.type === "results-list"
+            : m.type === "results-list" || m.type === "cache-list"
               ? []
               : undefined,
       })),
@@ -91,4 +91,68 @@ test("clearing saved results preserves pending subtitle changes and credentials"
   expect((screen.getByLabelText("API Token") as HTMLInputElement).value).toBe(
     "token",
   );
+});
+
+test("lists cached videos and deletes one or all of them", async () => {
+  vi.spyOn(window, "confirm").mockReturnValue(true);
+  let entries = [
+    {
+      videoId: "aaaaaaaaaaa",
+      title: "Song A",
+      channel: "Artist",
+      durationMs: 213000,
+      audioBytes: 6_800_000,
+      resultCount: 2,
+      lastUsed: Date.now(),
+    },
+    {
+      videoId: "bbbbbbbbbbb",
+      title: "",
+      channel: "",
+      durationMs: 0,
+      audioBytes: 0,
+      resultCount: 1,
+      lastUsed: Date.now(),
+    },
+  ];
+  vi.mocked(chrome.runtime.sendMessage).mockImplementation((async (m: {
+    type: string;
+    videoId?: string;
+  }) => {
+    if (m.type === "cache-delete")
+      entries = entries.filter((e) => e.videoId !== m.videoId);
+    if (m.type === "cache-clear") entries = [];
+    return {
+      ok: true,
+      data:
+        m.type === "settings-edit"
+          ? settings
+          : m.type === "cache-list"
+            ? entries
+            : m.type === "results-list"
+              ? []
+              : undefined,
+    };
+  }) as never);
+  render(<Options />);
+  await screen.findByText("設定已載入");
+  fireEvent.click(screen.getByRole("button", { name: "快取" }));
+  expect(screen.getByRole("heading", { name: "快取（2）" })).toBeTruthy();
+  expect(screen.getByText("Song A")).toBeTruthy();
+  expect(screen.getByText(/Artist · 3:33 · 6\.5 MB · 2 組歌詞/)).toBeTruthy();
+  expect(screen.getByText("bbbbbbbbbbb")).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "刪除 Song A" }));
+  await waitFor(() =>
+    expect(chrome.runtime.sendMessage).toHaveBeenCalledWith({
+      type: "cache-delete",
+      videoId: "aaaaaaaaaaa",
+    }),
+  );
+  await screen.findByRole("heading", { name: "快取（1）" });
+  fireEvent.click(screen.getByRole("button", { name: "清除全部快取" }));
+  await screen.findByRole("heading", { name: "快取（0）" });
+  expect(
+    (screen.getByRole("button", { name: "清除全部快取" }) as HTMLButtonElement)
+      .disabled,
+  ).toBe(true);
 });

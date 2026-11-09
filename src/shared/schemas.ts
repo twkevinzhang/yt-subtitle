@@ -159,6 +159,12 @@ const msg = z.discriminatedUnion("type", [
     preferences: preferencesSchema,
   }),
   z.object({ type: z.literal("clear-credentials") }),
+  z.object({ type: z.literal("cache-list") }),
+  z.object({
+    type: z.literal("cache-delete"),
+    videoId: z.string().regex(/^[\w-]{11}$/),
+  }),
+  z.object({ type: z.literal("cache-clear") }),
   z.object({ type: z.literal("models"), provider: providerSchema }),
   z.object({ type: z.literal("connection-check") }),
   z.object({ type: z.literal("open-options") }),

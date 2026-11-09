@@ -228,6 +228,12 @@ html.options-page {
   border-bottom: 1px solid #e5eaf2;
   overflow-wrap: anywhere;
 }
+.options .cache-details {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 0.875em;
+}
 .options .options-savebar {
   position: fixed;
   z-index: 20;

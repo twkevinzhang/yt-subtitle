@@ -26,6 +26,9 @@ export function authorizeSender(
     "search-test",
     "results-clear",
     "results-delete",
+    "cache-list",
+    "cache-delete",
+    "cache-clear",
   ];
   if (privileged.includes(type) && !ownOptions)
     throw new Error("此操作僅限設定頁");

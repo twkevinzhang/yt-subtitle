@@ -18,7 +18,22 @@ interface AudioMeta {
   lastUsed: number;
 }
 interface ResultRecord {
+  videoId: string;
   result: ResultValidation;
+  lastUsed: number;
+}
+export interface VideoInfo {
+  title: string;
+  channel: string;
+  durationMs: number;
+}
+export interface CacheEntry {
+  videoId: string;
+  title: string;
+  channel: string;
+  durationMs: number;
+  audioBytes: number;
+  resultCount: number;
   lastUsed: number;
 }
 export interface ResultKeyInput {
@@ -38,15 +53,20 @@ export interface SubtitleCache {
     pcm: Int16Array,
   ): Promise<void>;
   getResult(key: string): Promise<ResultValidation | undefined>;
-  putResult(key: string, result: ResultValidation): Promise<void>;
+  putResult(
+    key: string,
+    videoId: string,
+    result: ResultValidation,
+  ): Promise<void>;
+  describe(videoId: string, info: VideoInfo): Promise<void>;
+  list(): Promise<CacheEntry[]>;
+  deleteVideo(videoId: string): Promise<void>;
   clear(): Promise<void>;
 }
 
 export async function resultCacheKey(input: ResultKeyInput) {
   const canonical = JSON.stringify({
-    // v2: lines are aligned directly with createAligner; v1 results came from
-    // transcribe-then-match and must not be served for the same inputs.
-    v: 2,
+    v: 1,
     library: LIBRARY_VERSION,
     videoId: input.videoId,
     durationMs: Math.round(input.durationMs),
@@ -63,6 +83,7 @@ export async function resultCacheKey(input: ResultKeyInput) {
   ).join("");
 }
 
+const STORES = ["audio", "audioMeta", "results", "videos"];
 export function createSubtitleCache(options: CacheOptions = {}): SubtitleCache {
   const dbName = options.dbName ?? "subtitle-cache-v1";
   const maxAudioBytes = options.maxAudioBytes ?? 300 * 1024 * 1024;
@@ -71,10 +92,14 @@ export function createSubtitleCache(options: CacheOptions = {}): SubtitleCache {
 
   function database() {
     return new Promise<IDBDatabase>((resolve, reject) => {
-      const request = indexedDB.open(dbName, 1);
-      request.onupgradeneeded = () => {
-        for (const name of ["audio", "audioMeta", "results"])
-          request.result.createObjectStore(name);
+      const request = indexedDB.open(dbName, 2);
+      request.onupgradeneeded = (event) => {
+        const db = request.result;
+        for (const name of STORES)
+          if (!db.objectStoreNames.contains(name)) db.createObjectStore(name);
+        // v1 results were not tied to a video, so they cannot be listed or removed.
+        if (event.oldVersion === 1)
+          request.transaction!.objectStore("results").clear();
       };
       request.onsuccess = () => resolve(request.result);
       request.onerror = () => reject(request.error);
@@ -191,10 +216,13 @@ export function createSubtitleCache(options: CacheOptions = {}): SubtitleCache {
           }),
       );
     },
-    async putResult(key, result) {
+    async putResult(key, videoId, result) {
       if (result.kind === "invalid") return;
       await run<void>(["results"], "readwrite", (s, done) => {
-        s.results!.put({ result, lastUsed: now() } satisfies ResultRecord, key);
+        s.results!.put(
+          { videoId, result, lastUsed: now() } satisfies ResultRecord,
+          key,
+        );
         const keys = s.results!.getAllKeys();
         const records = s.results!.getAll();
         records.onsuccess = () => {
@@ -213,15 +241,92 @@ export function createSubtitleCache(options: CacheOptions = {}): SubtitleCache {
         };
       });
     },
-    clear() {
-      return run<void>(
-        ["audio", "audioMeta", "results"],
-        "readwrite",
-        (s, done) => {
-          for (const store of Object.values(s)) store.clear();
+    async describe(videoId, info) {
+      await run<void>(["videos"], "readwrite", (s, done) => {
+        s.videos!.put(info, videoId);
+        done();
+      });
+    },
+    list() {
+      return run<CacheEntry[]>(STORES, "readonly", (s, done) => {
+        const audioKeys = s.audioMeta!.getAllKeys();
+        const audioMetas = s.audioMeta!.getAll();
+        const resultRecords = s.results!.getAll();
+        const videoKeys = s.videos!.getAllKeys();
+        const videoInfos = s.videos!.getAll();
+        const requests = [
+          audioKeys,
+          audioMetas,
+          resultRecords,
+          videoKeys,
+          videoInfos,
+        ];
+        let pending = requests.length;
+        const finish = () => {
+          if (--pending) return;
+          const entries = new Map<string, CacheEntry>();
+          const entry = (videoId: string) => {
+            let e = entries.get(videoId);
+            if (!e) {
+              e = {
+                videoId,
+                title: "",
+                channel: "",
+                durationMs: 0,
+                audioBytes: 0,
+                resultCount: 0,
+                lastUsed: 0,
+              };
+              entries.set(videoId, e);
+            }
+            return e;
+          };
+          (audioKeys.result as string[]).forEach((videoId, i) => {
+            const meta = audioMetas.result[i] as AudioMeta;
+            const e = entry(videoId);
+            e.audioBytes = meta.bytes;
+            e.lastUsed = Math.max(e.lastUsed, meta.lastUsed);
+          });
+          for (const record of resultRecords.result as ResultRecord[]) {
+            if (!record.videoId) continue;
+            const e = entry(record.videoId);
+            e.resultCount++;
+            e.lastUsed = Math.max(e.lastUsed, record.lastUsed);
+          }
+          (videoKeys.result as string[]).forEach((videoId, i) => {
+            const e = entries.get(videoId);
+            if (!e) return;
+            const info = videoInfos.result[i] as VideoInfo;
+            e.title = info.title;
+            e.channel = info.channel;
+            e.durationMs = info.durationMs;
+          });
+          done([...entries.values()].sort((a, b) => b.lastUsed - a.lastUsed));
+        };
+        for (const r of requests) r.onsuccess = finish;
+      });
+    },
+    deleteVideo(videoId) {
+      return run<void>(STORES, "readwrite", (s, done) => {
+        s.audio!.delete(videoId);
+        s.audioMeta!.delete(videoId);
+        s.videos!.delete(videoId);
+        const keys = s.results!.getAllKeys();
+        const records = s.results!.getAll();
+        records.onsuccess = () => {
+          (keys.result as string[]).forEach((key, i) => {
+            if ((records.result[i] as ResultRecord).videoId === videoId)
+              s.results!.delete(key);
+          });
           done();
-        },
-      );
+        };
+      });
+    },
+    clear() {
+      return run<void>(STORES, "readwrite", (s, done) => {
+        for (const store of Object.values(s)) store.clear();
+        done();
+      });
     },
   };
 }
