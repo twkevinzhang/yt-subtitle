@@ -39,10 +39,8 @@ const coordinator = new SubtitleCoordinator({
     if (hit) return hit;
     const startupError = await hostStartup;
     if (startupError) throw startupError;
-    if (language && language !== "en")
-      throw Object.assign(Error("目前 lyric-align-ts 僅支援英文"), {
-        code: "UNSUPPORTED_LANGUAGE",
-      });
+    // Languages the model cannot align are rejected by runUntimed before any
+    // model work, so the gate lives next to the supported list, not here.
     const audio = await audioProvider.acquire(
       video.videoId,
       video.durationMs / 1000,

@@ -76,6 +76,19 @@ it("aligns known lyrics directly from the audio and disposes the aligner", async
     total: 10,
   });
 });
+it("detects Japanese lyrics when no language was chosen", async () => {
+  const { aligner, create } = setup([{ start: 0, end: 1, matched: true }]);
+  await runUntimed(
+    create,
+    audio(),
+    prepareLyrics("吊り上がった視界から覗く"),
+    undefined,
+    {
+      signal: new AbortController().signal,
+    },
+  );
+  expect(vi.mocked(aligner.align).mock.calls[0]![0].language).toBe("ja");
+});
 it("defaults the language to English when none was chosen", async () => {
   const { aligner, create } = setup([{ start: 0, end: 1, matched: true }]);
   await runUntimed(create, audio(), prepareLyrics("a"), undefined, {

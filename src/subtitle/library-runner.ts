@@ -5,6 +5,7 @@ import type {
 } from "./library-contract";
 import type { PreparedLyrics, ResultValidation } from "./types";
 import { validateAligned } from "./result-validation";
+import { detectLanguage } from "./language";
 
 /** The subset of lyric-align-ts `createAligner()` this extension relies on. */
 export interface AlignerProgress {
@@ -90,7 +91,7 @@ export async function runUntimed(
     const result = await aligner.align({
       audio: { samples: audio.pcm, sampleRate: 16000 },
       lyrics: [...lyrics.lyrics],
-      language: languageHint ?? "en",
+      language: languageHint ?? detectLanguage(lyrics.lyrics),
       signal: context.signal,
       onProgress: (event) => report("aligning", event),
     });
