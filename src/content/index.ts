@@ -7,10 +7,11 @@ import { followYouTubeTheme } from "./theme";
 import { mountWatchPanel } from "./placement";
 import { createControlButton } from "./control-button";
 import { installAudioTapBridge } from "../youtube/audio-tap-bridge";
+import { runAll, watchExtensionContext } from "./orphan";
 import css from "../ui/styles.css?inline";
 installAudioTapBridge();
 let cleanup = () => {};
-bindPlayer((binding) => {
+const stopBinding = bindPlayer((binding) => {
   cleanup();
   cleanup = () => {};
   if (!binding) return;
@@ -30,12 +31,17 @@ bindPlayer((binding) => {
   const stopTheme = followYouTubeTheme(host);
   const root = createRoot(mount);
   root.render(React.createElement(Onboarding, { binding, overlay, button }));
-  cleanup = () => {
-    root.unmount();
-    stopTheme();
-    stopPlacement();
-    overlay.destroy();
-    button.remove();
-    host.remove();
-  };
+  cleanup = () =>
+    runAll([
+      () => root.unmount(),
+      stopTheme,
+      stopPlacement,
+      () => overlay.destroy(),
+      () => button.remove(),
+      () => host.remove(),
+    ]);
+});
+watchExtensionContext(() => {
+  stopBinding();
+  cleanup();
 });

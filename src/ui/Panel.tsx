@@ -345,12 +345,15 @@ export function Panel({
                               <button
                                 disabled={pending}
                                 onClick={() =>
-                                  void perform(() =>
-                                    request({
+                                  void perform(async () => {
+                                    // Retrying is an AI search, so leave paste mode first.
+                                    if (work.entryMode === "paste")
+                                      await setEntryMode("ai");
+                                    await request({
                                       type: "subtitle-retry-search",
                                       route: route as SearchRoute,
-                                    }),
-                                  )
+                                    });
+                                  })
                                 }
                               >
                                 重試此來源
