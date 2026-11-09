@@ -35,8 +35,9 @@ async function ensureHost() {
   await creating;
 }
 let queue: Promise<unknown> = Promise.resolve();
+/** `audio` may still be loading: model preparation runs alongside it. */
 export function runInHost(
-  audio: AudioHandle,
+  audio: AudioHandle | Promise<AudioHandle>,
   lyrics: PreparedLyrics,
   language: string | undefined,
   signal: AbortSignal,
@@ -49,11 +50,8 @@ export function runInHost(
       if (started || cancelled) return;
       cancelled = true;
       signal.removeEventListener("abort", abortWaiting);
-      void releaseAudio(audio.id)
-        .catch(() => {})
-        .then(() =>
-          reject(Object.assign(Error("排隊工作已取消"), { code: "ABORTED" })),
-        );
+      releaseWhenReady(audio);
+      reject(Object.assign(Error("排隊工作已取消"), { code: "ABORTED" }));
     };
     signal.addEventListener("abort", abortWaiting, { once: true });
     if (signal.aborted) abortWaiting();
@@ -71,8 +69,13 @@ export function runInHost(
       });
   });
 }
+function releaseWhenReady(audio: AudioHandle | Promise<AudioHandle>) {
+  void Promise.resolve(audio)
+    .then((handle) => releaseAudio(handle.id))
+    .catch(() => {});
+}
 async function execute(
-  audio: AudioHandle,
+  audio: AudioHandle | Promise<AudioHandle>,
   lyrics: PreparedLyrics,
   language: string | undefined,
   signal: AbortSignal,
@@ -113,10 +116,17 @@ async function execute(
         else if (message.type === "result") finish(undefined, message.result);
         else if (message.type === "error") finish(message.error);
       });
-      port.postMessage({ type: "run", audio, lyrics, language });
+      port.postMessage({ type: "prepare", language });
+      Promise.resolve(audio).then(
+        (handle) => {
+          if (settled) return;
+          port.postMessage({ type: "run", audio: handle, lyrics, language });
+        },
+        (error) => finish(error),
+      );
     });
   } finally {
     await chrome.offscreen.closeDocument().catch(() => {});
-    await releaseAudio(audio.id).catch(() => {});
+    releaseWhenReady(audio);
   }
 }

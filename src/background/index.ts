@@ -48,13 +48,24 @@ const coordinator = new SubtitleCoordinator({
     if (startupError) throw startupError;
     // Languages the model cannot align are rejected by runUntimed before any
     // model work, so the gate lives next to the supported list, not here.
-    const audio = await audioProvider.acquire(
+    // The host prepares the speech model while the audio is still loading.
+    const acquisition = new AbortController();
+    const stop = () => acquisition.abort(signal.reason);
+    signal.addEventListener("abort", stop, { once: true });
+    const audio = audioProvider.acquire(
       video.videoId,
       video.durationMs / 1000,
-      signal,
+      acquisition.signal,
       tabId,
     );
-    const result = await runInHost(audio, lyrics, language, signal, progress);
+    audio.catch(() => {});
+    let result;
+    try {
+      result = await runInHost(audio, lyrics, language, signal, progress);
+    } finally {
+      signal.removeEventListener("abort", stop);
+      acquisition.abort();
+    }
     await subtitleCache
       .putResult(cacheKey, video.videoId, result)
       .catch(() => {});

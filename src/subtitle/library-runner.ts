@@ -33,7 +33,7 @@ export type CreateAligner = (options: {
   onProgress?: (progress: AlignerProgress) => void;
 }) => Promise<Aligner>;
 
-const SUPPORTED_LANGUAGES = ["en", "ja", "zh"];
+export const SUPPORTED_LANGUAGES = ["en", "ja", "zh"];
 
 export async function runUntimed(
   createAligner: CreateAligner,
