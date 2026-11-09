@@ -1,28 +1,22 @@
 import React, { useEffect, useState } from "react";
 import { request } from "../shared/messages";
-import {
-  normalizeProvider,
-  normalizeSources,
-  type SettingsRecord,
-} from "../background/settings";
+import { normalizeProvider, type SettingsRecord } from "../background/settings";
 import { preferencesSchema, providerSchema } from "../shared/schemas";
 import type {
   ProviderSettings,
-  SourceSettings,
   Preferences,
   SavedResult,
 } from "../shared/types";
 import { SearchTest } from "./SearchTest";
 import { cacheDetails } from "./cache-format";
 import type { CacheEntry } from "../subtitle/cache-store";
-import { SourceSettingsEditor } from "./SourceSettingsEditor";
 const emptyProvider: ProviderSettings = {
   schemaVersion: 1,
   baseUrl: "",
   apiToken: "",
   model: "",
 };
-type SectionId = "ai" | "sources" | "preferences" | "records" | "cache";
+type SectionId = "ai" | "preferences" | "records" | "cache";
 type Notice = { status?: string; error?: string };
 const serviceKey = (p: ProviderSettings | null) =>
   p &&
@@ -34,7 +28,6 @@ const serviceKey = (p: ProviderSettings | null) =>
   ]);
 const categories = [
   ["ai", "AI 服務"],
-  ["sources", "歌詞來源"],
   ["preferences", "字幕與搜尋"],
   ["records", "本機資料"],
   ["cache", "快取"],
@@ -45,7 +38,6 @@ export function Options() {
   const [saveMessage, setSaveMessage] = useState("");
   const [provider, setProvider] = useState(emptyProvider),
     [savedProvider, setSavedProvider] = useState<ProviderSettings | null>(null),
-    [sources, setSources] = useState<SourceSettings[]>([]),
     [preferences, setPreferences] = useState<Preferences>({
       autoSearchApproved: false,
       mode: "original",
@@ -62,8 +54,7 @@ export function Options() {
     }),
     [busy, setBusy] = useState<SectionId | null>(null);
   const dirty =
-    snapshot !== null &&
-    snapshot !== JSON.stringify([provider, sources, preferences]);
+    snapshot !== null && snapshot !== JSON.stringify([provider, preferences]);
   useEffect(() => {
     const warn = (event: BeforeUnloadEvent) => {
       if (dirty) {
@@ -116,14 +107,9 @@ export function Options() {
     setProvider(record.provider || emptyProvider);
     setSavedProvider(record.provider);
     setModels([]);
-    setSources(record.sources);
     setPreferences(record.preferences);
     setSnapshot(
-      JSON.stringify([
-        record.provider || emptyProvider,
-        record.sources,
-        record.preferences,
-      ]),
+      JSON.stringify([record.provider || emptyProvider, record.preferences]),
     );
     try {
       setRecords(await request<SavedResult[]>({ type: "results-list" }));
@@ -173,14 +159,12 @@ export function Options() {
   };
   const save = (section: SectionId = "ai") => {
     let normalized: ProviderSettings | undefined;
-    let normalizedSources: SourceSettings[] | undefined;
     let valid = true;
     let firstError: SectionId | null = null;
     setSaveMessage("");
     setFeedback((previous) => ({
       ...previous,
       ai: {},
-      sources: {},
       preferences: {},
     }));
     try {
@@ -190,29 +174,18 @@ export function Options() {
       valid = false;
       firstError ??= "ai";
     }
-    try {
-      normalizedSources = normalizeSources(sources);
-    } catch {
-      notify("sources", {
-        error:
-          "請檢查來源名稱與網域；來源請填網域，例如 example.com，不含網址路徑。",
-      });
-      valid = false;
-      firstError ??= "sources";
-    }
     if (!preferencesSchema.safeParse(preferences).success) {
       notify("preferences", {
         error: "請檢查字幕顯示欄位，字級必須介於 14–64 px。",
       });
       valid = false;
     }
-    if (!valid || !normalized || !normalizedSources) {
+    if (!valid || !normalized) {
       setActive(firstError || "preferences");
       setSaveMessage("無法儲存，請修正標示的欄位。");
       return;
     }
-    const nextProvider = normalized,
-      nextSources = normalizedSources;
+    const nextProvider = normalized;
     void attempt(section, async () => {
       const granted = await chrome.permissions.request({
         origins: [new URL(nextProvider.baseUrl).origin + "/*"],
@@ -226,13 +199,11 @@ export function Options() {
       await request({
         type: "settings-save",
         provider: nextProvider,
-        sources: nextSources,
         preferences,
       });
       setProvider(nextProvider);
       setSavedProvider(nextProvider);
-      setSources(nextSources);
-      setSnapshot(JSON.stringify([nextProvider, nextSources, preferences]));
+      setSnapshot(JSON.stringify([nextProvider, preferences]));
       setSaveMessage("所有設定已儲存");
       notify(section, {
         status: nextProvider.model
@@ -394,26 +365,12 @@ export function Options() {
               </button>
             </details>
             <SearchTest
-              key={`${serviceKey(provider)}:${provider.model}:${JSON.stringify(sources)}`}
+              key={`${serviceKey(provider)}:${provider.model}`}
               open={testOpen}
               ready={savedModelReady}
               model={provider.model}
-              sources={sources}
               onBusy={(value) => setBusy(value ? "ai" : null)}
             />
-          </section>
-          <section hidden={active !== "sources"} aria-label="歌詞來源">
-            <h2>歌詞來源</h2>
-            <p>
-              使用「設定來源」搜尋時，只查詢已啟用的網域。未啟用來源時，仍可使用留言區、全網搜尋、YouTube
-              字幕與貼入字幕。
-            </p>
-            <SourceSettingsEditor
-              sources={sources}
-              onChange={setSources}
-              disabled={!!busy}
-            />
-            {sectionNotice("sources")}
           </section>
           <section hidden={active !== "preferences"} aria-label="字幕顯示">
             <h2>字幕與搜尋</h2>
@@ -594,7 +551,7 @@ export function Options() {
                 ? "有尚未儲存的變更"
                 : saveMessage || "設定已載入"}
           </strong>
-          <span>一次儲存 AI 服務、歌詞來源與字幕設定</span>
+          <span>一次儲存 AI 服務與字幕設定</span>
           {dirty && saveMessage && saveMessage !== "所有設定已儲存" && (
             <p>{saveMessage}</p>
           )}

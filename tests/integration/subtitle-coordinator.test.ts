@@ -107,7 +107,6 @@ it("late discovery updates cannot replace a completed subtitle phase", async () 
     id: "s",
     videoId: video.videoId,
     routes: {
-      configured: { phase: "complete", text: "", candidates: [] },
       comments: { phase: "complete", text: "", candidates: [] },
       web: { phase: "complete", text: "", candidates: [] },
     },
@@ -133,7 +132,6 @@ it("paste mode cancels only pending search and returning to AI does not resend",
       id: "s",
       videoId: video.videoId,
       routes: {
-        configured: { phase: "pending", text: "", candidates: [] },
         comments: { phase: "complete", text: "", candidates: [] },
         web: { phase: "pending", text: "", candidates: [] },
       },
@@ -143,9 +141,9 @@ it("paste mode cancels only pending search and returning to AI does not resend",
   await coordinator.ensure(1, video, 1);
   await coordinator.setEntryMode(1, video.videoId, "paste");
   expect(signal?.aborted).toBe(true);
-  expect(
-    coordinator.get(1, video.videoId)?.search?.routes.configured.phase,
-  ).toBe("cancelled");
+  expect(coordinator.get(1, video.videoId)?.search?.routes.web.phase).toBe(
+    "cancelled",
+  );
   expect(coordinator.get(1, video.videoId)?.search?.routes.comments.phase).toBe(
     "complete",
   );

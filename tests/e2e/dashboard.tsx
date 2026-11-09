@@ -17,16 +17,6 @@ const settings = {
   baseUrl: "https://example.test",
   model: "test",
   settingsRevision: 1,
-  sources: [
-    {
-      schemaVersion: 1 as const,
-      id: "lrclib",
-      name: "LRCLIB",
-      domain: "lrclib.net",
-      includeSubdomains: false,
-      enabled: true,
-    },
-  ],
   preferences: {
     autoSearchApproved: true,
     mode: "original" as const,
@@ -57,7 +47,6 @@ const coordinator = new SubtitleCoordinator({
       id: "s",
       videoId: video.videoId,
       routes: {
-        configured: { phase: "complete", text: "", candidates: [candidate] },
         comments: {
           phase: "complete",
           text: "",
@@ -71,7 +60,7 @@ const coordinator = new SubtitleCoordinator({
             },
           ],
         },
-        web: { phase: "complete", text: "", candidates: [] },
+        web: { phase: "complete", text: "", candidates: [candidate] },
       },
     });
   },

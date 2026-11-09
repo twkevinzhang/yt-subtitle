@@ -193,7 +193,7 @@ export async function handleMessage(
       return getSettings();
     case "settings-save":
       coordinator.resetAll();
-      return saveSettings(m.provider, m.sources, m.preferences);
+      return saveSettings(m.provider, m.preferences);
     case "preferences-save":
       coordinator.resetAll();
       return savePreferences(m.preferences);

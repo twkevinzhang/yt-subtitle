@@ -1190,9 +1190,31 @@ button.danger {
   border-bottom: 1px solid var(--border);
   gap: 10px;
 }
+.subtitle-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.subtitle-titles {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
 .subtitle-header strong {
   white-space: nowrap;
   font-size: 17px;
+}
+.subtitle-playing {
+  color: var(--success-text);
+}
+.subtitle-video-title {
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .subtitle-header nav {
   display: flex;
@@ -1334,6 +1356,37 @@ button.danger {
   color: var(--success-text);
   background: var(--success-bg);
 }
+.subtitle-badge.quiet {
+  border-color: transparent;
+  padding: 5px 2px;
+  font-size: 10px;
+  color: var(--muted);
+  opacity: 0.7;
+}
+.subtitle-ai-message {
+  margin: 0 0 14px;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.subtitle-ai-message strong {
+  font-size: 11px;
+  color: var(--muted);
+}
+.subtitle-ai-message p {
+  margin: 4px 0;
+}
+.subtitle-actions .link {
+  border: 0;
+  background: none;
+  padding: 0;
+  color: var(--link);
+  text-align: left;
+}
+.subtitle-preview {
+  display: block;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
 .subtitle-badge img,
 .subtitle-candidates img {
   border-radius: 3px;
@@ -1448,7 +1501,10 @@ button.danger {
   font-size: 12px;
   color: var(--muted);
 }
-.subtitle-back {
-  margin: 0 0 16px;
-  padding: 7px 10px;
+.subtitle-header .subtitle-back {
+  flex: none;
+  margin: 0;
+  padding: 2px 9px 4px;
+  font-size: 20px;
+  line-height: 1;
 }

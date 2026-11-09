@@ -74,15 +74,6 @@ export interface ProviderSettings {
   cfClientId?: string;
   cfClientSecret?: string;
 }
-export interface SourceSettings {
-  schemaVersion: 1;
-  id: string;
-  name: string;
-  domain: string;
-  includeSubdomains: boolean;
-  enabled: boolean;
-  iconDataUrl?: string;
-}
 export interface Preferences {
   autoSearchApproved?: boolean;
   mode: DisplayMode;
@@ -95,7 +86,6 @@ export interface PublicSettings {
   model: string;
   configured: boolean;
   settingsRevision: number;
-  sources: SourceSettings[];
   preferences: Preferences;
 }
 export interface SearchEvidence {

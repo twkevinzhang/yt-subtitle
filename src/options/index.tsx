@@ -5,4 +5,3 @@ import "../ui/styles.css";
 document.body.style.cssText = 'margin:0;font:15px/1.6 "Segoe UI",sans-serif';
 createRoot(document.getElementById("root")!).render(<Options />);
 import "./options.css";
-import "./sources.css";

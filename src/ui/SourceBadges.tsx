@@ -1,5 +1,6 @@
 import React, { useState } from "react";
-import type { PublicSettings, LyricCandidate } from "../shared/types";
+import type { LyricCandidate } from "../shared/types";
+import { lyricLines, MIN_LYRIC_LINES } from "../lyrics/preview";
 import type {
   SearchGroupSnapshot,
   SearchRoute,
@@ -24,77 +25,61 @@ export function BrandLogo({ name, url }: { name: string; url?: string }) {
     </>
   );
 }
-export function candidateBrand(
-  candidate: LyricCandidate,
-  route: SearchRoute,
-  settings: PublicSettings,
-) {
+export function candidateBrand(candidate: LyricCandidate, route: SearchRoute) {
   if (route === "comments") return { name: "YouTube", url: youtubeLogo };
-  const source = settings.sources.find((s) => s.id === candidate.sourceId);
-  if (source)
-    return {
-      name: source.name,
-      url: "https://" + source.domain + "/favicon.ico",
-    };
   try {
     return { name: new URL(candidate.url).hostname, url: undefined };
   } catch {
     return { name: "來源網站", url: undefined };
   }
 }
-export function SourceBadges({
-  search,
-  settings,
-}: {
-  search?: SearchGroupSnapshot;
-  settings: PublicSettings;
-}) {
-  const entries = settings.sources
-    .filter((s) => s.enabled)
-    .map((s) => ({
-      key: s.id,
-      name: s.name,
-      route: "configured" as SearchRoute,
-      url: "https://" + s.domain + "/favicon.ico",
-    }));
-  entries.push(
-    { key: "comments", name: "YouTube", route: "comments", url: youtubeLogo },
-    {
-      key: "web",
-      name: "Google",
-      route: "web",
-      url: "https://www.google.com/favicon.ico",
-    },
+export const routeNames: Record<SearchRoute, string> = {
+  comments: "YouTube",
+  web: "Google",
+};
+const routeLogos: Record<SearchRoute, string> = {
+  comments: youtubeLogo,
+  web: "https://www.google.com/favicon.ico",
+};
+/** Candidates with lyric text to align; results saved by older builds may have none. */
+export function usableCandidates(candidates: readonly LyricCandidate[] = []) {
+  return candidates.filter(
+    (c) => lyricLines(c.syncedLyrics ?? c.fullText).length >= MIN_LYRIC_LINES,
   );
+}
+/**
+ * Tags name the sources the AI actually returned lyrics from. With none, there
+ * is nothing to tag; the AI's own reply is shown instead. A source that found
+ * nothing is kept only as a quiet note next to the ones that did.
+ */
+export function SourceBadges({ search }: { search?: SearchGroupSnapshot }) {
+  const rows = (["comments", "web"] as const).map((route) => ({
+    route,
+    count: usableCandidates(search?.routes[route]?.candidates).length,
+    pending: search?.routes[route]?.phase === "pending",
+  }));
+  if (!rows.some((row) => row.count)) return null;
   return (
-    <div className="subtitle-badges" aria-label="搜尋狀態">
-      {entries.map((entry) => {
-        const result = search?.routes[entry.route];
-        const candidates =
-          result?.candidates.filter(
-            (c) => entry.route !== "configured" || c.sourceId === entry.key,
-          ) ?? [];
-        const status =
-          !result || result.phase === "pending"
-            ? "搜尋中"
-            : result.phase === "failed"
-              ? "搜尋失敗"
-              : result.phase === "cancelled"
-                ? "已取消"
-                : candidates.length
-                  ? "找到 " + candidates.length + " 份"
-                  : "沒有結果";
-        return (
+    <div className="subtitle-badges" aria-label="搜尋結果來源">
+      {rows.map((row) =>
+        row.count ? (
           <span
-            key={entry.key}
-            className={"subtitle-badge " + (candidates.length ? "done" : "")}
-            title={entry.name + "：" + status}
+            key={row.route}
+            className="subtitle-badge done"
+            title={routeNames[row.route] + "：找到 " + row.count + " 份"}
           >
-            <BrandLogo name={entry.name} url={entry.url} />
-            <span>{status}</span>
+            <BrandLogo
+              name={routeNames[row.route]}
+              url={routeLogos[row.route]}
+            />
+            <span>找到 {row.count} 份</span>
           </span>
-        );
-      })}
+        ) : (
+          <span key={row.route} className="subtitle-badge quiet">
+            {routeNames[row.route]} {row.pending ? "搜尋中" : "沒有結果"}
+          </span>
+        ),
+      )}
     </div>
   );
 }

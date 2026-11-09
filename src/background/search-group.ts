@@ -13,7 +13,7 @@ import type {
   SearchEvidence,
   VideoContext,
 } from "../shared/types";
-export type SearchRoute = "configured" | "comments" | "web";
+export type SearchRoute = "comments" | "web";
 export interface SearchGroupSnapshot {
   id: string;
   storageError?: string;
@@ -56,7 +56,6 @@ export async function startSearchGroup(
     id: crypto.randomUUID(),
     videoId: video.videoId,
     routes: {
-      configured: { phase: "pending", text: "", candidates: [] },
       comments: { phase: "pending", text: "", candidates: [] },
       web: { phase: "pending", text: "", candidates: [] },
     },
@@ -71,21 +70,8 @@ export async function startSearchGroup(
   publish();
   try {
     await Promise.all(
-      (["configured", "comments", "web"] as const).map(async (route) => {
+      (["comments", "web"] as const).map(async (route) => {
         if (options && options.onlyRoute !== route) return;
-        if (
-          route === "configured" &&
-          !settings.sources.some((s) => s.enabled)
-        ) {
-          snapshot.routes[route] = {
-            phase: "unconfigured",
-            text: "",
-            candidates: [],
-            error: "尚未設定歌詞來源",
-          };
-          publish();
-          return;
-        }
         snapshot.routes[route] = {
           ...snapshot.routes[route],
           phase: "pending",
@@ -136,7 +122,7 @@ export async function startSearchGroup(
           if (routeController.signal.aborted) throw new Error("已取消");
           const messages = batch
             ? commentMessages(video, batch)
-            : searchMessages(video, settings.sources, route);
+            : searchMessages(video, route);
           const client = createAiClient(settings.provider!);
           const endpoint =
             route === "comments"
@@ -175,12 +161,7 @@ export async function startSearchGroup(
             throw new Error(String(response.error));
           const result = batch
             ? parseCommentReply(response.text, batch)
-            : parseSearchReply(
-                response.text,
-                settings.sources,
-                response.evidence,
-                route,
-              );
+            : parseSearchReply(response.text, response.evidence, route);
           if (route === "comments")
             result.candidates = result.candidates.filter(
               (c) => new URL(c.url).searchParams.get("v") === video.videoId,

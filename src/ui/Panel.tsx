@@ -9,7 +9,7 @@ import { request } from "../shared/messages";
 import { useSubtitleWork } from "./use-subtitle-work";
 import { ProgressSteps, StepIcon, stepLabels } from "./ProgressSteps";
 import { toDashboardSteps } from "../subtitle/job-state";
-import { SourceBadges, BrandLogo, candidateBrand } from "./SourceBadges";
+import { AiResults } from "./AiResults";
 import type { SearchRoute } from "../background/search-group";
 import { parseSource } from "../subtitle/parse-source";
 import {
@@ -121,7 +121,36 @@ export function Panel({
   return (
     <section className="subtitle-panel" aria-label="AI 歌詞">
       <header className="subtitle-header">
-        <strong>AI 歌詞</strong>
+        <div className="subtitle-heading">
+          {view !== "method" && (
+            <button
+              className="subtitle-back"
+              aria-label="上一步"
+              title="上一步"
+              onClick={() => void goBack()}
+              disabled={pending && view !== "processing"}
+            >
+              ‹
+            </button>
+          )}
+          <div className="subtitle-titles">
+            <strong>AI 歌詞</strong>
+            <small
+              className="subtitle-video-title"
+              title={work?.video.title ?? undefined}
+            >
+              <span
+                className="subtitle-playing"
+                role="img"
+                aria-label="影片持續播放"
+                title="影片持續播放"
+              >
+                ▶
+              </span>{" "}
+              {work?.video.title ?? "字幕工作台"}
+            </small>
+          </div>
+        </div>
         <nav aria-label="面板操作">
           <button
             disabled={pending}
@@ -152,17 +181,6 @@ export function Panel({
         </nav>
       </header>
       <div className="subtitle-body">
-        <p className="subtitle-play">▶ 影片持續播放</p>
-        <h2>{work?.video.title ?? "字幕工作台"}</h2>
-        {view !== "method" && (
-          <button
-            className="subtitle-back"
-            onClick={() => void goBack()}
-            disabled={pending && view !== "processing"}
-          >
-            ‹ 上一步
-          </button>
-        )}
         {view === "method" ? (
           <div className="subtitle-methods">
             <h3>選擇取得方式</h3>
@@ -277,110 +295,16 @@ export function Panel({
                   </div>
                 )}
                 {view === "ai" && (
-                  <>
-                    <h3 className="subtitle-section-title">
-                      {job.phase === "searching" ? "搜尋狀態" : "處理狀態"}
-                    </h3>
-                    <SourceBadges
-                      search={work.search}
-                      settings={publicSettings!}
-                    />
-                    <fieldset
-                      className="subtitle-candidates"
-                      disabled={pending}
-                    >
-                      <legend>選擇字幕</legend>
-                      {(["configured", "comments", "web"] as const).flatMap(
-                        (route) =>
-                          (work.search?.routes[route].candidates ?? []).map(
-                            (candidate) => (
-                              <label key={route + candidate.id}>
-                                <input
-                                  type="radio"
-                                  name="subtitle-candidate"
-                                  checked={
-                                    selected?.candidate.id === candidate.id &&
-                                    selected.route === route
-                                  }
-                                  onChange={() =>
-                                    setSelected({ candidate, route })
-                                  }
-                                />
-                                <span>
-                                  <strong>
-                                    <BrandLogo
-                                      {...candidateBrand(
-                                        candidate,
-                                        route,
-                                        publicSettings!,
-                                      )}
-                                    />
-                                  </strong>
-                                  <span>
-                                    {candidate.title} {candidate.artist}
-                                  </span>
-                                  <small>
-                                    {candidate.language} ·{" "}
-                                    {candidate.syncedLyrics
-                                      ? "沿用時間碼"
-                                      : "無時間碼，使用後對齊整首"}
-                                  </small>
-                                </span>
-                              </label>
-                            ),
-                          ),
-                      )}
-                    </fieldset>
-                    {work.search &&
-                      Object.entries(work.search.routes).map(
-                        ([route, result]) =>
-                          result.error && (
-                            <p className="subtitle-error" key={route}>
-                              {route === "comments"
-                                ? "YouTube"
-                                : route === "web"
-                                  ? "Google"
-                                  : "設定來源"}
-                              ：{result.error}
-                              <button
-                                disabled={pending}
-                                onClick={() =>
-                                  void perform(async () => {
-                                    // Retrying is an AI search, so leave paste mode first.
-                                    if (work.entryMode === "paste")
-                                      await setEntryMode("ai");
-                                    await request({
-                                      type: "subtitle-retry-search",
-                                      route: route as SearchRoute,
-                                    });
-                                  })
-                                }
-                              >
-                                重試此來源
-                              </button>
-                            </p>
-                          ),
-                      )}
-                    {selected && (
-                      <>
-                        <button
-                          className="primary"
-                          disabled={pending}
-                          onClick={() => void useSelected()}
-                        >
-                          使用所選字幕
-                        </button>
-                        <details open>
-                          <summary>所選歌詞預覽</summary>
-                          <pre>
-                            {selected.candidate.syncedLyrics ??
-                              selected.candidate.fullText ??
-                              "此來源未提供歌詞內容"}
-                          </pre>
-                        </details>
-                      </>
-                    )}
-                  </>
+                  <AiResults
+                    search={work.search}
+                    searching={job.phase === "searching"}
+                    selected={selected}
+                    pending={pending}
+                    onSelect={setSelected}
+                    onUseSelected={() => void useSelected()}
+                    onSearchAgain={() => void perform(reset)}
+                    onPaste={() => void chooseMode("paste")}
+                  />
                 )}
                 {(view === "processing" || view === "result") && job.error && (
                   <div className="subtitle-error" role="alert">

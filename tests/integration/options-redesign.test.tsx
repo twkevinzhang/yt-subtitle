@@ -15,7 +15,6 @@ const settings = {
     apiToken: "token",
     model: "model",
   },
-  sources: [],
   preferences: {
     autoSearchApproved: false,
     mode: "original",

@@ -5,13 +5,9 @@ import { hashInput } from "../background/results";
 import { searchMessages } from "../lyrics/search";
 import type { SettingsRecord } from "../background/settings";
 import type { RunRecord } from "../background/runs";
-import type {
-  RunState,
-  SearchHttpResult,
-  SourceSettings,
-} from "../shared/types";
+import type { RunState, SearchHttpResult } from "../shared/types";
 
-function initialBody(model: string, sources: SourceSettings[]) {
+function initialBody(model: string) {
   try {
     return JSON.stringify(
       {
@@ -26,7 +22,7 @@ function initialBody(model: string, sources: SourceSettings[]) {
             description: "",
             durationMs: 0,
           },
-          sources,
+          "web",
         ),
         tools: [{ type: "web_search" }],
         tool_choice: { type: "web_search" },
@@ -46,16 +42,14 @@ export function SearchTest({
   open,
   ready,
   model,
-  sources,
   onBusy,
 }: {
   open: boolean;
   ready: boolean;
   model: string;
-  sources: SourceSettings[];
   onBusy(value: boolean): void;
 }) {
-  const [body, setBody] = useState(() => initialBody(model, sources));
+  const [body, setBody] = useState(() => initialBody(model));
   const [response, setResponse] = useState<SearchHttpResult | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);

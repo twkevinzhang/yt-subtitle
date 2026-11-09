@@ -1,32 +1,16 @@
-import {
-  providerSchema,
-  sourceSchema,
-  preferencesSchema,
-} from "../shared/schemas";
+import { providerSchema, preferencesSchema } from "../shared/schemas";
 import type {
   ProviderSettings,
-  SourceSettings,
   Preferences,
   PublicSettings,
 } from "../shared/types";
 export interface SettingsRecord {
   provider: ProviderSettings | null;
-  sources: SourceSettings[];
   preferences: Preferences;
   revision: number;
 }
 export const defaults: SettingsRecord = {
   provider: null,
-  sources: [
-    {
-      schemaVersion: 1,
-      id: "lrclib",
-      name: "LRCLIB",
-      domain: "lrclib.net",
-      includeSubdomains: false,
-      enabled: true,
-    },
-  ],
   preferences: {
     autoSearchApproved: false,
     mode: "original",
@@ -62,24 +46,12 @@ export function normalizeProvider(value: unknown): ProviderSettings {
     cfClientSecret: p.cfClientSecret?.trim() || undefined,
   };
 }
-export function normalizeSources(values: unknown): SourceSettings[] {
-  const sources = sourceSchema.array().max(30).parse(values);
-  for (const s of sources) {
-    s.domain = s.domain.trim().toLowerCase();
-    if (!/^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,63}$/.test(s.domain))
-      throw new Error("來源請填網域，例如 example.com");
-  }
-  if (new Set(sources.map((s) => s.id)).size !== sources.length)
-    throw new Error("來源 ID 重複");
-  return sources;
-}
 export function publicSettings(r: SettingsRecord): PublicSettings {
   return {
     baseUrl: r.provider?.baseUrl || "",
     model: r.provider?.model || "",
     configured: !!r.provider?.model,
     settingsRevision: r.revision,
-    sources: r.sources,
     preferences: r.preferences,
   };
 }
@@ -93,25 +65,20 @@ export async function getSettings(): Promise<SettingsRecord> {
   await protectStorage();
   const raw = (await chrome.storage.local.get("settings")).settings;
   if (!raw) return structuredClone(defaults);
+  // Records saved before the source list was removed carry a stale `sources` key.
   return {
-    ...raw,
     provider: raw.provider ? normalizeProvider(raw.provider) : null,
-    sources: normalizeSources(raw.sources),
     preferences: preferencesSchema.parse(raw.preferences),
+    revision: raw.revision,
   };
 }
 export async function getPublicSettings() {
   return publicSettings(await getSettings());
 }
-export async function saveSettings(
-  provider: unknown,
-  sources: unknown,
-  preferences: unknown,
-) {
+export async function saveSettings(provider: unknown, preferences: unknown) {
   const old = await getSettings();
   const record = {
     provider: normalizeProvider(provider),
-    sources: normalizeSources(sources),
     preferences: preferencesSchema.parse(preferences),
     revision: old.revision + 1,
   };

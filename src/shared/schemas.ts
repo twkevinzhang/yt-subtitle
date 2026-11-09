@@ -64,19 +64,6 @@ export const videoSchema = z.object({
   description: z.string().max(20000),
   durationMs: time,
 });
-export const sourceSchema = z.object({
-  schemaVersion: z.literal(1),
-  id: z.string().min(1),
-  name: z.string().min(1).max(100),
-  domain: z.string().min(1).max(253),
-  includeSubdomains: z.boolean(),
-  enabled: z.boolean(),
-  iconDataUrl: z
-    .string()
-    .max(100_000)
-    .regex(/^data:image\/png;base64,[A-Za-z0-9+/]+={0,2}$/)
-    .optional(),
-});
 export const preferencesSchema = z.object({
   autoSearchApproved: z.boolean().default(false),
   mode: z.enum(["original", "bilingual", "translation"]),
@@ -140,7 +127,7 @@ const msg = z.discriminatedUnion("type", [
   }),
   z.object({
     type: z.literal("subtitle-retry-search"),
-    route: z.enum(["configured", "comments", "web"]),
+    route: z.enum(["comments", "web"]),
   }),
   z.object({
     type: z.literal("subtitle-select"),
@@ -151,7 +138,6 @@ const msg = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("settings-save"),
     provider: providerSchema,
-    sources: z.array(sourceSchema),
     preferences: preferencesSchema,
   }),
   z.object({
@@ -159,12 +145,6 @@ const msg = z.discriminatedUnion("type", [
     preferences: preferencesSchema,
   }),
   z.object({ type: z.literal("clear-credentials") }),
-  z.object({ type: z.literal("cache-list") }),
-  z.object({
-    type: z.literal("cache-delete"),
-    videoId: z.string().regex(/^[\w-]{11}$/),
-  }),
-  z.object({ type: z.literal("cache-clear") }),
   z.object({ type: z.literal("models"), provider: providerSchema }),
   z.object({ type: z.literal("connection-check") }),
   z.object({ type: z.literal("open-options") }),
@@ -179,6 +159,12 @@ const msg = z.discriminatedUnion("type", [
   z.object({ type: z.literal("results-list"), videoId: z.string().optional() }),
   z.object({ type: z.literal("results-delete"), key: z.unknown() }),
   z.object({ type: z.literal("results-clear") }),
+  z.object({ type: z.literal("cache-list") }),
+  z.object({
+    type: z.literal("cache-delete"),
+    videoId: z.string().regex(/^[\w-]{11}$/),
+  }),
+  z.object({ type: z.literal("cache-clear") }),
 ]);
 export function validateMessage(value: unknown) {
   return msg.parse(value);
