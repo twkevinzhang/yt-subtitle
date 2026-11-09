@@ -161,3 +161,95 @@ it("still works when the cache is broken", async () => {
     sampleCount: 2,
   });
 });
+
+const ready = (): TapResponse => ({
+  status: "ready",
+  sampleRate: 16000,
+  pcmBase64: pcmToBase64(Int16Array.from([0, 16384])),
+  decodedSeconds: 0,
+});
+function withHelper(
+  responses: Array<TapResponse | Error>,
+  helper: Partial<NonNullable<AudioProviderDeps["helper"]>> = {},
+) {
+  const calls: string[] = [];
+  const full = {
+    readyMs: 3000,
+    open: vi.fn(async () => {
+      calls.push("open");
+      return 99;
+    }),
+    drive: vi.fn(async () => {
+      calls.push("drive");
+    }),
+    close: vi.fn(async () => {
+      calls.push("close");
+    }),
+    ...helper,
+  };
+  return { calls, full, ...setup(responses, { helper: full }) };
+}
+
+it("uses the viewer's tab when its audio is already complete", async () => {
+  const { provider, full } = withHelper([ready()]);
+  await provider.acquire("abcdefghijk", 10, signal(), 7);
+  expect(full.open).not.toHaveBeenCalled();
+});
+it("opens a background tab, drives it, and always closes it", async () => {
+  const { provider, calls, deps } = withHelper([
+    new Error("tap not loaded yet"),
+    pending,
+    pending,
+    ready(),
+  ]);
+  const handle = await provider.acquire("abcdefghijk", 10, signal());
+  expect(handle.sampleCount).toBe(2);
+  expect(calls).toEqual(["open", "drive", "close"]);
+  expect(deps.ask).toHaveBeenCalledWith(99, "abcdefghijk", 10);
+});
+it("falls back to the background tab when the viewer is still buffering", async () => {
+  const { provider, calls } = withHelper([pending, pending, pending, ready()]);
+  await provider.acquire("abcdefghijk", 10, signal(), 7);
+  expect(calls).toEqual(["open", "drive", "close"]);
+});
+it("closes the background tab when the audio is unusable", async () => {
+  const { provider, calls } = withHelper([
+    pending,
+    { status: "unavailable", reason: "duration-mismatch" },
+  ]);
+  await expect(
+    provider.acquire("abcdefghijk", 10, signal()),
+  ).rejects.toMatchObject({ code: "AUDIO_UNAVAILABLE" });
+  expect(calls).toEqual(["open", "drive", "close"]);
+});
+it("closes the background tab when cancelled", async () => {
+  const controller = new AbortController();
+  const { provider, calls } = withHelper([pending]);
+  const run = provider.acquire("abcdefghijk", 10, controller.signal);
+  controller.abort();
+  await expect(run).rejects.toBeDefined();
+  expect(calls.filter((c) => c === "open").length).toBe(
+    calls.filter((c) => c === "close").length,
+  );
+});
+it("reports a tab that never loads the tap and still closes it", async () => {
+  const { provider, calls } = withHelper([new Error("no receiver")]);
+  await expect(
+    provider.acquire("abcdefghijk", 10, signal()),
+  ).rejects.toMatchObject({
+    code: "AUDIO_UNAVAILABLE",
+    message: expect.stringContaining("背景分頁"),
+  });
+  expect(calls).toEqual(["open", "close"]);
+});
+it("reports when the background tab cannot be opened", async () => {
+  const { provider, full } = withHelper([pending], {
+    open: vi.fn(async () => {
+      throw Error("blocked");
+    }),
+  });
+  await expect(
+    provider.acquire("abcdefghijk", 10, signal()),
+  ).rejects.toMatchObject({ code: "AUDIO_UNAVAILABLE" });
+  expect(full.close).not.toHaveBeenCalled();
+});

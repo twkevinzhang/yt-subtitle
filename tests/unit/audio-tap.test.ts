@@ -6,6 +6,7 @@ import {
   isWebm,
   pcmToBase64,
   base64ToFloat32,
+  unbufferedGaps,
 } from "../../src/youtube/audio-tap";
 
 const be = (n: number, width: number) =>
@@ -111,4 +112,24 @@ it("concatenates chunks in order", () => {
       concatChunks([Uint8Array.of(1, 2), Uint8Array.of(), Uint8Array.of(3)]),
     ),
   ).toEqual([1, 2, 3]);
+});
+
+it("lists the unbuffered parts of the track, ignoring slivers", () => {
+  expect(
+    unbufferedGaps(
+      [
+        [0, 122],
+        [140, 160],
+        [177, 317],
+      ],
+      317,
+    ),
+  ).toEqual([
+    [122, 140],
+    [160, 177],
+  ]);
+  expect(unbufferedGaps([], 10)).toEqual([[0, 10]]);
+  expect(unbufferedGaps([[0.2, 9.8]], 10)).toEqual([]);
+  expect(unbufferedGaps([[5, 10]], 10)).toEqual([[0, 5]]);
+  expect(unbufferedGaps([[0, 10]], 10)).toEqual([]);
 });

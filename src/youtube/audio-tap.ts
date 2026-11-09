@@ -222,3 +222,22 @@ export function int16ToFloat32(int16: Int16Array) {
 export function base64ToFloat32(base64: string) {
   return int16ToFloat32(base64ToInt16(base64));
 }
+
+/**
+ * Parts of [0, total] the player has not buffered yet. Ignores slivers shorter
+ * than `minGap` (rounding at range edges) so the driver never chases them.
+ */
+export function unbufferedGaps(
+  ranges: ReadonlyArray<readonly [number, number]>,
+  total: number,
+  minGap = 0.5,
+) {
+  const gaps: Array<[number, number]> = [];
+  let cursor = 0;
+  for (const [start, end] of [...ranges].sort((a, b) => a[0] - b[0])) {
+    if (start - cursor >= minGap) gaps.push([cursor, Math.min(start, total)]);
+    cursor = Math.max(cursor, end);
+  }
+  if (total - cursor >= minGap) gaps.push([cursor, total]);
+  return gaps;
+}

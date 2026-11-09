@@ -9,6 +9,7 @@ import {
   contiguousCoverage,
   isWebm,
   pcmToBase64,
+  unbufferedGaps,
   type TapResponse,
 } from "./audio-tap";
 
@@ -31,6 +32,10 @@ interface TapState {
     | undefined;
 }
 const FLAG = "__ytSubtitleAudioTap";
+const DRIVE_MAX_ROUNDS = 60;
+const DRIVE_WAIT_MS = 2500;
+const DRIVE_POLL_MS = 150;
+const DRIVE_AHEAD_SECONDS = 8;
 const MAX_STATES = 3;
 const states = new Map<MediaSource, TapState>();
 const bufferState = new WeakMap<SourceBuffer, TapState>();
@@ -214,6 +219,62 @@ async function decodeAnswer(
   }
 }
 
+let driving = false;
+// Sent only to the background tab the extension opened itself, never to the
+// viewer's tab: mute, then scrub forward so the player's own prefetch fills
+// the whole buffer instead of waiting for real-time playback.
+async function drive(durationSeconds: number) {
+  if (driving) return;
+  driving = true;
+  try {
+    const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+    let video: HTMLVideoElement | null = null;
+    for (let i = 0; i < 150 && !video?.duration; i++) {
+      video = document.querySelector<HTMLVideoElement>(
+        "video.html5-main-video, video",
+      );
+      if (!video?.duration) await sleep(200);
+    }
+    if (!video?.duration) return;
+    video.muted = true;
+    void video.play().catch(() => {});
+    const total = Number.isFinite(video.duration)
+      ? video.duration
+      : durationSeconds;
+    // Jump to the first unbuffered stretch and let the player load it; a fixed
+    // stride would cancel loads that are still in flight and leave holes.
+    const ranges = () =>
+      Array.from(
+        { length: video!.buffered.length },
+        (_, i) =>
+          [video!.buffered.start(i), video!.buffered.end(i)] as [
+            number,
+            number,
+          ],
+      );
+    for (let round = 0; round < DRIVE_MAX_ROUNDS; round++) {
+      const gap = unbufferedGaps(ranges(), total)[0];
+      if (!gap) break;
+      const target = Math.min(gap[0] + 0.1, total - 0.5);
+      video.currentTime = target;
+      for (let waited = 0; waited < DRIVE_WAIT_MS; waited += DRIVE_POLL_MS) {
+        await sleep(DRIVE_POLL_MS);
+        const ahead = ranges().find(
+          ([s, e]) => s <= target + 0.2 && e > target,
+        );
+        if (
+          ahead &&
+          ahead[1] - target >= Math.min(DRIVE_AHEAD_SECONDS, gap[1] - gap[0])
+        )
+          break;
+      }
+    }
+    video.currentTime = 0;
+  } finally {
+    driving = false;
+  }
+}
+
 install();
 window.addEventListener("message", (event) => {
   const data = event.data as
@@ -228,17 +289,22 @@ window.addEventListener("message", (event) => {
   if (
     event.source !== window ||
     data?.source !== TAP_SOURCE ||
-    data.kind !== "request" ||
+    (data.kind !== "request" && data.kind !== "drive") ||
     typeof data.id !== "string" ||
-    typeof data.videoId !== "string" ||
     typeof data.durationSeconds !== "number"
   )
     return;
   const id = data.id;
-  void handle(data.videoId, data.durationSeconds).then((response) =>
+  const reply = (response: TapResponse) =>
     window.postMessage(
       { source: TAP_SOURCE, kind: "reply", id, response },
       location.origin,
-    ),
-  );
+    );
+  if (data.kind === "drive") {
+    void drive(data.durationSeconds);
+    reply({ status: "pending", reason: "driving", coverageSeconds: 0 });
+    return;
+  }
+  if (typeof data.videoId !== "string") return;
+  void handle(data.videoId, data.durationSeconds).then(reply);
 });

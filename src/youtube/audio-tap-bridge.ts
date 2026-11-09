@@ -6,9 +6,17 @@ export interface AudioTapRequest {
   videoId: string;
   durationSeconds: number;
 }
+export interface AudioTapDrive {
+  type: "audio-tap-drive";
+  durationSeconds: number;
+}
 const REPLY_TIMEOUT_MS = 30_000;
 
-function askPage(videoId: string, durationSeconds: number) {
+function askPage(
+  kind: "request" | "drive",
+  videoId: string,
+  durationSeconds: number,
+) {
   return new Promise<TapResponse>((resolve, reject) => {
     const id = crypto.randomUUID();
     const finish = (run: () => void) => {
@@ -40,7 +48,7 @@ function askPage(videoId: string, durationSeconds: number) {
     );
     window.addEventListener("message", onMessage);
     window.postMessage(
-      { source: TAP_SOURCE, kind: "request", id, videoId, durationSeconds },
+      { source: TAP_SOURCE, kind, id, videoId, durationSeconds },
       location.origin,
     );
   });
@@ -49,14 +57,26 @@ function askPage(videoId: string, durationSeconds: number) {
 export function installAudioTapBridge() {
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (sender.id !== chrome.runtime.id) return false;
-    const request = message as Partial<AudioTapRequest> | undefined;
+    const request = message as
+      | { type?: string; videoId?: unknown; durationSeconds?: unknown }
+      | undefined;
+    const kind =
+      request?.type === "audio-tap-request"
+        ? "request"
+        : request?.type === "audio-tap-drive"
+          ? "drive"
+          : undefined;
     if (
-      request?.type !== "audio-tap-request" ||
-      typeof request.videoId !== "string" ||
-      typeof request.durationSeconds !== "number"
+      !kind ||
+      typeof request?.durationSeconds !== "number" ||
+      (kind === "request" && typeof request.videoId !== "string")
     )
       return false;
-    askPage(request.videoId, request.durationSeconds).then(
+    askPage(
+      kind,
+      typeof request.videoId === "string" ? request.videoId : "",
+      request.durationSeconds,
+    ).then(
       (response) => sendResponse({ ok: true, response }),
       (error) =>
         sendResponse({
