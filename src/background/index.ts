@@ -12,6 +12,11 @@ import {
 import { createAiClient } from "./ai-client";
 import { inspectVideo, readComments } from "../youtube/context";
 import { startSearchGroup } from "./search-group";
+import { parseSearchReply } from "../lyrics/search";
+import { commentMessages, parseCommentReply } from "../youtube/comments";
+import { searchLrclib } from "../lyrics/lrclib";
+import { TEST_VIDEO } from "../lyrics/test-video";
+import type { LyricSearchResult, SearchHttpResult } from "../shared/types";
 import { SubtitleCoordinator } from "../subtitle/coordinator";
 import { hashInput, listResults, deleteResult, clearResults } from "./results";
 import type { RunRecord } from "./runs";
@@ -72,6 +77,7 @@ const coordinator = new SubtitleCoordinator({
     return result;
   },
   search: async (tabId, video, signal, update) => {
+    if (testTabs.has(tabId)) throw Error("測試分頁不會自動搜尋");
     const settings = await getSettings();
     if (!settings.provider?.model || !settings.preferences.autoSearchApproved)
       throw Error("請先在設定頁允許影片載入時自動搜尋字幕。");
@@ -80,6 +86,7 @@ const coordinator = new SubtitleCoordinator({
     );
   },
   retrySearch: async (tabId, video, route, previous, signal, update) => {
+    if (testTabs.has(tabId)) throw Error("測試分頁不會自動搜尋");
     const settings = await getSettings();
     if (!settings.provider?.model || !settings.preferences.autoSearchApproved)
       throw Error("請先允許自動搜尋");
@@ -151,6 +158,100 @@ async function ensure(tabId: number, videoId: string) {
   }
   return coordinator.ensure(tabId, context.video, settings.revision);
 }
+// Tabs opened by a search test; they must never start a paid search of their own.
+const testTabs = new Set<number>();
+async function readTestComments(signal: AbortSignal) {
+  const tab = await chrome.tabs.create({
+    url: `https://www.youtube.com/watch?v=${TEST_VIDEO.videoId}`,
+    active: false,
+  });
+  const id = tab.id!;
+  testTabs.add(id);
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const done = (fn: () => void) => {
+        clearTimeout(timer);
+        chrome.tabs.onUpdated.removeListener(listener);
+        fn();
+      };
+      const listener = (tabId: number, info: { status?: string }) => {
+        if (tabId === id && info.status === "complete") done(resolve);
+      };
+      const timer = setTimeout(
+        () => done(() => reject(new Error("影片頁載入逾時"))),
+        30000,
+      );
+      chrome.tabs.onUpdated.addListener(listener);
+      void chrome.tabs.get(id).then((t) => {
+        if (t.status === "complete") done(resolve);
+      });
+    });
+    return await readComments(id, TEST_VIDEO.videoId, signal);
+  } finally {
+    await chrome.tabs.remove(id).catch(() => {});
+    testTabs.delete(id);
+  }
+}
+const failed = (error: unknown, fallback: string): LyricSearchResult => ({
+  text: "",
+  candidates: [],
+  error: error instanceof Error ? error.message : fallback,
+});
+/** Runs the three searches exactly as the panel does, but keeps nothing: no saved result, no cache. */
+async function searchTest(
+  client: ReturnType<typeof createAiClient>,
+  body: Record<string, unknown>,
+  commentsPrompt?: string,
+): Promise<SearchHttpResult> {
+  const lrclib = searchLrclib(TEST_VIDEO, AbortSignal.timeout(30000)).catch(
+    (e) => failed(e, "LRCLIB 連線失敗"),
+  );
+  const comments = (async (): Promise<LyricSearchResult> => {
+    const signal = AbortSignal.timeout(120000);
+    const batch = await readTestComments(signal);
+    const reply = await client.inspectRequest(
+      "chat/completions",
+      client.requestBody(
+        commentMessages(TEST_VIDEO, batch, commentsPrompt),
+        false,
+      ),
+      signal,
+    );
+    if (reply.error)
+      return { text: reply.text, candidates: [], error: reply.error };
+    const result = parseCommentReply(reply.text, batch);
+    result.candidates = result.candidates.filter(
+      (c) => new URL(c.url).searchParams.get("v") === TEST_VIDEO.videoId,
+    );
+    return result;
+  })().catch((e) => failed(e, "留言搜尋失敗"));
+  try {
+    const response = await client.inspectRequest(
+      "responses",
+      body,
+      AbortSignal.timeout(120000),
+    );
+    return {
+      status: response.httpStatus,
+      body: response.rawResponse,
+      ...(response.error ? { error: response.error } : {}),
+      result: response.error
+        ? { text: response.text, candidates: [], error: response.error }
+        : parseSearchReply(response.text, response.evidence, "web"),
+      lrclib: await lrclib,
+      comments: await comments,
+    };
+  } catch (error) {
+    return {
+      status: null,
+      body: null,
+      error: error instanceof Error ? error.message : "AI 連線失敗",
+      lrclib: await lrclib,
+      comments: await comments,
+    };
+  }
+}
+
 export async function handleMessage(
   raw: unknown,
   sender: chrome.runtime.MessageSender,
@@ -279,18 +380,20 @@ export async function handleMessage(
         },
       };
       testRuns.set(runId, record);
-      void createAiClient(s.provider)
-        .testSearch(m.body, AbortSignal.timeout(120000))
-        .then(
-          (output) => {
-            record.output = output;
-            record.state.phase = "complete";
-          },
-          (error) => {
-            record.state.phase = "failed";
-            record.state.errorCode = String(error.message);
-          },
-        );
+      void searchTest(
+        createAiClient(s.provider),
+        m.body,
+        s.preferences.commentsPrompt,
+      ).then(
+        (output) => {
+          record.output = output;
+          record.state.phase = "complete";
+        },
+        (error) => {
+          record.state.phase = "failed";
+          record.state.errorCode = String(error.message);
+        },
+      );
       return record.state;
     }
   }

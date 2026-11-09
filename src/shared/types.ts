@@ -108,6 +108,10 @@ export interface SearchHttpResult {
   status: number | null;
   body: unknown;
   error?: string;
+  /** The reply as the panel reads it; present for a search test. */
+  result?: LyricSearchResult;
+  lrclib?: LyricSearchResult;
+  comments?: LyricSearchResult;
 }
 export interface LyricSearchResult {
   text: string;

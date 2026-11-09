@@ -3,27 +3,19 @@ import { request } from "../shared/messages";
 import { searchTestBodySchema } from "../shared/schemas";
 import { hashInput } from "../background/results";
 import { searchMessages } from "../lyrics/search";
+import { TEST_VIDEO } from "../lyrics/test-video";
 import type { SettingsRecord } from "../background/settings";
 import type { RunRecord } from "../background/runs";
 import type { RunState, SearchHttpResult } from "../shared/types";
+import { AiResults, type Selected } from "../ui/AiResults";
+import type { SearchGroupSnapshot } from "../background/search-group";
 
-function initialBody(model: string) {
+function initialBody(model: string, webPrompt?: string) {
   try {
     return JSON.stringify(
       {
         model,
-        input: searchMessages(
-          {
-            schemaVersion: 1,
-            videoId: "00000000000",
-            title:
-              "搜尋測試：查詢 LRCLIB 官方說明並回傳可核對來源；不要編造歌詞",
-            channel: "",
-            description: "",
-            durationMs: 0,
-          },
-          "web",
-        ),
+        input: searchMessages(TEST_VIDEO, "web", webPrompt),
         tools: [{ type: "web_search" }],
         tool_choice: { type: "web_search" },
         include: ["web_search_call.action.sources"],
@@ -38,22 +30,43 @@ function initialBody(model: string) {
   }
 }
 
+function snapshot(response: SearchHttpResult) {
+  return {
+    id: "search-test",
+    videoId: TEST_VIDEO.videoId,
+    routes: {
+      ...(response.lrclib
+        ? { lrclib: { ...response.lrclib, phase: "complete" } }
+        : {}),
+      ...(response.comments
+        ? { comments: { ...response.comments, phase: "complete" } }
+        : {}),
+      ...(response.result
+        ? { web: { ...response.result, phase: "complete" } }
+        : {}),
+    },
+  } as unknown as SearchGroupSnapshot;
+}
+
 export function SearchTest({
   open,
   ready,
   model,
+  webPrompt,
   onBusy,
 }: {
   open: boolean;
   ready: boolean;
   model: string;
+  webPrompt?: string;
   onBusy(value: boolean): void;
 }) {
-  const [body, setBody] = useState(() => initialBody(model));
+  const [body, setBody] = useState(() => initialBody(model, webPrompt));
   const [response, setResponse] = useState<SearchHttpResult | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [sent, setSent] = useState(false);
+  const [selected, setSelected] = useState<Selected>();
   const search = async () => {
     setError("");
     let parsed: unknown;
@@ -77,6 +90,7 @@ export function SearchTest({
     )
       return;
     setResponse(null);
+    setSelected(undefined);
     setSent(true);
     setBusy(true);
     onBusy(true);
@@ -104,7 +118,7 @@ export function SearchTest({
         if (result.state.phase === "complete") {
           const output = result.output as SearchHttpResult;
           setResponse(output);
-          if (output.error) setError(output.error);
+          if (output.error && !output.result) setError(output.error);
           return;
         }
         if (["failed", "cancelled", "interrupted"].includes(result.state.phase))
@@ -135,7 +149,8 @@ export function SearchTest({
       hidden={!open}
     >
       <p>
-        查詢 LRCLIB 官方說明，確認模型是否能使用網頁搜尋。此操作會使用模型額度。
+        以 Rick Astley〈Never Gonna Give You
+        Up〉搜尋歌詞，結果與影片頁面相同。會暫時在背景開啟該影片分頁讀取留言，不會儲存或沿用任何結果，此操作會使用模型額度。
       </p>
       <details>
         <summary>進階：檢視與編輯搜尋請求</summary>
@@ -183,6 +198,15 @@ export function SearchTest({
           </span>
         )}
       </div>
+      {(response?.result || response?.lrclib || response?.comments) && (
+        <AiResults
+          search={snapshot(response)}
+          searching={busy}
+          selected={selected}
+          pending={busy}
+          onSelect={setSelected}
+        />
+      )}
       {response && (
         <details>
           <summary>檢視完整 API 回應</summary>
