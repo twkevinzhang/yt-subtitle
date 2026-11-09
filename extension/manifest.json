@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "AI 歌詞字幕",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "使用自己的 AI 服務，尋找、對齊與顯示 YouTube 歌詞。",
   "minimum_chrome_version": "116",
   "cross_origin_opener_policy": { "value": "same-origin" },
