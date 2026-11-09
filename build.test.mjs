@@ -15,10 +15,6 @@ test("正式 manifest 的入口都已建置且不再注入播放器擷取器", a
     manifest.content_scripts.some((c) => c.js.includes("audio-helper.js")),
     false,
   );
-  assert.equal(
-    manifest.host_permissions.some((p) => p.includes("po-token")),
-    false,
-  );
 });
 test("ZIP 與正式 manifest 一致且沒有舊模型或推論引擎", async () => {
   const files = unzipSync(await readFile("artifacts/ai-lyrics-extension.zip"));

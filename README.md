@@ -34,5 +34,3 @@ npm run package     # 另產生 artifacts/ai-lyrics-extension.zip
 `dist/` 可直接載入。`tests/e2e/dashboard.html` 是用測試資料與本地協調器驅動真實 React 面板的頁面，不送出 AI 請求，也不含在發布物內。
 
 對齊由固定版本的 `lyric-align-ts@1.0.2`（Whisper C++／WASM，需 cross-origin isolation，manifest 已宣告 COOP／COEP）負責；建置時從 `node_modules` 原樣複製，由 offscreen host 載入。本專案只處理音訊交接、排隊、進度、取消與結果驗證。介面契約見 `src/subtitle/library-contract.ts`。
-
-`services/po-token` 是獨立的 PO Token 服務，`infra/cloud-run/po-token` 為其部署腳本，用法見各自的 README。
