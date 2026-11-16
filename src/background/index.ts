@@ -292,6 +292,21 @@ async function searchTest(
   }
 }
 
+/**
+ * The video the tab shows now. A message's sender.url keeps the address the
+ * page first loaded at, so it is stale once YouTube switches video without a
+ * reload (playlists, autoplay, recommendations).
+ */
+async function currentVideoId(tabId: number, senderUrl: string) {
+  let url = senderUrl;
+  try {
+    url = (await chrome.tabs.get(tabId)).url ?? senderUrl;
+  } catch {
+    /* Without the tab's own address the sender's is the best there is. */
+  }
+  return new URL(url).searchParams.get("v")!;
+}
+
 export async function handleMessage(
   raw: unknown,
   sender: chrome.runtime.MessageSender,
@@ -300,7 +315,7 @@ export async function handleMessage(
     ownOptions = authorizeSender(m.type, sender, chrome.runtime.id);
   await protectStorage();
   const tabId = sender.tab?.id ?? -1,
-    videoId = ownOptions ? "" : new URL(sender.url!).searchParams.get("v")!;
+    videoId = ownOptions ? "" : await currentVideoId(tabId, sender.url!);
   switch (m.type) {
     case "subtitle-ensure":
       return ensure(tabId, videoId);

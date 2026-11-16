@@ -67,3 +67,49 @@ it("snapshot restores persisted work after worker restart without starting paid 
   expect(work?.job.phase).toBe("complete");
   expect(work.cues[0].text).toBe("a");
 });
+
+it("reads the video from the tab's current address, not the one the page first loaded at", async () => {
+  const video = {
+    schemaVersion: 1,
+    videoId: "abcdefghijk",
+    title: "s",
+    channel: "c",
+    description: "",
+    durationMs: 10000,
+  };
+  const saved = {
+    version: 2,
+    video,
+    settingsRevision: 2,
+    job: {
+      key: {
+        tabId: 43,
+        videoId: video.videoId,
+        sourceFingerprint: "s",
+        generation: 1,
+      },
+      phase: "selecting",
+      sequence: 1,
+      unmatchedLineIndexes: [],
+    },
+  };
+  const ask = (tabUrl: string) => {
+    vi.stubGlobal("chrome", {
+      runtime: { id: "ext" },
+      storage: { local: { get: async () => ({ "subtitle-v2:43": saved }) } },
+      tabs: { get: async () => ({ url: tabUrl }) },
+    });
+    return handleMessage({ type: "subtitle-snapshot" }, {
+      id: "ext",
+      url: "https://www.youtube.com/watch?v=abcdefghijk",
+      frameId: 0,
+      tab: { id: 43 },
+    } as chrome.runtime.MessageSender) as Promise<{
+      video: { videoId: string };
+    } | null>;
+  };
+  expect(
+    (await ask("https://www.youtube.com/watch?v=abcdefghijk"))?.video.videoId,
+  ).toBe("abcdefghijk");
+  expect(await ask("https://www.youtube.com/watch?v=lmnopqrstuv")).toBeNull();
+});
