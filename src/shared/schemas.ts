@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { TRANSLATION_CODES } from "./translation";
 const time = z.number().finite().nonnegative();
 const endpoint = z.object({
   valueMs: time,
@@ -64,6 +65,12 @@ export const videoSchema = z.object({
   description: z.string().max(20000),
   durationMs: time,
 });
+export const translationPreferencesSchema = z.object({
+  ask: z.enum(["ask", "always", "never"]),
+  language: z.enum(TRANSLATION_CODES).optional(),
+  display: z.enum(["bilingual", "translation"]),
+  prompt: z.string().max(4000).optional(),
+});
 export const preferencesSchema = z.object({
   autoSearchApproved: z.boolean().default(false),
   mode: z.enum(["original", "bilingual", "translation"]),
@@ -72,6 +79,7 @@ export const preferencesSchema = z.object({
   position: z.enum(["top", "bottom"]),
   webPrompt: z.string().max(4000).optional(),
   commentsPrompt: z.string().max(4000).optional(),
+  translation: translationPreferencesSchema.optional(),
 });
 export const providerSchema = z.object({
   schemaVersion: z.literal(1),
@@ -137,6 +145,11 @@ const msg = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("subtitle-select"),
     source: selectedSourceSchema,
+    translate: z.object({ language: z.enum(TRANSLATION_CODES) }).optional(),
+  }),
+  z.object({
+    type: z.literal("translation-save"),
+    translation: translationPreferencesSchema,
   }),
   z.object({ type: z.literal("settings-public") }),
   z.object({ type: z.literal("settings-edit") }),

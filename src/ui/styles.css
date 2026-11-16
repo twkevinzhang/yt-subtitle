@@ -1258,7 +1258,7 @@ button.danger {
 }
 .subtitle-rail {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(var(--stations, 5), minmax(0, 1fr));
   margin-top: 14px;
 }
 .subtitle-station {
@@ -1501,4 +1501,59 @@ button.danger {
   padding: 2px 9px 4px;
   font-size: 20px;
   line-height: 1;
+}
+.translate-dialog {
+  width: min(380px, calc(100vw - 32px));
+  padding: 20px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+}
+.translate-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.6);
+}
+.translate-dialog h3 {
+  margin: 0 0 14px;
+  font-size: 16px;
+}
+.translate-field {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 12px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.translate-field select {
+  width: 100%;
+  min-height: 38px;
+  padding: 0 10px;
+  font: inherit;
+  color: var(--text);
+  background: var(--field);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.translate-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0;
+  font-size: 14px;
+}
+.translate-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 18px;
+}
+.translate-actions button {
+  padding: 9px 16px;
+}
+.translate-dialog button:focus-visible,
+.translate-dialog select:focus-visible,
+.translate-dialog input:focus-visible {
+  outline: 2px solid var(--link);
+  outline-offset: 2px;
 }

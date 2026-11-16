@@ -8,6 +8,7 @@ import {
   protectStorage,
   normalizeProvider,
   savePreferences,
+  saveTranslation,
 } from "./settings";
 import { createAiClient } from "./ai-client";
 import { inspectVideo, readComments } from "../youtube/context";
@@ -23,6 +24,17 @@ import type { RunRecord } from "./runs";
 import { audioProvider } from "../subtitle/audio-provider";
 import { runInHost, initializeHost } from "../subtitle/host-client";
 import { subtitleCache, resultCacheKey } from "../subtitle/cache-store";
+import {
+  translationMessages,
+  parseTranslation,
+  translateInChunks,
+} from "../lyrics/translate";
+import {
+  translationCacheKey,
+  getCachedTranslation,
+  putCachedTranslation,
+  clearCachedTranslations,
+} from "./translation-cache";
 const hostStartup =
   typeof chrome !== "undefined"
     ? initializeHost().then(
@@ -74,6 +86,34 @@ const coordinator = new SubtitleCoordinator({
     await subtitleCache
       .putResult(cacheKey, video.videoId, result)
       .catch(() => {});
+    return result;
+  },
+  translate: async (lines, language, signal) => {
+    const settings = await getSettings();
+    if (!settings.provider?.model) throw Error("請先設定 AI 服務");
+    const prompt = settings.preferences.translation?.prompt;
+    const key = await translationCacheKey({
+      lines,
+      language,
+      prompt,
+      model: settings.provider.model,
+    });
+    const hit = await getCachedTranslation(key).catch(() => undefined);
+    if (hit?.length === lines.length) return hit;
+    const client = createAiClient(settings.provider);
+    const result = await translateInChunks(
+      lines,
+      async (chunk, context, chunkSignal) =>
+        parseTranslation(
+          await client.completeText(
+            translationMessages(prompt, language, chunk, context),
+            chunkSignal,
+          ),
+          chunk.length,
+        ),
+      signal,
+    );
+    await putCachedTranslation(key, result).catch(() => {});
     return result;
   },
   search: async (tabId, video, signal, update) => {
@@ -288,8 +328,10 @@ export async function handleMessage(
         work = coordinator.get(tabId, videoId);
       if (!work || work.settingsRevision !== settings.revision)
         throw Error("設定已變更，請重新載入字幕工作");
-      return coordinator.select(tabId, videoId, m.source);
+      return coordinator.select(tabId, videoId, m.source, m.translate);
     }
+    case "translation-save":
+      return saveTranslation(m.translation);
     case "subtitle-cancel":
       coordinator.cancel(tabId);
       return coordinator.get(tabId, videoId);
@@ -343,6 +385,7 @@ export async function handleMessage(
     case "cache-delete":
       return subtitleCache.deleteVideo(m.videoId);
     case "cache-clear":
+      await clearCachedTranslations();
       return subtitleCache.clear();
     case "run": {
       const run = testRuns.get(m.runId);

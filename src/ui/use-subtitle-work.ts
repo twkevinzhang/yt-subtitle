@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from "react";
 import { request } from "../shared/messages";
 import type { VideoWork } from "../subtitle/coordinator";
 import type { SelectedSource } from "../subtitle/types";
+import type { TranslationLanguage } from "../shared/translation";
 export function useSubtitleWork(videoId: string) {
   const [work, setWork] = useState<VideoWork>(),
     [error, setError] = useState("");
@@ -33,10 +34,11 @@ export function useSubtitleWork(videoId: string) {
     };
   }, [videoId]);
   const select = useCallback(
-    async (source: SelectedSource) => {
+    async (source: SelectedSource, translate?: TranslationLanguage) => {
       const next = await request<VideoWork>({
         type: "subtitle-select",
         source,
+        ...(translate ? { translate: { language: translate } } : {}),
       });
       if (next.video.videoId === videoId) setWork(next);
     },

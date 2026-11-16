@@ -6,6 +6,15 @@ import { initialJob, type JobSnapshot } from "./job-state";
 import { validateSource } from "./result-validation";
 import type { Progress } from "./library-contract";
 import type { PreparedLyrics, ResultValidation } from "./types";
+import { prepareLyrics } from "./source-input";
+import type { TranslationLanguage } from "../shared/translation";
+export interface WorkTranslation {
+  language: TranslationLanguage;
+  phase: "active" | "done" | "failed";
+  /** Translated text keyed by the line's index in the source text. */
+  lines?: { index: number; text: string }[];
+  error?: string;
+}
 export interface VideoWork {
   entryMode?: "ai" | "paste";
   version: 2;
@@ -17,6 +26,7 @@ export interface VideoWork {
   publishedSource?: SelectedSource;
   cues?: readonly PlayableCue[];
   publishedSequence?: number;
+  translation?: WorkTranslation;
   storageError?: string;
 }
 interface WorkDependencies {
@@ -34,6 +44,11 @@ interface WorkDependencies {
     signal: AbortSignal,
     update: (search: SearchGroupSnapshot) => void,
   ) => Promise<unknown>;
+  translate?: (
+    lines: readonly string[],
+    language: TranslationLanguage,
+    signal: AbortSignal,
+  ) => Promise<string[]>;
   save: (tabId: number, work: VideoWork) => Promise<void>;
   retrySearch?: (
     tabId: number,
@@ -49,6 +64,7 @@ export class SubtitleCoordinator {
   private controllers = new Map<number, AbortController>();
   private writes = new Map<number, Promise<void>>();
   private alignControllers = new Map<number, AbortController>();
+  private translateControllers = new Map<number, AbortController>();
   constructor(private deps: WorkDependencies) {}
   restore(tabId: number, saved: VideoWork) {
     if (saved.version !== 2 || saved.job.key.tabId !== tabId) return;
@@ -60,6 +76,12 @@ export class SubtitleCoordinator {
       );
       work.cues = validation.kind === "complete" ? validation.cues : undefined;
     } else work.cues = undefined;
+    if (work.translation?.phase === "active")
+      work.translation = {
+        language: work.translation.language,
+        phase: "failed",
+        error: "翻譯因擴充功能重新啟動而中斷。",
+      };
     if (work.search)
       for (const route of Object.values(work.search.routes))
         if (route.phase === "pending") {
@@ -172,6 +194,7 @@ export class SubtitleCoordinator {
     tabId: number,
     videoId: string,
     source: SelectedSource,
+    translate?: { language: TranslationLanguage },
   ): Promise<VideoWork> {
     const work = this.works.get(tabId);
     if (!work || work.video.videoId !== videoId)
@@ -182,6 +205,9 @@ export class SubtitleCoordinator {
       generation: work.job.key.generation + 1,
     };
     this.alignControllers.get(tabId)?.abort();
+    this.translateControllers.get(tabId)?.abort();
+    this.translateControllers.delete(tabId);
+    work.translation = undefined;
     work.source = structuredClone(source);
     work.job = {
       ...initialJob(key),
@@ -189,6 +215,8 @@ export class SubtitleCoordinator {
       phase: "validating",
       timed: source.timings !== undefined,
     };
+    // Translation runs beside the audio steps and never blocks the original.
+    if (translate) this.startTranslation(tabId, work, key, source, translate);
     const validation = validateSource(source, work.video.durationMs / 1000);
     if (validation.kind === "complete") {
       work.cues = validation.cues;
@@ -299,12 +327,64 @@ export class SubtitleCoordinator {
     await this.persist(tabId, work);
     return structuredClone(work);
   }
+  private startTranslation(
+    tabId: number,
+    work: VideoWork,
+    key: VideoWork["job"]["key"],
+    source: SelectedSource,
+    { language }: { language: TranslationLanguage },
+  ) {
+    const prepared = prepareLyrics(source.rawText);
+    const controller = new AbortController();
+    this.translateControllers.set(tabId, controller);
+    work.translation = { language, phase: "active" };
+    const current = () =>
+      this.works.get(tabId) === work &&
+      work.job.key === key &&
+      !controller.signal.aborted;
+    const finish = (translation: WorkTranslation) => {
+      if (!current()) return;
+      work.translation = translation;
+      work.job.sequence++;
+      if (this.translateControllers.get(tabId) === controller)
+        this.translateControllers.delete(tabId);
+      void this.persist(tabId, work).catch(() => {});
+    };
+    const run = this.deps.translate
+      ? this.deps.translate(prepared.lyrics, language, controller.signal)
+      : Promise.reject(new Error("翻譯功能尚未接入"));
+    void run.then(
+      (texts) =>
+        finish({
+          language,
+          phase: "done",
+          lines: texts.map((text, i) => ({
+            index: prepared.sourceLineIndexes[i]!,
+            text,
+          })),
+        }),
+      (error) =>
+        finish({
+          language,
+          phase: "failed",
+          error: error instanceof Error ? error.message : "翻譯失敗",
+        }),
+    );
+  }
   cancel(tabId: number) {
     this.alignControllers.get(tabId)?.abort();
     this.alignControllers.delete(tabId);
+    this.translateControllers.get(tabId)?.abort();
+    this.translateControllers.delete(tabId);
     this.controllers.get(tabId)?.abort();
     this.controllers.delete(tabId);
     const work = this.works.get(tabId);
+    if (work?.translation?.phase === "active")
+      work.translation = {
+        language: work.translation.language,
+        phase: "failed",
+        error: "已取消",
+      };
     if (work && work.job.phase !== "complete" && work.job.phase !== "failed") {
       work.job.phase = "cancelled";
       work.job.key = {

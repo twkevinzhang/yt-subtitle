@@ -1,3 +1,4 @@
+import type { TranslationPreferences } from "./translation";
 export type Language = "ja" | "zh" | "en";
 export type TargetLanguage = "ja" | "zh-Hant" | "en";
 export type DisplayMode = "original" | "bilingual" | "translation";
@@ -83,6 +84,7 @@ export interface Preferences {
   /** Task text for the Google and comments searches; empty means the default. */
   webPrompt?: string;
   commentsPrompt?: string;
+  translation?: TranslationPreferences;
 }
 export interface PublicSettings {
   baseUrl: string;

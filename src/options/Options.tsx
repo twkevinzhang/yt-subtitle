@@ -4,8 +4,16 @@ import { normalizeProvider, type SettingsRecord } from "../background/settings";
 import { preferencesSchema, providerSchema } from "../shared/schemas";
 import {
   DEFAULT_COMMENTS_INSTRUCTION,
+  DEFAULT_TRANSLATION_INSTRUCTION,
   DEFAULT_WEB_INSTRUCTION,
 } from "../lyrics/default-prompts";
+import {
+  DEFAULT_TRANSLATION,
+  TRANSLATION_LANGUAGES,
+  userLanguage,
+  type TranslationLanguage,
+  type TranslationPreferences,
+} from "../shared/translation";
 import type { ProviderSettings, Preferences } from "../shared/types";
 import { SearchTest } from "./SearchTest";
 import { cacheDetails } from "./cache-format";
@@ -16,7 +24,7 @@ const emptyProvider: ProviderSettings = {
   apiToken: "",
   model: "",
 };
-type SectionId = "ai" | "preferences" | "cache";
+type SectionId = "ai" | "preferences" | "translation" | "cache";
 type Notice = { status?: string; error?: string };
 const serviceKey = (p: ProviderSettings | null) =>
   p &&
@@ -29,6 +37,7 @@ const serviceKey = (p: ProviderSettings | null) =>
 const categories = [
   ["ai", "AI 服務"],
   ["preferences", "字幕與搜尋"],
+  ["translation", "翻譯"],
   ["cache", "本機資料"],
 ] as const;
 export function Options() {
@@ -63,6 +72,15 @@ export function Options() {
     window.addEventListener("beforeunload", warn);
     return () => window.removeEventListener("beforeunload", warn);
   }, [dirty]);
+  const translation: TranslationPreferences = {
+    ...DEFAULT_TRANSLATION,
+    ...preferences.translation,
+  };
+  const setTranslation = (patch: Partial<TranslationPreferences>) =>
+    setPreferences({
+      ...preferences,
+      translation: { ...translation, ...patch },
+    });
   const serviceChanged = serviceKey(provider) !== serviceKey(savedProvider);
   const savedModelReady =
     !serviceChanged &&
@@ -466,6 +484,91 @@ export function Options() {
               </div>
             ))}
             {sectionNotice("preferences")}
+          </section>
+          <section hidden={active !== "translation"} aria-label="翻譯">
+            <h2>翻譯</h2>
+            <h3>詢問方式</h3>
+            <div className="translate-options">
+              {(
+                [
+                  ["ask", "每次詢問"],
+                  ["always", "永遠翻譯"],
+                  ["never", "永遠不翻譯"],
+                ] as const
+              ).map(([value, label]) => (
+                <label key={value}>
+                  <input
+                    type="radio"
+                    name="translation-ask"
+                    disabled={!!busy}
+                    checked={translation.ask === value}
+                    onChange={() => setTranslation({ ask: value })}
+                  />
+                  {label}
+                </label>
+              ))}
+            </div>
+            <div className="grid">
+              <label>
+                <span>翻譯語言</span>
+                <select
+                  disabled={!!busy}
+                  value={translation.language ?? userLanguage()}
+                  onChange={(e) =>
+                    setTranslation({
+                      language: e.target.value as TranslationLanguage,
+                    })
+                  }
+                >
+                  {TRANSLATION_LANGUAGES.map((l) => (
+                    <option key={l.code} value={l.code}>
+                      {l.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            <h3>顯示方式</h3>
+            <div className="translate-options">
+              {(
+                [
+                  ["bilingual", "原文與譯文"],
+                  ["translation", "只顯示譯文"],
+                ] as const
+              ).map(([value, label]) => (
+                <label key={value}>
+                  <input
+                    type="radio"
+                    name="translation-display"
+                    disabled={!!busy}
+                    checked={translation.display === value}
+                    onChange={() => setTranslation({ display: value })}
+                  />
+                  {label}
+                </label>
+              ))}
+            </div>
+            <h3>翻譯指示</h3>
+            <div className="prompt-field">
+              <label>
+                <span>歌詞翻譯</span>
+                <textarea
+                  rows={8}
+                  disabled={!!busy}
+                  maxLength={4000}
+                  value={translation.prompt ?? DEFAULT_TRANSLATION_INSTRUCTION}
+                  onChange={(e) => setTranslation({ prompt: e.target.value })}
+                />
+              </label>
+              <button
+                type="button"
+                disabled={!!busy || translation.prompt === undefined}
+                onClick={() => setTranslation({ prompt: undefined })}
+              >
+                還原預設
+              </button>
+            </div>
+            {sectionNotice("translation")}
           </section>
           <section hidden={active !== "cache"} aria-label="本機資料">
             <h2>本機資料（{cacheEntries.length}）</h2>

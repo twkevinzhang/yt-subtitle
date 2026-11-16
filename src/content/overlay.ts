@@ -12,6 +12,7 @@ export function createOverlay(binding: PlayerBinding) {
   shadow.append(display);
   binding.container.append(host);
   let cues: readonly PlayableCue[] = [],
+    translationOnly = false,
     frame = 0;
   const render = () => {
     const time = binding.video.currentTime * 1000;
@@ -19,7 +20,13 @@ export function createOverlay(binding: PlayerBinding) {
       ? ""
       : cues
           .filter((c) => time >= c.startMs && time < c.endMs)
-          .map((c) => c.text)
+          .map((c) =>
+            !c.translation
+              ? c.text
+              : translationOnly
+                ? c.translation
+                : `${c.text}\n${c.translation}`,
+          )
           .join("\n");
     frame = requestAnimationFrame(render);
   };
@@ -28,6 +35,7 @@ export function createOverlay(binding: PlayerBinding) {
     setCues(value: readonly PlayableCue[], preferences?: Preferences) {
       cues = value;
       if (preferences) {
+        translationOnly = preferences.translation?.display === "translation";
         display.style.fontSize = preferences.fontSize + "px";
         display.style.top = preferences.position === "top" ? "10%" : "";
         display.style.bottom = preferences.position === "bottom" ? "12%" : "";

@@ -18,3 +18,10 @@ export const DEFAULT_COMMENTS_INSTRUCTION =
 export function promptOrDefault(saved: string | undefined, fallback: string) {
   return saved?.trim() ? saved : fallback;
 }
+
+export const DEFAULT_TRANSLATION_INSTRUCTION =
+  "你是歌詞翻譯助手。任務：把提供的歌詞逐行翻譯成目標語言。\n" +
+  "1. 一行對一行：每一行原文對應一行譯文，不合併、不拆分、不省略、不增加。\n" +
+  "2. 忠實傳達原意與語氣，譯文自然通順、適合作為字幕閱讀；歌詞中的專有名詞與人名可保留原文。\n" +
+  "3. 重複的句子照樣逐行翻譯；語氣詞或擬聲詞（如 la la la）可保留原樣。\n" +
+  "4. 只輸出譯文，不加註解、讀音、標題或說明。";

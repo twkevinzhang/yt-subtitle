@@ -7,8 +7,15 @@ import type {
 import type { createOverlay } from "../content/overlay";
 import { request } from "../shared/messages";
 import { useSubtitleWork } from "./use-subtitle-work";
-import { ProgressSteps, StepIcon, stepLabels } from "./ProgressSteps";
-import { toDashboardSteps } from "../subtitle/job-state";
+import { ProgressSteps, StepIcon, stationsFor } from "./ProgressSteps";
+import { TranslateDialog, type TranslateChoice } from "./TranslateDialog";
+import {
+  DEFAULT_TRANSLATION,
+  decideTranslation,
+  userLanguage,
+  type TranslationLanguage,
+} from "../shared/translation";
+import type { SelectedSource } from "../subtitle/types";
 import { AiResults } from "./AiResults";
 import type { SearchRoute } from "../background/search-group";
 import { parseSource } from "../subtitle/parse-source";
@@ -51,7 +58,11 @@ export function Panel({
     }>(),
     [localError, setLocalError] = useState(""),
     [pending, setPending] = useState(false),
-    [paste, setPaste] = useState("");
+    [paste, setPaste] = useState(""),
+    [asking, setAsking] = useState<{
+      source: SelectedSource;
+      language: TranslationLanguage;
+    }>();
   const [view, setView] = useState<SubtitleView>("method"),
     [origin, setOrigin] = useState<EntryMode>("ai");
   const published = useRef("");
@@ -64,9 +75,25 @@ export function Panel({
         ":" +
         publicSettings?.preferences.fontSize +
         ":" +
-        publicSettings?.preferences.position;
+        publicSettings?.preferences.position +
+        ":" +
+        work.translation?.phase +
+        ":" +
+        publicSettings?.preferences.translation?.display;
       if (id !== published.current) {
-        overlay.setCues(work.cues, publicSettings?.preferences);
+        const lines = new Map(
+          work.translation?.phase === "done"
+            ? work.translation.lines?.map((l) => [l.index, l.text])
+            : [],
+        );
+        overlay.setCues(
+          work.cues.map((c) =>
+            lines.has(c.sourceLineIndex)
+              ? { ...c, translation: lines.get(c.sourceLineIndex) }
+              : c,
+          ),
+          publicSettings?.preferences,
+        );
         published.current = id;
       }
     }
@@ -82,6 +109,14 @@ export function Panel({
       setPending(false);
     }
   };
+  const begin = async (
+    source: SelectedSource,
+    translate?: TranslationLanguage,
+  ) => {
+    setOrigin("ai");
+    setView("processing");
+    await select(source, translate);
+  };
   const useSelected = () =>
     perform(async () => {
       if (!selected) throw Error("請先選擇字幕");
@@ -89,9 +124,33 @@ export function Panel({
         selected.candidate.syncedLyrics ?? selected.candidate.fullText ?? "",
         selected.candidate.language,
       );
-      setOrigin("ai");
-      setView("processing");
-      await select(source);
+      const decision = decideTranslation(
+        publicSettings?.preferences.translation,
+        selected.candidate.language,
+      );
+      if (decision.kind === "ask")
+        setAsking({ source, language: decision.language });
+      else
+        await begin(
+          source,
+          decision.kind === "run" ? decision.language : undefined,
+        );
+    });
+  const answerTranslation = ({ translate, save }: TranslateChoice) =>
+    perform(async () => {
+      if (!asking) return;
+      if (save)
+        await request({
+          type: "translation-save",
+          translation: {
+            ...DEFAULT_TRANSLATION,
+            ...publicSettings?.preferences.translation,
+            ...save,
+          },
+        });
+      const { source } = asking;
+      setAsking(undefined);
+      await begin(source, translate);
     });
   useEffect(() => {
     if (
@@ -119,7 +178,7 @@ export function Panel({
   const job = work?.job,
     // Picking a result needs the room; the hint line is dropped then.
     choosing = view === "ai" && job?.phase !== "searching",
-    steps = job ? toDashboardSteps(job) : [];
+    stations = job ? stationsFor(job, work?.translation) : [];
   return (
     <section className="subtitle-panel" aria-label="AI 歌詞">
       <header className="subtitle-header">
@@ -262,6 +321,9 @@ export function Panel({
                             }
                           : job
                       }
+                      translation={
+                        view === "ai" ? undefined : work?.translation
+                      }
                     />
                   )}
                 </div>
@@ -270,11 +332,11 @@ export function Panel({
                 )}
                 {(view === "processing" || view === "result") && (
                   <div>
-                    {steps.slice(1).map((step, i) => (
+                    {stations.slice(1).map((step) => (
                       <div className="subtitle-row" key={step.id}>
                         <span>
-                          <StepIcon index={i + 1} />
-                          {stepLabels[i + 1]}
+                          <StepIcon index={step.icon} />
+                          {step.label}
                         </span>
                         <span
                           aria-label={
@@ -343,6 +405,11 @@ export function Panel({
                     </div>
                   </div>
                 )}
+                {work.translation?.phase === "failed" && view !== "ai" && (
+                  <p className="subtitle-error" role="alert">
+                    翻譯失敗：{work.translation.error}
+                  </p>
+                )}
                 {job.phase === "incomplete" && (
                   <p role="alert">
                     {job.unmatchedLineIndexes.length} 句未匹配；未套用部分字幕。
@@ -391,6 +458,15 @@ export function Panel({
               </>
             )}
           </>
+        )}
+        {asking && (
+          <TranslateDialog
+            own={userLanguage()}
+            initial={asking.language}
+            busy={pending}
+            onCancel={() => setAsking(undefined)}
+            onChoose={(choice) => void answerTranslation(choice)}
+          />
         )}
         {work?.storageError && (
           <p role="alert" className="subtitle-error">

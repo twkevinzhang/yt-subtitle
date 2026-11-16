@@ -161,3 +161,94 @@ it("local pasted subtitles do not need a discovery request", async () => {
   expect(search).not.toHaveBeenCalled();
   expect(coordinator.get(1, video.videoId)?.entryMode).toBe("paste");
 });
+const timed = {
+  rawText: "one\n\ntwo",
+  timings: [
+    { sourceLineIndex: 0, start: 1, end: 2 },
+    { sourceLineIndex: 2, start: 3, end: 4 },
+  ],
+};
+const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+it("translates beside the original and keys each line to its source line", async () => {
+  const translate = vi.fn(async (lines: readonly string[]) =>
+    lines.map((l) => l.toUpperCase()),
+  );
+  const coordinator = new SubtitleCoordinator({
+    search: async () => {},
+    save: async () => {},
+    translate,
+  });
+  await coordinator.ensure(1, video, 1, false);
+  const selected = await coordinator.select(1, video.videoId, timed, {
+    language: "ja",
+  });
+  expect(selected.job.phase).toBe("complete");
+  await settle();
+  expect(translate).toHaveBeenCalledWith(
+    ["one", "two"],
+    "ja",
+    expect.anything(),
+  );
+  expect(coordinator.get(1, video.videoId)?.translation).toEqual({
+    language: "ja",
+    phase: "done",
+    lines: [
+      { index: 0, text: "ONE" },
+      { index: 2, text: "TWO" },
+    ],
+  });
+});
+it("keeps the original subtitle when the translation fails", async () => {
+  const coordinator = new SubtitleCoordinator({
+    search: async () => {},
+    save: async () => {},
+    translate: async () => {
+      throw new Error("AI 沒有照指定格式回覆：抱歉");
+    },
+  });
+  await coordinator.ensure(1, video, 1, false);
+  await coordinator.select(1, video.videoId, timed, { language: "en" });
+  await settle();
+  const work = coordinator.get(1, video.videoId)!;
+  expect(work.job.phase).toBe("complete");
+  expect(work.cues).toHaveLength(2);
+  expect(work.translation).toMatchObject({
+    phase: "failed",
+    error: "AI 沒有照指定格式回覆：抱歉",
+  });
+});
+it("has no translation step unless one was asked for, and drops a stale result on reselect", async () => {
+  let release: (value: string[]) => void = () => {};
+  const coordinator = new SubtitleCoordinator({
+    search: async () => {},
+    save: async () => {},
+    translate: () => new Promise<string[]>((resolve) => (release = resolve)),
+  });
+  await coordinator.ensure(1, video, 1, false);
+  const first = await coordinator.select(1, video.videoId, timed, {
+    language: "en",
+  });
+  expect(first.translation?.phase).toBe("active");
+  const second = await coordinator.select(1, video.videoId, timed);
+  expect(second.translation).toBeUndefined();
+  release(["x", "y"]);
+  await settle();
+  expect(coordinator.get(1, video.videoId)?.translation).toBeUndefined();
+});
+it("marks an unfinished translation as interrupted after a restart", async () => {
+  const coordinator = new SubtitleCoordinator({
+    search: async () => {},
+    save: async () => {},
+    translate: () => new Promise<string[]>(() => {}),
+  });
+  await coordinator.ensure(1, video, 1, false);
+  const saved = await coordinator.select(1, video.videoId, timed, {
+    language: "en",
+  });
+  const restarted = new SubtitleCoordinator({
+    search: async () => {},
+    save: async () => {},
+  });
+  restarted.restore(1, saved);
+  expect(restarted.get(1, video.videoId)?.translation?.phase).toBe("failed");
+});

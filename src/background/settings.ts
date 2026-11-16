@@ -98,3 +98,13 @@ export async function savePreferences(preferences: unknown) {
   await chrome.storage.local.set({ settings: record });
   return publicSettings(record);
 }
+/** Saved from the panel's dialog; unlike a settings save it must not restart the work in progress. */
+export async function saveTranslation(translation: unknown) {
+  const record = await getSettings();
+  record.preferences = preferencesSchema.parse({
+    ...record.preferences,
+    translation,
+  });
+  await chrome.storage.local.set({ settings: record });
+  return publicSettings(record);
+}

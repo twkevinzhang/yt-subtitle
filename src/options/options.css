@@ -359,3 +359,25 @@ html.options-page {
   width: 100%;
   min-height: 40px;
 }
+
+.translate-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 24px;
+  margin-bottom: 16px;
+}
+.translate-options label {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+}
+.options .translate-options input[type="radio"] {
+  accent-color: #315fd6;
+  flex-shrink: 0;
+  width: 18px;
+  min-height: 0;
+  padding: 0;
+  margin: 0;
+}

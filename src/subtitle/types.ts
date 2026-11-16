@@ -11,6 +11,8 @@ export interface PreparedLyrics {
 export interface PlayableCue {
   sourceLineIndex: number;
   text: string;
+  /** Set by the panel when a translation of this line is available. */
+  translation?: string;
   startMs: number;
   endMs: number;
 }
