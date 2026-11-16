@@ -48,3 +48,16 @@ test("ZIP 與正式 manifest 一致且沒有舊模型或推論引擎", async () 
     false,
   );
 });
+test("manifest 宣告的圖示都在建置與 ZIP 中", async () => {
+  const manifest = JSON.parse(await readFile("dist/manifest.json", "utf8"));
+  const icons = [
+    ...Object.values(manifest.icons),
+    ...Object.values(manifest.action.default_icon),
+  ];
+  assert.ok(icons.length >= 4);
+  const files = unzipSync(await readFile("artifacts/ai-lyrics-extension.zip"));
+  for (const icon of icons) {
+    await access("dist/" + icon);
+    assert.ok(files[icon], icon);
+  }
+});

@@ -39,6 +39,7 @@ for (const [name, entry] of Object.entries({
   });
 }
 await cp("extension/manifest.json", "dist/manifest.json");
+await cp("extension/icons", "dist/icons", { recursive: true });
 // Keep the installed package intact: its entry creates a Worker by relative URL.
 const require = createRequire(import.meta.url);
 const libraryRoot = path.dirname(
