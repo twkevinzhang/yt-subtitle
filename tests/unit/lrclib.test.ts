@@ -34,16 +34,41 @@ it("turns a noisy video title into short queries", () => {
     lrclibQueries(
       "スネ夫 - SUNEO-ISM (スネオイズム) / THE FIRST TAKE【完全フルver】",
     ),
-  ).toEqual(["スネ夫 - SUNEO-ISM", "SUNEO-ISM"]);
+  ).toEqual(["スネ夫 - SUNEO-ISM", "SUNEO-ISM", "SUNEO-ISM (スネオイズム)"]);
   expect(lrclibQueries(video.title)).toContain("Lemon");
 });
-it("keeps only tracks within 3 seconds of the video, closest first", async () => {
+it("keeps the bracketed part that names the song", () => {
+  expect(
+    lrclibQueries("Nightcore - Mamma mia (He's italiano) (Lyrics)"),
+  ).toContain("Mamma mia (He's italiano)");
+});
+it("ranks same-title tracks by closeness of length and drops other recordings", async () => {
   const result = await searchLrclib(
     video,
     new AbortController().signal,
     reply([row(1, 280), row(2, 275), row(3, 274), row(4, 100)]) as never,
   );
-  expect(result.candidates.map((c) => c.id)).toEqual(["3", "2"]);
+  expect(result.candidates.map((c) => c.id)).toEqual(["3", "2", "1"]);
+});
+it("finds a sped-up upload's song and ranks a same-length other song below it", async () => {
+  const nightcore = {
+    ...video,
+    title: "Nightcore - Mamma mia (He's italiano) (Lyrics)",
+    durationMs: 199000,
+  };
+  const result = await searchLrclib(
+    nightcore,
+    new AbortController().signal,
+    reply([
+      row(1, 199, { trackName: "Mamma Mia", artistName: "German Cast" }),
+      row(2, 272, {
+        trackName: "Mamma mia (He's italiano)",
+        artistName: "Elena/ Glance",
+      }),
+    ]) as never,
+  );
+  expect(result.candidates.map((c) => c.id)).toEqual(["2", "1"]);
+  expect(result.candidates[0]!.matchReason).toContain("加速");
 });
 it("drops instrumentals, short lyrics and duplicate texts", async () => {
   const same = lyrics(8, "dup");
