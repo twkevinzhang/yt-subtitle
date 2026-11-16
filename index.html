@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="index,follow">
+<title>AI 歌詞字幕 隱私權政策 / Privacy Policy</title>
+<style>
+  :root{--bg:#fff;--text:#1b1f2a;--muted:#5b6275;--line:#e1e4ec;--accent:#2b3a67;--code:#f3f5fa}
+  @media (prefers-color-scheme:dark){:root{--bg:#14161d;--text:#e8eaf1;--muted:#a3a9bb;--line:#2a2e3b;--accent:#9db1ff;--code:#1c202b}}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font:16px/1.75 system-ui,-apple-system,"Noto Sans TC","Segoe UI",sans-serif}
+  main{max-width:760px;margin:0 auto;padding:40px 20px 80px}
+  h1{font-size:28px;margin:0 0 4px}
+  h2{font-size:20px;margin:40px 0 8px;padding-top:12px;border-top:1px solid var(--line)}
+  h3{font-size:16px;margin:20px 0 4px}
+  p,li{margin:8px 0}
+  ul{padding-left:22px}
+  .meta{color:var(--muted);font-size:14px}
+  a{color:var(--accent)}
+  table{width:100%;border-collapse:collapse;margin:12px 0;font-size:15px}
+  th,td{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+  th{background:var(--code)}
+  code{background:var(--code);padding:1px 5px;border-radius:4px;font-size:.92em}
+  nav a{margin-right:14px}
+  .lang{margin-top:56px}
+</style>
+</head>
+<body>
+<main>
+<nav><a href="#zh">繁體中文</a><a href="#en">English</a></nav>
+
+<section id="zh">
+<h1>AI 歌詞字幕 隱私權政策</h1>
+<p class="meta">最後更新：2026-11-16　適用版本：0.3.0 起</p>
+
+<h2>一句話說明</h2>
+<p>「AI 歌詞字幕」（以下稱「本擴充功能」）沒有任何屬於作者的伺服器，作者不會收到、保存或存取你的任何資料。資料只會留在你的瀏覽器，或傳送到<strong>你自己設定</strong>的服務與下列第三方網站。</p>
+
+<h2>處理哪些資料、為什麼</h2>
+<table>
+<tr><th>資料</th><th>用途</th><th>去向</th></tr>
+<tr><td>目前 YouTube 影片的標題、頻道名稱、說明文字、影片 ID 與長度</td><td>辨識歌曲，搜尋歌詞</td><td>你設定的 AI 服務；標題整理出的搜尋字串另送 LRCLIB</td></tr>
+<tr><td>影片留言區的留言文字與留言者顯示名稱（公開內容，有字數上限）</td><td>找出留言中的歌詞</td><td>你設定的 AI 服務</td></tr>
+<tr><td>你選用的歌詞文字（僅在你選擇翻譯時）</td><td>翻譯歌詞</td><td>你設定的 AI 服務</td></tr>
+<tr><td>播放中的影片音訊</td><td>在你的瀏覽器內，把歌詞對齊到時間軸</td><td><strong>不離開你的電腦</strong>，不上傳</td></tr>
+<tr><td>AI 服務網址、模型名稱、API 憑證（含選填的 Cloudflare Access 識別資料）</td><td>連線到你的 AI 服務</td><td>只保存在你的瀏覽器；只會送到你填入的服務網址</td></tr>
+<tr><td>顯示與翻譯偏好、搜尋與對齊結果、音訊與翻譯快取</td><td>顯示字幕、避免重複處理</td><td>只保存在你的瀏覽器</td></tr>
+</table>
+
+<h2>會連線的對象</h2>
+<h3>1. 你設定的 AI 服務</h3>
+<p>本擴充功能需要你自備支援 OpenAI 相容介面的 AI 服務，網址與憑證由你填入。上表標示的資料會傳送到該服務；該服務如何處理、保存這些資料，由其營運者的政策決定，本擴充功能與作者無法控制。請只填入你信任的服務。</p>
+<h3>2. LRCLIB（lrclib.net）</h3>
+<p>用影片標題整理出的搜尋字串，查詢公開的歌詞資料庫。不會送出你的帳號或其他個人資料。</p>
+<h3>3. Hugging Face（huggingface.co、hf.co）</h3>
+<p>第一次對齊時下載語音模型檔。這是下載模型檔（資料檔案），不是下載或執行遠端程式碼；請求只含一般網路連線資訊（例如 IP 位址、瀏覽器版本）。</p>
+<h3>4. YouTube</h3>
+<p>本擴充功能在 youtube.com 的影片頁面內執行，讀取該頁面上的影片資訊、留言、字幕與播放器音訊，供上述功能使用。</p>
+
+<h2>本機儲存與你的控制權</h2>
+<ul>
+<li>設定與憑證存放在擴充功能自己的儲存空間（<code>chrome.storage.local</code>），限擴充功能內部環境讀取，網頁內容讀不到；不會跨裝置同步。</li>
+<li>音訊快取與對齊結果存放在瀏覽器的 IndexedDB。</li>
+<li>在設定頁的「本機資料」可逐首或全部刪除快取；在 AI 服務分頁可清除憑證。移除擴充功能時，瀏覽器會一併移除這些資料。</li>
+<li>你隨時可以不填 AI 服務，這時不會有任何資料傳送給 AI 服務；也可以不允許「影片載入時自動搜尋字幕」，改為貼入字幕。</li>
+</ul>
+
+<h2>我們不做的事</h2>
+<ul>
+<li>不蒐集、不出售、不出租、不分享你的資料給任何第三方（上述由你啟用的連線除外）。</li>
+<li>不做使用行為分析、追蹤或廣告，不使用遠端程式碼。</li>
+<li>不把資料用於與本擴充功能單一用途（為 YouTube 影片尋找、對齊、翻譯並顯示歌詞字幕）無關的目的，也不用於判斷信用或貸款資格。</li>
+</ul>
+
+<h2>權限用途</h2>
+<table>
+<tr><th>權限</th><th>用途</th></tr>
+<tr><td><code>storage</code></td><td>保存設定與快取</td></tr>
+<tr><td><code>scripting</code></td><td>讀取目前影片的頁面資料（影片資訊、留言、字幕）</td></tr>
+<tr><td><code>offscreen</code></td><td>在背景頁面內執行語音對齊</td></tr>
+<tr><td><code>https://www.youtube.com/*</code></td><td>在影片頁顯示面板與字幕</td></tr>
+<tr><td><code>https://lrclib.net/*</code></td><td>查詢歌詞資料庫</td></tr>
+<tr><td><code>huggingface.co、hf.co</code></td><td>下載語音模型檔</td></tr>
+<tr><td>選用：任何 <code>https://</code> 網站、本機位址</td><td>連線到<strong>你自己填入</strong>的 AI 服務網址；儲存設定時才會向你請求，且只針對該網址的網域</td></tr>
+</table>
+
+<h2>政策變更</h2>
+<p>政策有實質變更時，會更新本頁的「最後更新」日期，並在擴充功能的新版本說明中提到。</p>
+
+<h2>聯絡</h2>
+<p>有疑問或要求，請至 <a href="https://github.com/twkevinzhang/yt-subtitle/issues">GitHub Issues</a> 提出。請勿在公開的 Issue 貼上任何金鑰或個人資料。</p>
+</section>
+
+<section id="en" class="lang">
+<h1>AI Lyrics Subtitles — Privacy Policy</h1>
+<p class="meta">Last updated: 2026-11-16 · Applies to version 0.3.0 and later</p>
+
+<h2>In short</h2>
+<p>"AI Lyrics Subtitles" (the "extension") has no server of its own. The developer never receives, stores or accesses your data. Data stays in your browser, or is sent only to the AI service <strong>you configure</strong> and the third-party sites listed below.</p>
+
+<h2>What is processed, and why</h2>
+<table>
+<tr><th>Data</th><th>Purpose</th><th>Where it goes</th></tr>
+<tr><td>Title, channel name, description, ID and length of the YouTube video you are watching</td><td>Identify the song and find its lyrics</td><td>Your configured AI service; a search string derived from the title also goes to LRCLIB</td></tr>
+<tr><td>Public comments on the video (text and display name, size-limited)</td><td>Find lyrics posted in comments</td><td>Your configured AI service</td></tr>
+<tr><td>The lyrics you chose (only when you choose to translate)</td><td>Translate the lyrics</td><td>Your configured AI service</td></tr>
+<tr><td>Audio of the playing video</td><td>Align lyrics to time, inside your browser</td><td><strong>Never leaves your computer</strong>; not uploaded</td></tr>
+<tr><td>AI service URL, model name, API credentials (including optional Cloudflare Access credentials)</td><td>Connect to your AI service</td><td>Stored in your browser only; sent only to the URL you entered</td></tr>
+<tr><td>Display and translation preferences, search and alignment results, audio and translation caches</td><td>Show subtitles, avoid repeated work</td><td>Stored in your browser only</td></tr>
+</table>
+
+<h2>Who the extension connects to</h2>
+<h3>1. Your configured AI service</h3>
+<p>You must provide an OpenAI-compatible AI service and enter its URL and credentials. The data marked above is sent to it. How that service handles or retains the data is decided by its operator, not by this extension or its developer. Only enter services you trust.</p>
+<h3>2. LRCLIB (lrclib.net)</h3>
+<p>A search string derived from the video title is sent to this public lyrics database. No account or other personal data is sent.</p>
+<h3>3. Hugging Face (huggingface.co, hf.co)</h3>
+<p>The speech model files are downloaded the first time lyrics are aligned. These are data files, not remote code; the request carries only ordinary connection information (such as IP address and browser version).</p>
+<h3>4. YouTube</h3>
+<p>The extension runs inside youtube.com watch pages and reads the video information, comments, captions and player audio on that page for the features above.</p>
+
+<h2>Local storage and your control</h2>
+<ul>
+<li>Settings and credentials are kept in the extension's own storage (<code>chrome.storage.local</code>), readable only from the extension's trusted contexts, not by web pages, and not synced across devices.</li>
+<li>Audio cache and alignment results are kept in the browser's IndexedDB.</li>
+<li>In the options page, "Local data" deletes caches per song or all at once, and the AI service tab clears credentials. Removing the extension removes this data.</li>
+<li>You may leave the AI service unset; then nothing is sent to any AI service. You may also decline automatic search and paste lyrics instead.</li>
+</ul>
+
+<h2>What we do not do</h2>
+<ul>
+<li>We do not collect, sell, rent or share your data with third parties, other than the connections you enable above.</li>
+<li>No analytics, tracking, advertising or remote code.</li>
+<li>Data is not used for anything unrelated to the extension's single purpose (finding, aligning, translating and displaying lyric subtitles for YouTube videos), nor to determine creditworthiness or lending eligibility.</li>
+</ul>
+
+<h2>Permissions</h2>
+<table>
+<tr><th>Permission</th><th>Why</th></tr>
+<tr><td><code>storage</code></td><td>Keep settings and caches</td></tr>
+<tr><td><code>scripting</code></td><td>Read the current video's page data (video info, comments, captions)</td></tr>
+<tr><td><code>offscreen</code></td><td>Run speech alignment in a background document</td></tr>
+<tr><td><code>https://www.youtube.com/*</code></td><td>Show the panel and subtitles on watch pages</td></tr>
+<tr><td><code>https://lrclib.net/*</code></td><td>Query the lyrics database</td></tr>
+<tr><td><code>huggingface.co, hf.co</code></td><td>Download speech model files</td></tr>
+<tr><td>Optional: any <code>https://</code> site, local addresses</td><td>Connect to the AI service URL <strong>you enter</strong>; requested only when you save settings, and only for that URL's origin</td></tr>
+</table>
+
+<h2>Changes</h2>
+<p>If this policy changes materially, the "Last updated" date on this page will change and the new version's release notes will mention it.</p>
+
+<h2>Contact</h2>
+<p>For questions or requests, open an issue on <a href="https://github.com/twkevinzhang/yt-subtitle/issues">GitHub Issues</a>. Please do not post keys or personal data in a public issue.</p>
+</section>
+</main>
+</body>
+</html>
