@@ -13,3 +13,4 @@ playwright-report/
 # 設計驗證產物與工具附件不入庫
 output/
 .codex-remote-attachments/
+.DS_Store

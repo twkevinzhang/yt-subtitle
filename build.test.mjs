@@ -37,9 +37,7 @@ test("ZIP 與正式 manifest 一致且沒有舊模型或推論引擎", async () 
   );
   assert.deepEqual(
     files["vendor/lyric-align-ts/dist/index.js"],
-    new Uint8Array(
-      await readFile("node_modules/lyric-align-ts/dist/index.js"),
-    ),
+    new Uint8Array(await readFile("node_modules/lyric-align-ts/dist/index.js")),
   );
   assert.ok(files["vendor/lyric-align-ts/LICENSE"]);
   assert.ok(files["vendor/lyric-align-ts/THIRD_PARTY_NOTICES.md"]);
@@ -60,4 +58,11 @@ test("manifest 宣告的圖示都在建置與 ZIP 中", async () => {
     await access("dist/" + icon);
     assert.ok(files[icon], icon);
   }
+});
+test("ZIP 內只有一個 manifest.json（商店會拒絕多個）", async () => {
+  const files = unzipSync(await readFile("artifacts/ai-lyrics-extension.zip"));
+  assert.deepEqual(
+    Object.keys(files).filter((file) => /(^|\/)manifest\.json$/u.test(file)),
+    ["manifest.json"],
+  );
 });

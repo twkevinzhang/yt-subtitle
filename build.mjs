@@ -1,5 +1,12 @@
 import { build } from "vite";
-import { mkdir, readFile, writeFile, cp, readdir } from "node:fs/promises";
+import {
+  mkdir,
+  readFile,
+  writeFile,
+  cp,
+  readdir,
+  rename,
+} from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { zipSync } from "fflate";
@@ -49,6 +56,12 @@ const libraryPackage = JSON.parse(
   await readFile(path.join(libraryRoot, "package.json"), "utf8"),
 );
 await cp(libraryRoot, "dist/vendor/lyric-align-ts", { recursive: true });
+// The Chrome Web Store rejects a package holding more than one manifest.json.
+// The library only lists its asset hashes there and never reads it at runtime.
+await rename(
+  "dist/vendor/lyric-align-ts/dist/assets/manifest.json",
+  "dist/vendor/lyric-align-ts/dist/assets/asset-hashes.json",
+);
 console.log(
   `建置完成：dist/（${libraryPackage.name} ${libraryPackage.version}；模型按需下載）`,
 );
